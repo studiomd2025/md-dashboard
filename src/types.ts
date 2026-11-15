@@ -41,6 +41,7 @@ export interface Post {
   publishedAt: string;
   scheduledFor: string | null;
   pinnedUntil: string | null;
+  isDraft?: boolean;
 }
 
 export type BannerMode = 'default' | 'slideshow' | 'window' | 'daily-hours';

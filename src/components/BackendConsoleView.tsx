@@ -49,6 +49,7 @@ interface BackendConsoleViewProps {
   onSelectTab: (tab: BackendTab) => void;
   posts: Post[];
   scheduledPosts: Post[];
+  draftPosts: Post[];
   countdowns: EventCountdown[];
   tagCounts: { tag: string; count: number }[];
   banners: BannerSchedule[];
@@ -143,6 +144,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   onSelectTab,
   posts,
   scheduledPosts,
+  draftPosts,
   countdowns,
   tagCounts,
   banners,
@@ -225,21 +227,18 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const uploadFileToServer = async (
     file: File
   ): Promise<{ url: string; fileName: string; mimeType: string; fileSize: number } | null> => {
-    const dataBase64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(new Error('Read error'));
-      reader.readAsDataURL(file);
-    });
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName: file.name,
-        mimeType: file.type,
-        dataBase64,
-      }),
-    });
+    const res = await fetch(
+      `/api/upload-raw?fileName=${encodeURIComponent(
+        file.name
+      )}&mimeType=${encodeURIComponent(
+        file.type || 'application/octet-stream'
+      )}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: file,
+      }
+    );
     if (!res.ok) return null;
     return (await res.json()) as {
       url: string;
@@ -551,7 +550,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     { id: 'compose', label: 'Post & Schedule', icon: Send },
     { id: 'countdowns', label: 'Next on MD', icon: CalendarClock },
     { id: 'tags', label: 'Hashtags', icon: Hash },
-    { id: 'banners', label: 'Hero Banner', icon: ImageIcon },
+    { id: 'banners', label: 'Banner', icon: ImageIcon },
     { id: 'design', label: 'Theme', icon: Palette },
   ];
 
@@ -565,7 +564,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
               Settings
             </h2>
             <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
-              Manage posting, scheduling, Next on MD countdowns, Hashtags, Hero Banners, and Theme.
+              Manage posts, drafts, Next on MD countdowns, Hashtags, Banners, and Theme.
             </p>
           </div>
           <button
@@ -574,7 +573,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
             className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
           >
             <Plus className="h-4 w-4" />
-            Compose New Entry
+            New Post
           </button>
         </div>
 
@@ -607,17 +606,18 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
         </div>
       </section>
 
-      {/* Tab 1: Posting & Scheduling Manager */}
+      {/* Tab 1: Posting, Drafts & Scheduling Manager */}
       {activeTab === 'compose' && (
         <div className="space-y-5">
+          {/* Drafts */}
           <section className="aero-glass rounded-3xl p-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-                  Scheduled Entries ({scheduledPosts.length})
+                  Drafts ({draftPosts.length})
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Queued entries publish automatically at their target time.
+                  Saved unpublished drafts. Edit anytime or publish straight to the timeline.
                 </p>
               </div>
               <button
@@ -625,7 +625,80 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 onClick={onOpenNewComposer}
                 className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 whitespace-nowrap shrink-0 cursor-pointer"
               >
-                + Schedule Entry
+                + New Draft
+              </button>
+            </div>
+
+            {draftPosts.length === 0 ? (
+              <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
+                No drafts saved yet. Click Save Draft in the post composer to store one here.
+              </p>
+            ) : (
+              <div className="mt-4 divide-y divide-slate-200/70 dark:divide-slate-700/60">
+                {draftPosts.map((post) => (
+                  <div
+                    key={post.id}
+                    className="flex flex-col gap-3 py-3.5 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-mono text-[11px] font-semibold text-sky-700 tabular-nums dark:text-sky-300">
+                        Draft · Saved {formatPostTimestamp(post.createdAt)}
+                        {post.attachments.length > 0
+                          ? ` · ${post.attachments.length} attachment(s)`
+                          : ''}
+                      </div>
+                      <div className="mt-0.5 truncate font-display text-sm font-bold text-slate-900 dark:text-white">
+                        {post.title || 'Untitled Draft'}
+                      </div>
+                      <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                        {stripHtml(post.bodyHtml) || 'Media draft'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onPublishNow(post)}
+                        className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer"
+                      >
+                        Post Now
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onEditPost(post)}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeletePost(post.id)}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="aero-glass rounded-3xl p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                  Scheduled Posts ({scheduledPosts.length})
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Queued posts publish automatically at their scheduled time.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenNewComposer}
+                className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                + Schedule Post
               </button>
             </div>
 
@@ -645,10 +718,10 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                         Scheduled · {formatPostTimestamp(post.scheduledFor || post.publishedAt)}
                       </div>
                       <div className="mt-0.5 truncate font-display text-sm font-bold text-slate-900 dark:text-white">
-                        {post.title || 'Untitled Scheduled Entry'}
+                        {post.title || 'Untitled Scheduled Post'}
                       </div>
                       <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                        {stripHtml(post.bodyHtml) || 'Multimedia entry'}
+                        {stripHtml(post.bodyHtml) || 'Multimedia post'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -657,7 +730,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                         onClick={() => onPublishNow(post)}
                         className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer"
                       >
-                        Publish Now
+                        Post Now
                       </button>
                       <button
                         type="button"
@@ -682,7 +755,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
 
           <section className="aero-glass rounded-3xl p-6">
             <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              All Published & Pinned Entries ({posts.length})
+              All Published & Pinned Posts ({posts.length})
             </h3>
             <div className="mt-4 divide-y divide-slate-200/70 dark:divide-slate-700/60">
               {posts.map((post) => {
@@ -1234,15 +1307,15 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
         </section>
       )}
 
-      {/* Tab 4: Hero Banner Upload & Scheduler */}
+      {/* Tab 4: Banner Upload & Scheduler */}
       {activeTab === 'banners' && (
         <div className="space-y-5">
           <section className="aero-glass rounded-3xl p-6">
             <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Change or Schedule Hero Banner (Image or Animated GIF)
+              Banner
             </h3>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              Upload a wide photo or animated GIF to display immediately, or schedule automatic banner swaps by date window or daily hours.
+              No banner is shown by default. Upload a wide photo or animated GIF here to display one or schedule banner swaps.
             </p>
 
             <form
@@ -1481,84 +1554,90 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
             </form>
           </section>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {banners.map((b) => {
-              const isActive = activeBanner?.id === b.id;
-              return (
-                <div
-                  key={b.id}
-                  className="aero-glass overflow-hidden rounded-3xl flex flex-col"
-                >
-                  <div className="h-36 w-full bg-slate-200">
-                    <img
-                      src={b.imageUrl}
-                      alt={b.title || 'Hero banner'}
-                      referrerPolicy="no-referrer"
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                  <div className="flex flex-1 flex-col justify-between p-4">
-                    <div>
-                      <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
-                        <span className="inline-flex items-center gap-1">
-                          <CalendarClock className="h-3.5 w-3.5 text-sky-600" />
-                          {b.mode === 'daily-hours'
-                            ? `Daily ${String(b.dailyStartHour ?? 0).padStart(2, '0')}:00 – ${String(
-                                b.dailyEndHour ?? 23
-                              ).padStart(2, '0')}:59`
-                            : b.mode === 'window'
-                            ? 'Scheduled Window'
-                            : b.mode === 'slideshow'
-                            ? 'Slideshow Rotation'
-                            : 'Default Banner'}
-                        </span>
-                        {isActive && (
-                          <span className="font-semibold text-emerald-700 dark:text-emerald-300">
-                            Active Now
+          {banners.length === 0 ? (
+            <section className="aero-glass rounded-3xl p-6 text-center text-xs text-slate-500 dark:text-slate-400">
+              No banners active. Your timeline stays clean at the top until you add a banner above.
+            </section>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {banners.map((b) => {
+                const isActive = activeBanner?.id === b.id;
+                return (
+                  <div
+                    key={b.id}
+                    className="aero-glass overflow-hidden rounded-3xl flex flex-col"
+                  >
+                    <div className="h-36 w-full bg-slate-200">
+                      <img
+                        src={b.imageUrl}
+                        alt={b.title || 'Banner'}
+                        referrerPolicy="no-referrer"
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
+                    <div className="flex flex-1 flex-col justify-between p-4">
+                      <div>
+                        <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+                          <span className="inline-flex items-center gap-1">
+                            <CalendarClock className="h-3.5 w-3.5 text-sky-600" />
+                            {b.mode === 'daily-hours'
+                              ? `Daily ${String(b.dailyStartHour ?? 0).padStart(2, '0')}:00 – ${String(
+                                  b.dailyEndHour ?? 23
+                                ).padStart(2, '0')}:59`
+                              : b.mode === 'window'
+                              ? 'Scheduled Window'
+                              : b.mode === 'slideshow'
+                              ? 'Slideshow Rotation'
+                              : 'Default Banner'}
                           </span>
+                          {isActive && (
+                            <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                              Active Now
+                            </span>
+                          )}
+                        </div>
+                        {b.title && b.title.toUpperCase() !== 'MY DIARIES DASHBOARD' && (
+                          <h4 className="mt-1 font-display text-sm font-bold text-slate-900 dark:text-white">
+                            {b.title}
+                          </h4>
+                        )}
+                        {(b.subtitleHtml || b.subtitle) && (
+                          <div
+                            className="mt-0.5 text-xs text-slate-600 dark:text-slate-300 [&_a]:font-semibold [&_a]:text-sky-700 [&_a]:underline dark:[&_a]:text-sky-300"
+                            dangerouslySetInnerHTML={{
+                              __html: sanitizeRichHtml(b.subtitleHtml || b.subtitle || ''),
+                            }}
+                          />
                         )}
                       </div>
-                      {b.title && b.title.toUpperCase() !== 'MY DIARIES DASHBOARD' && (
-                        <h4 className="mt-1 font-display text-sm font-bold text-slate-900 dark:text-white">
-                          {b.title}
-                        </h4>
-                      )}
-                      {(b.subtitleHtml || b.subtitle) && (
-                        <div
-                          className="mt-0.5 text-xs text-slate-600 dark:text-slate-300 [&_a]:font-semibold [&_a]:text-sky-700 [&_a]:underline dark:[&_a]:text-sky-300"
-                          dangerouslySetInnerHTML={{
-                            __html: sanitizeRichHtml(b.subtitleHtml || b.subtitle || ''),
-                          }}
-                        />
-                      )}
-                    </div>
 
-                    <div className="mt-3 flex items-center justify-between border-t border-slate-200/70 pt-2.5 text-xs dark:border-slate-700/60">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onUpdateBanner(b.id, {
-                            priority: (activeBanner?.priority ?? 30) + 10,
-                            mode: 'default',
-                          })
-                        }
-                        className="font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
-                      >
-                        Activate Now
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onDeleteBanner(b.id)}
-                        className="font-medium text-rose-600 hover:underline cursor-pointer"
-                      >
-                        Remove
-                      </button>
+                      <div className="mt-3 flex items-center justify-between border-t border-slate-200/70 pt-2.5 text-xs dark:border-slate-700/60">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateBanner(b.id, {
+                              priority: (activeBanner?.priority ?? 30) + 10,
+                              mode: 'default',
+                            })
+                          }
+                          className="font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+                        >
+                          Activate Now
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteBanner(b.id)}
+                          className="font-medium text-rose-600 hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

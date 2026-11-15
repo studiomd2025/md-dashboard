@@ -129,10 +129,15 @@ export default function App() {
 
   const nowDate = useMemo(() => new Date(nowMs), [nowMs]);
 
-  const { livePosts, scheduledPosts } = useMemo(() => {
+  const { livePosts, scheduledPosts, draftPosts } = useMemo(() => {
     const live: Post[] = [];
     const scheduled: Post[] = [];
+    const drafts: Post[] = [];
     for (const p of posts) {
+      if (p.isDraft) {
+        drafts.push(p);
+        continue;
+      }
       const target = p.scheduledFor || p.publishedAt;
       const ts = new Date(target).getTime();
       if (!Number.isNaN(ts) && ts > nowMs) {
@@ -155,7 +160,12 @@ export default function App() {
         new Date(b.scheduledFor || b.publishedAt).getTime()
     );
 
-    return { livePosts: live, scheduledPosts: scheduled };
+    drafts.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    return { livePosts: live, scheduledPosts: scheduled, draftPosts: drafts };
   }, [posts, nowMs]);
 
   const { tagCounts, monthCounts, allTagNames } = useMemo(() => {
@@ -248,6 +258,7 @@ export default function App() {
     attachments: Post['attachments'];
     scheduledFor: string | null;
     pinnedUntil: string | null;
+    isDraft?: boolean;
   }) => {
     if (payload.id) {
       const res = await fetch(`/api/posts/${payload.id}`, {
@@ -299,7 +310,7 @@ export default function App() {
     const res = await fetch(`/api/posts/${post.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ scheduledFor: null, publishedAt: nowIso }),
+      body: JSON.stringify({ isDraft: false, scheduledFor: null, publishedAt: nowIso }),
     });
     if (res.ok) {
       const updated = (await res.json()) as Post;
@@ -667,6 +678,7 @@ export default function App() {
                 onSelectTab={setSettingsTab}
                 posts={livePosts}
                 scheduledPosts={scheduledPosts}
+                draftPosts={draftPosts}
                 countdowns={countdowns}
                 tagCounts={allBackendTagCounts}
                 banners={banners}

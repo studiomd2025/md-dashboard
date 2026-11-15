@@ -46,6 +46,7 @@ interface RichComposerModalProps {
     attachments: MediaAttachment[];
     scheduledFor: string | null;
     pinnedUntil: string | null;
+    isDraft?: boolean;
   }) => Promise<void>;
 }
 
@@ -178,22 +179,18 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
     setErrorMsg('');
     try {
       for (const file of Array.from(files)) {
-        const dataBase64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(String(reader.result || ''));
-          reader.onerror = () => reject(new Error('File read error'));
-          reader.readAsDataURL(file);
-        });
-
-        const res = await fetch('/api/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            fileName: file.name,
-            mimeType: file.type,
-            dataBase64,
-          }),
-        });
+        const res = await fetch(
+          `/api/upload-raw?fileName=${encodeURIComponent(
+            file.name
+          )}&mimeType=${encodeURIComponent(
+            file.type || 'application/octet-stream'
+          )}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: file,
+          }
+        );
         if (!res.ok) throw new Error('Upload failed');
         const uploaded = (await res.json()) as {
           url: string;
@@ -226,7 +223,7 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
         ]);
       }
     } catch {
-      setErrorMsg('Could not upload one or more files. Please try a smaller file.');
+      setErrorMsg('Could not upload one or more files. Please check file size and try again.');
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -262,8 +259,7 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
     setPinnedUntilLocal(toLocalInputValue(target.toISOString()));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const submitPost = async (saveAsDraft: boolean) => {
     const cleanedHtml = sanitizeRichHtml(editorRef.current?.innerHTML || bodyHtml);
     const hasText = cleanedHtml.replace(/<[^>]+>/g, '').trim().length > 0;
     if (!title.trim() && !hasText && attachments.length === 0) {
@@ -284,13 +280,19 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
         attachments,
         scheduledFor: scheduledLocal ? new Date(scheduledLocal).toISOString() : null,
         pinnedUntil: pinnedUntilLocal ? new Date(pinnedUntilLocal).toISOString() : null,
+        isDraft: saveAsDraft,
       });
       onClose();
     } catch {
-      setErrorMsg('Failed to save diary entry.');
+      setErrorMsg('Failed to save post.');
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await submitPost(false);
   };
 
   return (
@@ -307,7 +309,11 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
             id="composer-title"
             className="font-display text-lg font-bold text-slate-900 dark:text-white"
           >
-            {editingPost ? 'Edit Diary Entry' : 'Compose Diary Entry'}
+            {editingPost
+              ? editingPost.isDraft
+                ? 'Edit Draft'
+                : 'Edit Post'
+              : "What's on your mind? ✨"}
           </h2>
           <button
             type="button"
@@ -332,14 +338,13 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
               htmlFor="post-title-input"
               className="block text-xs font-semibold text-slate-600 dark:text-slate-300"
             >
-              Post Title (optional — supports inline #EventHashtags)
+              Title (optional)
             </label>
             <input
               id="post-title-input"
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g., Coastal Morning Walk #KyotoAutumn2026"
               className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white/90 px-4 py-2.5 text-base font-semibold text-slate-900 placeholder:font-normal placeholder:text-slate-400 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/80 dark:text-white"
             />
           </div>
@@ -504,15 +509,12 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
             />
           </div>
 
-          {/* Dual-Method Event Hashtags */}
+          {/* Tags */}
           <div className="space-y-2.5 rounded-2xl border border-slate-200/80 bg-white/60 p-4 dark:border-slate-700/60 dark:bg-slate-900/40">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200">
                 <Hash className="h-3.5 w-3.5 text-sky-600" />
-                Dual-Method Event Hashtags
-              </span>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                Auto-detected from text + dedicated tags box
+                Tags
               </span>
             </div>
 
@@ -533,7 +535,6 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
                 onKeyDown={handleTagKeyDown}
-                placeholder="Add event hashtag (e.g. KyotoAutumn2026) and press Enter"
                 className="flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
               />
               <button
@@ -681,7 +682,7 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
                 className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 dark:text-slate-200"
               >
                 <CalendarClock className="h-3.5 w-3.5 text-sky-600" />
-                Schedule Publish Date & Time (optional)
+                Schedule Post
               </label>
               <input
                 id="schedule-datetime"
@@ -696,7 +697,7 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
                   onClick={() => setScheduledLocal('')}
                   className="mt-1.5 text-[11px] font-medium text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
                 >
-                  Clear schedule (publish immediately)
+                  Clear schedule (post immediately)
                 </button>
               )}
             </div>
@@ -757,7 +758,7 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
           </div>
 
           {/* Footer Buttons */}
-          <div className="flex items-center justify-end gap-3 border-t border-slate-200/70 pt-4 dark:border-slate-700/60">
+          <div className="flex flex-wrap items-center justify-end gap-2.5 border-t border-slate-200/70 pt-4 dark:border-slate-700/60">
             <button
               type="button"
               onClick={onClose}
@@ -766,17 +767,25 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
               Cancel
             </button>
             <button
+              type="button"
+              disabled={isSaving || isUploading}
+              onClick={() => submitPost(true)}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Save Draft
+            </button>
+            <button
               type="submit"
               disabled={isSaving || isUploading}
               className="aero-button-primary rounded-xl px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 whitespace-nowrap shrink-0 cursor-pointer"
             >
               {isSaving
                 ? 'Saving...'
-                : scheduledLocal && new Date(scheduledLocal).getTime() > Date.now()
-                ? 'Schedule Entry'
-                : editingPost
+                : scheduledLocal
+                ? 'Schedule'
+                : editingPost && !editingPost.isDraft
                 ? 'Save Changes'
-                : 'Publish Entry'}
+                : 'Post'}
             </button>
           </div>
         </form>

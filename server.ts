@@ -127,46 +127,7 @@ function buildSeedData(): StoreData {
     },
   ];
 
-  const banners: BannerSchedule[] = [
-    {
-      id: 'banner-daylight',
-      title: '',
-      subtitle: 'Sunlit glass workspace · Scheduled daylight edition (06:00 – 17:59)',
-      imageUrl: '/samples/banner-aero-horizon.jpg',
-      mode: 'daily-hours',
-      dailyStartHour: 6,
-      dailyEndHour: 17,
-      priority: 10,
-    },
-    {
-      id: 'banner-evening',
-      title: '',
-      subtitle: 'Quiet twilight reflection mode · Scheduled evening edition (18:00 – 05:59)',
-      imageUrl: '/samples/banner-evening-aurora.jpg',
-      mode: 'daily-hours',
-      dailyStartHour: 18,
-      dailyEndHour: 5,
-      priority: 10,
-    },
-    {
-      id: 'banner-default',
-      title: '',
-      subtitle: 'Personal Aero workspace · <a href="#timeline">Explore latest entries</a>',
-      subtitleHtml: 'Personal Aero workspace · <a href="#timeline">Explore latest entries</a>',
-      imageUrl: '/samples/banner-aero-horizon.jpg',
-      mode: 'slideshow',
-      priority: 5,
-    },
-    {
-      id: 'banner-slideshow-2',
-      title: '',
-      subtitle: 'Morning desk & coastal horizon · <a href="#live">Watch LIVE channels</a>',
-      subtitleHtml: 'Morning desk & coastal horizon · <a href="#live">Watch LIVE channels</a>',
-      imageUrl: '/samples/post-widescreen.jpg',
-      mode: 'slideshow',
-      priority: 5,
-    },
-  ];
+  const banners: BannerSchedule[] = [];
 
   const countdowns: EventCountdown[] = [
     {
@@ -244,12 +205,14 @@ function escapeRegExp(str: string): string {
 }
 
 function isPostLive(post: Post, nowMs: number): boolean {
+  if (post.isDraft) return false;
   const target = post.scheduledFor || post.publishedAt;
   const ts = new Date(target).getTime();
   return Number.isNaN(ts) || ts <= nowMs;
 }
 
 function isPostPinned(post: Post, nowMs: number): boolean {
+  if (post.isDraft) return false;
   if (!post.pinnedUntil) return false;
   const ts = new Date(post.pinnedUntil).getTime();
   return !Number.isNaN(ts) && ts > nowMs;
@@ -257,7 +220,43 @@ function isPostPinned(post: Post, nowMs: number): boolean {
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '60mb' }));
+
+  app.post(
+    '/api/upload-raw',
+    express.raw({ type: '*/*', limit: '250mb' }),
+    (req, res) => {
+      try {
+        const rawBuf = req.body as Buffer;
+        if (!Buffer.isBuffer(rawBuf) || rawBuf.length === 0) {
+          res.status(400).json({ error: 'Missing file payload.' });
+          return;
+        }
+        const fileNameParam =
+          typeof req.query.fileName === 'string' ? req.query.fileName : 'upload.bin';
+        const mimeParam =
+          typeof req.query.mimeType === 'string'
+            ? req.query.mimeType
+            : 'application/octet-stream';
+        const ext =
+          path.extname(fileNameParam).replace(/[^a-zA-Z0-9.]/g, '') || '.bin';
+        const safeName = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
+        const targetPath = path.join(UPLOADS_DIR, safeName);
+        fs.writeFileSync(targetPath, rawBuf);
+
+        res.json({
+          url: `/uploads/${safeName}`,
+          fileName: fileNameParam || safeName,
+          mimeType: mimeParam,
+          fileSize: rawBuf.length,
+        });
+      } catch (err) {
+        console.error('Raw upload error:', err);
+        res.status(500).json({ error: 'Failed to store uploaded file.' });
+      }
+    }
+  );
+
+  app.use(express.json({ limit: '150mb' }));
 
   app.use('/uploads', express.static(UPLOADS_DIR));
   app.use('/samples', express.static(path.resolve(process.cwd(), 'public', 'samples')));
@@ -305,6 +304,7 @@ async function startServer() {
     const store = readStore();
     const body = req.body as Partial<Post>;
     const nowIso = new Date().toISOString();
+    const isDraft = Boolean(body.isDraft);
     const newPost: Post = {
       id: `post-${crypto.randomUUID()}`,
       title: typeof body.title === 'string' ? body.title : '',
@@ -317,6 +317,7 @@ async function startServer() {
       publishedAt: body.scheduledFor || nowIso,
       scheduledFor: body.scheduledFor || null,
       pinnedUntil: body.pinnedUntil || null,
+      isDraft,
     };
     store.posts.unshift(newPost);
     writeStore(store);
@@ -348,6 +349,7 @@ async function startServer() {
           ? patch.scheduledFor
           : existing.publishedAt,
       pinnedUntil: patch.pinnedUntil !== undefined ? patch.pinnedUntil : existing.pinnedUntil,
+      isDraft: patch.isDraft !== undefined ? Boolean(patch.isDraft) : existing.isDraft,
     };
     store.posts[idx] = updated;
     writeStore(store);

@@ -116,7 +116,7 @@ export const ScheduledBanner: React.FC<ScheduledBannerProps> = ({
 
   return (
     <section
-      aria-label="Hero Banner Slideshow"
+      aria-label="Banner Slideshow"
       className="relative w-full overflow-hidden border-b border-white/60 bg-slate-900 dark:border-slate-800"
     >
       <div className="relative h-56 w-full sm:h-72 lg:h-80">
@@ -126,7 +126,7 @@ export const ScheduledBanner: React.FC<ScheduledBannerProps> = ({
             <img
               key={slide.id}
               src={slide.imageUrl}
-              alt={slide.title || 'Dashboard hero banner'}
+              alt={slide.title || 'Dashboard banner'}
               referrerPolicy="no-referrer"
               aria-hidden={!isCurrent}
               className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ease-out ${
@@ -179,7 +179,7 @@ export const ScheduledBanner: React.FC<ScheduledBannerProps> = ({
                   ? 'Scheduled Banner Window'
                   : activeSlide.mode === 'slideshow'
                   ? `Banner Slideshow (${slideIdx + 1}/${slides.length})`
-                  : 'Active Hero Banner'}
+                  : 'Active Banner'}
               </span>
             </div>
 

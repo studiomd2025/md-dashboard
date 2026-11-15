@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
   FileText,
   Film,
@@ -101,27 +103,46 @@ function enhanceBodyHtmlWithTagLinks(html: string): string {
   return doc.body.innerHTML;
 }
 
-const AttachmentRenderer: React.FC<{
+function isCarouselAttachment(att: MediaAttachment): boolean {
+  if (att.type === 'image' || att.type === 'gif' || att.type === 'video') {
+    return true;
+  }
+  if (att.type === 'embed' && att.embedUrl) {
+    return att.embedKind !== 'spotify' && att.embedKind !== 'soundcloud';
+  }
+  return false;
+}
+
+const CarouselSlide: React.FC<{
   attachment: MediaAttachment;
+  isMulti: boolean;
   onOpenLightbox: (url: string, title?: string) => void;
-}> = ({ attachment, onOpenLightbox }) => {
+}> = ({ attachment, isMulti, onOpenLightbox }) => {
+  const frameHeightClass = isMulti ? 'h-[240px] sm:h-[310px]' : '';
+
   if (attachment.type === 'image' || attachment.type === 'gif') {
     return (
-      <figure className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-100/80 dark:border-slate-700/60 dark:bg-slate-900/60">
+      <figure
+        className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-100/80 dark:border-slate-700/60 dark:bg-slate-900/60 ${
+          isMulti ? 'w-[86%] sm:w-[78%] shrink-0 snap-start' : 'w-full'
+        }`}
+      >
         <button
           type="button"
           onClick={() => onOpenLightbox(attachment.url, attachment.title)}
-          className="block w-full text-left cursor-zoom-in"
+          className={`block w-full text-left cursor-zoom-in ${frameHeightClass}`}
         >
           <img
             src={attachment.url}
-            alt={attachment.title || 'Diary media attachment'}
+            alt={attachment.title || 'Post media'}
             referrerPolicy="no-referrer"
-            className="max-h-[460px] w-full object-cover transition-transform duration-300 hover:scale-[1.01]"
+            className={`${
+              isMulti ? 'h-full w-full' : 'max-h-[460px] w-full'
+            } object-cover transition-transform duration-300 hover:scale-[1.01]`}
           />
         </button>
         {(attachment.title || attachment.type === 'gif') && (
-          <figcaption className="flex items-center justify-between gap-4 px-4 py-2 text-xs text-slate-600 dark:text-slate-300">
+          <figcaption className="flex items-center justify-between gap-4 px-3.5 py-2 text-xs text-slate-600 dark:text-slate-300">
             <span className="truncate">{attachment.title || 'Animated GIF'}</span>
             {attachment.type === 'gif' && (
               <span className="font-mono text-[11px] uppercase tracking-wide text-sky-700 dark:text-sky-300 shrink-0">
@@ -136,15 +157,21 @@ const AttachmentRenderer: React.FC<{
 
   if (attachment.type === 'video') {
     return (
-      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950 dark:border-slate-700/60">
-        <video
-          controls
-          preload="metadata"
-          className="max-h-[420px] w-full"
-          src={attachment.url}
-        />
+      <div
+        className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950 dark:border-slate-700/60 ${
+          isMulti ? 'w-[86%] sm:w-[78%] shrink-0 snap-start flex flex-col' : 'w-full'
+        }`}
+      >
+        <div className={isMulti ? 'h-[240px] sm:h-[310px] w-full bg-black' : 'w-full bg-black'}>
+          <video
+            controls
+            preload="metadata"
+            className={isMulti ? 'h-full w-full object-contain' : 'max-h-[440px] w-full'}
+            src={attachment.url}
+          />
+        </div>
         {attachment.title && (
-          <div className="flex items-center gap-2 bg-white/90 px-4 py-2 text-xs text-slate-700 dark:bg-slate-900/90 dark:text-slate-300">
+          <div className="flex items-center gap-2 bg-white/90 px-3.5 py-2 text-xs text-slate-700 dark:bg-slate-900/90 dark:text-slate-300">
             <Film className="h-3.5 w-3.5 text-sky-600 shrink-0" />
             <span className="truncate">{attachment.title}</span>
           </div>
@@ -153,12 +180,50 @@ const AttachmentRenderer: React.FC<{
     );
   }
 
+  // Video / YouTube embed inside carousel
+  return (
+    <div
+      className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950/5 dark:border-slate-700/60 dark:bg-slate-900/70 ${
+        isMulti ? 'w-[86%] sm:w-[78%] shrink-0 snap-start flex flex-col' : 'w-full'
+      }`}
+    >
+      <div className={isMulti ? 'h-[240px] sm:h-[310px] w-full' : 'aspect-video w-full'}>
+        <iframe
+          src={attachment.embedUrl}
+          title={attachment.title || 'YouTube video'}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          loading="lazy"
+          className="h-full w-full border-0"
+        />
+      </div>
+      <div className="flex items-center justify-between gap-3 bg-white/85 px-3.5 py-2 text-xs text-slate-600 dark:bg-slate-900/85 dark:text-slate-300">
+        <span className="truncate font-medium">
+          {attachment.title || 'YouTube Video'}
+        </span>
+        <a
+          href={attachment.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-sky-700 hover:underline dark:text-sky-300 whitespace-nowrap shrink-0"
+        >
+          <span>Open</span>
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      </div>
+    </div>
+  );
+};
+
+const StackedCardRenderer: React.FC<{ attachment: MediaAttachment }> = ({
+  attachment,
+}) => {
   if (attachment.type === 'audio') {
     return (
       <div className="flex flex-col gap-2 rounded-2xl border border-sky-200/70 bg-sky-50/70 p-4 dark:border-sky-800/50 dark:bg-sky-950/30">
         <div className="flex items-center gap-2.5 text-xs font-medium text-slate-800 dark:text-slate-100">
           <Music className="h-4 w-4 text-sky-600 dark:text-sky-400 shrink-0" />
-          <span className="truncate">{attachment.title || 'Audio Recording'}</span>
+          <span className="truncate">{attachment.title || 'Audio File'}</span>
           {attachment.fileSize ? (
             <span className="ml-auto font-mono text-[11px] text-slate-500 tabular-nums shrink-0">
               {formatFileSize(attachment.fileSize)}
@@ -171,33 +236,16 @@ const AttachmentRenderer: React.FC<{
   }
 
   if (attachment.type === 'embed' && attachment.embedUrl) {
-    const isCompactAudio =
-      attachment.embedKind === 'spotify' || attachment.embedKind === 'soundcloud';
     return (
       <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950/5 dark:border-slate-700/60 dark:bg-slate-900/70">
-        <div className={isCompactAudio ? 'h-[152px] w-full' : 'aspect-video w-full'}>
+        <div className="h-[152px] w-full">
           <iframe
             src={attachment.embedUrl}
-            title={attachment.title || 'Embedded media player'}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
+            title={attachment.title || 'Audio embed player'}
+            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
             loading="lazy"
             className="h-full w-full border-0"
           />
-        </div>
-        <div className="flex items-center justify-between gap-3 bg-white/80 px-4 py-2 text-xs text-slate-600 dark:bg-slate-900/85 dark:text-slate-300">
-          <span className="truncate font-medium">
-            {attachment.title || 'Playable Media Embed'}
-          </span>
-          <a
-            href={attachment.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-sky-700 hover:underline dark:text-sky-300 whitespace-nowrap shrink-0"
-          >
-            <span>Open source</span>
-            <ExternalLink className="h-3 w-3" />
-          </a>
         </div>
       </div>
     );
@@ -219,7 +267,7 @@ const AttachmentRenderer: React.FC<{
               {attachment.title || 'Attached Document'}
             </div>
             <div className="text-xs text-slate-500 dark:text-slate-400">
-              Document attachment
+              Document
               {attachment.fileSize ? ` · ${formatFileSize(attachment.fileSize)}` : ''}
             </div>
           </div>
@@ -231,7 +279,7 @@ const AttachmentRenderer: React.FC<{
     );
   }
 
-  // Web link card
+  // Web link preview card
   return (
     <a
       href={attachment.url}
@@ -262,6 +310,9 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
   onTogglePin,
   onOpenLightbox,
 }) => {
+  const carouselTrackRef = useRef<HTMLDivElement>(null);
+  const [activeSlideIndex, setActiveSlideIndex] = useState(0);
+
   const isPinned =
     !!post.pinnedUntil && new Date(post.pinnedUntil).getTime() > nowMs;
   const isScheduledFuture =
@@ -273,6 +324,15 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
     [post.bodyHtml]
   );
 
+  const carouselItems = React.useMemo(
+    () => (post.attachments || []).filter(isCarouselAttachment),
+    [post.attachments]
+  );
+  const stackedCardItems = React.useMemo(
+    () => (post.attachments || []).filter((att) => !isCarouselAttachment(att)),
+    [post.attachments]
+  );
+
   const handleProseClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     const tagAttr = target.getAttribute('data-inline-tag');
@@ -282,9 +342,27 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
     }
   };
 
+  const scrollCarouselBy = (direction: -1 | 1) => {
+    const track = carouselTrackRef.current;
+    if (!track) return;
+    const stepWidth = Math.max(260, track.clientWidth * 0.78);
+    track.scrollBy({ left: direction * stepWidth, behavior: 'smooth' });
+  };
+
+  const handleCarouselScroll = () => {
+    const track = carouselTrackRef.current;
+    if (!track || carouselItems.length <= 1) return;
+    const stepWidth = Math.max(200, track.clientWidth * 0.78);
+    const idx = Math.min(
+      carouselItems.length - 1,
+      Math.max(0, Math.round(track.scrollLeft / stepWidth))
+    );
+    setActiveSlideIndex(idx);
+  };
+
   return (
     <article className="aero-glass rounded-3xl p-5 sm:p-7 transition-shadow">
-      {/* Unboxed Metadata Row (Zero-Pill Rule) */}
+      {/* Metadata & Actions Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
           <time dateTime={post.publishedAt}>
@@ -313,8 +391,8 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
           <button
             type="button"
             onClick={() => onTogglePin(post)}
-            title={isPinned ? 'Unpin entry' : 'Pin entry to top for 7 days'}
-            aria-label={isPinned ? 'Unpin entry' : 'Pin entry to top'}
+            title={isPinned ? 'Unpin post' : 'Pin post to top for 7 days'}
+            aria-label={isPinned ? 'Unpin post' : 'Pin post to top'}
             className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
           >
             {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
@@ -322,8 +400,8 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
           <button
             type="button"
             onClick={() => onEdit(post)}
-            title="Edit entry"
-            aria-label="Edit entry"
+            title="Edit post"
+            aria-label="Edit post"
             className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
           >
             <Pencil className="h-4 w-4" />
@@ -331,8 +409,8 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
           <button
             type="button"
             onClick={() => onDelete(post.id)}
-            title="Delete entry"
-            aria-label="Delete entry"
+            title="Delete post"
+            aria-label="Delete post"
             className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-rose-100/80 hover:text-rose-700 dark:text-slate-400 dark:hover:bg-rose-950/50 dark:hover:text-rose-300 cursor-pointer"
           >
             <Trash2 className="h-4 w-4" />
@@ -340,14 +418,14 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
         </div>
       </div>
 
-      {/* Optional Post Title with Inline Clickable Hashtags */}
+      {/* Title */}
       {post.title.trim() && (
         <h2 className="mt-2.5 font-display text-xl font-bold tracking-tight text-slate-900 sm:text-2xl dark:text-white [text-wrap:balance]">
           {renderTextWithClickableHashtags(post.title, onSelectTag)}
         </h2>
       )}
 
-      {/* Rich Text Body with Typeface Selection + Inline Clickable Hashtags */}
+      {/* Rich Text Body */}
       {post.bodyHtml.trim() && (
         <div
           onClick={handleProseClick}
@@ -358,25 +436,9 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
         />
       )}
 
-      {/* Multimedia Attachments */}
-      {post.attachments.length > 0 && (
-        <div className="mt-4 space-y-3">
-          {post.attachments.map((att) => (
-            <AttachmentRenderer
-              key={att.id}
-              attachment={att}
-              onOpenLightbox={onOpenLightbox}
-            />
-          ))}
-        </div>
-      )}
-
-      {/* Dedicated Event Hashtags Section (Method 2 of Dual-Method Tags) */}
+      {/* Tags (kept directly with text above media, matching X layout) */}
       {mergedTags.length > 0 && (
-        <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-slate-200/70 pt-3.5 text-xs dark:border-slate-700/60">
-          <span className="font-medium text-slate-500 dark:text-slate-400">
-            Event Tags:
-          </span>
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
           {mergedTags.map((tag) => {
             const isSelected = activeTag?.toLowerCase() === tag.toLowerCase();
             return (
@@ -394,6 +456,68 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {/* First Below Text/Tags: Visual Media & Video/YouTube Carousel (X-style) */}
+      {carouselItems.length > 0 && (
+        <div className="relative mt-4">
+          {carouselItems.length === 1 ? (
+            <CarouselSlide
+              attachment={carouselItems[0]}
+              isMulti={false}
+              onOpenLightbox={onOpenLightbox}
+            />
+          ) : (
+            <>
+              <div className="mb-2 flex items-center justify-between text-[11px] font-mono text-slate-500 tabular-nums dark:text-slate-400">
+                <span>
+                  {activeSlideIndex + 1} / {carouselItems.length} media
+                </span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => scrollCarouselBy(-1)}
+                    aria-label="Scroll media left"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white/85 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => scrollCarouselBy(1)}
+                    aria-label="Scroll media right"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white/85 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+              <div
+                ref={carouselTrackRef}
+                onScroll={handleCarouselScroll}
+                className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory scroll-smooth"
+              >
+                {carouselItems.map((att) => (
+                  <CarouselSlide
+                    key={att.id}
+                    attachment={att}
+                    isMulti={true}
+                    onOpenLightbox={onOpenLightbox}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Below Carousel: Stacked Web Link / Document / Audio Cards */}
+      {stackedCardItems.length > 0 && (
+        <div className="mt-3 space-y-2.5">
+          {stackedCardItems.map((att) => (
+            <StackedCardRenderer key={att.id} attachment={att} />
+          ))}
         </div>
       )}
     </article>
