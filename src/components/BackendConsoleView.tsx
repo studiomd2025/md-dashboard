@@ -1,0 +1,1271 @@
+import React, { useRef, useState } from 'react';
+import {
+  Bold,
+  CalendarClock,
+  Check,
+  Edit3,
+  FileText,
+  Film,
+  Hash,
+  Image as ImageIcon,
+  Italic,
+  Layers,
+  Music,
+  Palette,
+  Pin,
+  Plus,
+  Send,
+  Trash2,
+  Underline,
+  Upload,
+} from 'lucide-react';
+import type {
+  BackendTab,
+  BannerMode,
+  BannerSchedule,
+  CountdownFormat,
+  DesignSettings,
+  DiaryFont,
+  EventCountdown,
+  MediaAttachment,
+  Post,
+  SurfaceStyle,
+  ThemePresetId,
+} from '../types';
+import {
+  formatFileSize,
+  formatPostTimestamp,
+  getFontClass,
+  normalizeTag,
+  sanitizeRichHtml,
+  stripHtml,
+} from '../lib/mediaUtils';
+import { resolveActiveBanner } from './ScheduledBanner';
+
+interface BackendConsoleViewProps {
+  activeTab: BackendTab;
+  onSelectTab: (tab: BackendTab) => void;
+  posts: Post[];
+  scheduledPosts: Post[];
+  countdowns: EventCountdown[];
+  tagCounts: { tag: string; count: number }[];
+  banners: BannerSchedule[];
+  design: DesignSettings;
+  now: Date;
+  onOpenNewComposer: () => void;
+  onEditPost: (post: Post) => void;
+  onDeletePost: (id: string) => Promise<void>;
+  onPublishNow: (post: Post) => Promise<void>;
+  onTogglePin: (post: Post) => Promise<void>;
+  onAddCountdown: (payload: {
+    title: string;
+    targetAt: string;
+    tag?: string;
+    bodyHtml?: string;
+    font?: DiaryFont;
+    displayFormat?: CountdownFormat;
+    attachments?: MediaAttachment[];
+  }) => Promise<void>;
+  onDeleteCountdown: (id: string) => Promise<void>;
+  onRenameTag: (oldTag: string, newTag: string) => Promise<void>;
+  onDeleteTag: (tag: string) => Promise<void>;
+  onFilterByTag: (tag: string) => void;
+  onAddBanner: (payload: Omit<BannerSchedule, 'id'>) => Promise<void>;
+  onUpdateBanner: (id: string, patch: Partial<BannerSchedule>) => Promise<void>;
+  onDeleteBanner: (id: string) => Promise<void>;
+  onUpdateDesign: (next: Partial<DesignSettings>) => Promise<void>;
+}
+
+export const THEME_PRESETS: {
+  id: ThemePresetId;
+  label: string;
+  description: string;
+  swatches: [string, string, string];
+}[] = [
+  {
+    id: 'aero-daylight',
+    label: 'Frutiger Aero Daylight',
+    description: 'Sunlit cyan sky, turquoise accents, and clear frosted glass.',
+    swatches: ['#eff8fd', '#38bdf8', '#10b981'],
+  },
+  {
+    id: 'twilight-lagoon',
+    label: 'Twilight Lagoon (Dark)',
+    description: 'Deep ocean slate canvas with luminous cyan-emerald glass.',
+    swatches: ['#06131c', '#0ea5e9', '#10b981'],
+  },
+  {
+    id: 'meadow-mint',
+    label: 'Meadow Mint Breeze',
+    description: 'Fresh botanical mint canvas with emerald glass highlights.',
+    swatches: ['#ecfdf5', '#34d399', '#0284c7'],
+  },
+  {
+    id: 'crystal-pearl',
+    label: 'Crystal Pearl Minimal',
+    description: 'Crisp 2026 alabaster surfaces with high-contrast slate ink.',
+    swatches: ['#f8fafc', '#cbd5e1', '#0f172a'],
+  },
+  {
+    id: 'sunset-glass',
+    label: 'Sunset Tangerine Glass',
+    description: 'Warm nostalgic peach-amber glow paired with clean glass.',
+    swatches: ['#fff7ed', '#fb923c', '#e11d48'],
+  },
+];
+
+const PRESET_BANNERS = [
+  { label: 'Aero Daylight Horizon', url: '/samples/banner-aero-horizon.jpg' },
+  { label: 'Evening Lagoon Twilight', url: '/samples/banner-evening-aurora.jpg' },
+];
+
+const COUNTDOWN_COLORS = ['#0f172a', '#0284c7', '#059669', '#e11d48', '#d97706'];
+
+export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
+  activeTab,
+  onSelectTab,
+  posts,
+  scheduledPosts,
+  countdowns,
+  tagCounts,
+  banners,
+  design,
+  now,
+  onOpenNewComposer,
+  onEditPost,
+  onDeletePost,
+  onPublishNow,
+  onTogglePin,
+  onAddCountdown,
+  onDeleteCountdown,
+  onRenameTag,
+  onDeleteTag,
+  onFilterByTag,
+  onAddBanner,
+  onUpdateBanner,
+  onDeleteBanner,
+  onUpdateDesign,
+}) => {
+  // Tag management state
+  const [editingTag, setEditingTag] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [tagBusy, setTagBusy] = useState(false);
+
+  // Next on MD (Countdown) creator state
+  const cdEditorRef = useRef<HTMLDivElement>(null);
+  const cdFileRef = useRef<HTMLInputElement>(null);
+  const [cdTitle, setCdTitle] = useState('');
+  const [cdTarget, setCdTarget] = useState('');
+  const [cdTag, setCdTag] = useState('');
+  const [cdFormat, setCdFormat] = useState<CountdownFormat>('full');
+  const [cdFont, setCdFont] = useState<DiaryFont>('sans');
+  const [cdBodyHtml, setCdBodyHtml] = useState('');
+  const [cdAttachments, setCdAttachments] = useState<MediaAttachment[]>([]);
+  const [cdUploading, setCdUploading] = useState(false);
+
+  // Banner upload/schedule state
+  const bannerFileRef = useRef<HTMLInputElement>(null);
+  const backdropFileRef = useRef<HTMLInputElement>(null);
+  const [bannerTitle, setBannerTitle] = useState('');
+  const [bannerSubtitle, setBannerSubtitle] = useState('');
+  const [bannerImageUrl, setBannerImageUrl] = useState('/samples/banner-aero-horizon.jpg');
+  const [bannerMode, setBannerMode] = useState<BannerMode>('default');
+  const [bannerStartAt, setBannerStartAt] = useState('');
+  const [bannerEndAt, setBannerEndAt] = useState('');
+  const [bannerStartHour, setBannerStartHour] = useState(9);
+  const [bannerEndHour, setBannerEndHour] = useState(17);
+  const [isUploadingBanner, setIsUploadingBanner] = useState(false);
+  const [isUploadingBackdrop, setIsUploadingBackdrop] = useState(false);
+  const [customBackdropInput, setCustomBackdropInput] = useState(
+    design.customBackdropUrl || ''
+  );
+
+  const activeBanner = resolveActiveBanner(banners, now);
+  const nowMs = now.getTime();
+
+  const uploadFileToServer = async (
+    file: File
+  ): Promise<{ url: string; fileName: string; mimeType: string; fileSize: number } | null> => {
+    const dataBase64 = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Read error'));
+      reader.readAsDataURL(file);
+    });
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: file.name,
+        mimeType: file.type,
+        dataBase64,
+      }),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      url: string;
+      fileName: string;
+      mimeType: string;
+      fileSize: number;
+    };
+  };
+
+  const handleCountdownMediaUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setCdUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const uploaded = await uploadFileToServer(file);
+        if (!uploaded) continue;
+        let type: MediaAttachment['type'] = 'document';
+        if (file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')) {
+          type = 'gif';
+        } else if (file.type.startsWith('image/')) {
+          type = 'image';
+        } else if (file.type.startsWith('video/')) {
+          type = 'video';
+        } else if (file.type.startsWith('audio/')) {
+          type = 'audio';
+        }
+        setCdAttachments((prev) => [
+          ...prev,
+          {
+            id: `cd-att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            type,
+            url: uploaded.url,
+            title: uploaded.fileName,
+            mimeType: uploaded.mimeType,
+            fileSize: uploaded.fileSize,
+          },
+        ]);
+      }
+    } finally {
+      setCdUploading(false);
+      if (cdFileRef.current) cdFileRef.current.value = '';
+    }
+  };
+
+  const execCdFormat = (command: string, value?: string) => {
+    cdEditorRef.current?.focus();
+    document.execCommand(command, false, value);
+    if (cdEditorRef.current) {
+      setCdBodyHtml(cdEditorRef.current.innerHTML);
+    }
+  };
+
+  const handleCreateCountdown = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cdTitle.trim() || !cdTarget) return;
+    const cleanedHtml = sanitizeRichHtml(cdEditorRef.current?.innerHTML || cdBodyHtml);
+    await onAddCountdown({
+      title: cdTitle.trim(),
+      targetAt: new Date(cdTarget).toISOString(),
+      tag: cdTag.trim() ? normalizeTag(cdTag) : undefined,
+      bodyHtml: cleanedHtml,
+      font: cdFont,
+      displayFormat: cdFormat,
+      attachments: cdAttachments,
+    });
+    setCdTitle('');
+    setCdTarget('');
+    setCdTag('');
+    setCdBodyHtml('');
+    setCdAttachments([]);
+    if (cdEditorRef.current) cdEditorRef.current.innerHTML = '';
+  };
+
+  const handleBannerFileChange = async (file: File | undefined) => {
+    if (!file) return;
+    setIsUploadingBanner(true);
+    try {
+      const uploaded = await uploadFileToServer(file);
+      if (uploaded?.url) setBannerImageUrl(uploaded.url);
+    } finally {
+      setIsUploadingBanner(false);
+      if (bannerFileRef.current) bannerFileRef.current.value = '';
+    }
+  };
+
+  const handleBackdropFileChange = async (file: File | undefined) => {
+    if (!file) return;
+    setIsUploadingBackdrop(true);
+    try {
+      const uploaded = await uploadFileToServer(file);
+      if (uploaded?.url) {
+        setCustomBackdropInput(uploaded.url);
+        await onUpdateDesign({ customBackdropUrl: uploaded.url });
+      }
+    } finally {
+      setIsUploadingBackdrop(false);
+      if (backdropFileRef.current) backdropFileRef.current.value = '';
+    }
+  };
+
+  const handleCreateBanner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bannerImageUrl.trim()) return;
+    await onAddBanner({
+      title: bannerTitle.trim(),
+      subtitle: bannerSubtitle.trim(),
+      imageUrl: bannerImageUrl.trim(),
+      mode: bannerMode,
+      startAt:
+        bannerMode === 'window' && bannerStartAt
+          ? new Date(bannerStartAt).toISOString()
+          : undefined,
+      endAt:
+        bannerMode === 'window' && bannerEndAt
+          ? new Date(bannerEndAt).toISOString()
+          : undefined,
+      dailyStartHour: bannerMode === 'daily-hours' ? bannerStartHour : undefined,
+      dailyEndHour: bannerMode === 'daily-hours' ? bannerEndHour : undefined,
+      priority: bannerMode === 'window' ? 40 : bannerMode === 'daily-hours' ? 20 : 50,
+    });
+    setBannerTitle('');
+    setBannerSubtitle('');
+  };
+
+  const handleConfirmRenameTag = async (oldTag: string) => {
+    if (!renameValue.trim() || renameValue.trim() === oldTag) {
+      setEditingTag(null);
+      return;
+    }
+    setTagBusy(true);
+    try {
+      await onRenameTag(oldTag, renameValue.trim());
+      setEditingTag(null);
+      setRenameValue('');
+    } finally {
+      setTagBusy(false);
+    }
+  };
+
+  const tabs: {
+    id: BackendTab;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }[] = [
+    { id: 'compose', label: 'Post & Schedule', icon: Send },
+    { id: 'countdowns', label: 'Next on MD', icon: CalendarClock },
+    { id: 'tags', label: 'Hashtags', icon: Hash },
+    { id: 'banners', label: 'Hero Banner', icon: ImageIcon },
+    { id: 'design', label: 'Theme & Design', icon: Palette },
+  ];
+
+  return (
+    <div className="space-y-5">
+      {/* Settings Sub-Navigation */}
+      <section className="aero-glass rounded-3xl p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="font-display text-xl font-bold text-slate-900 dark:text-white">
+              Settings
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+              Manage posting, scheduling, Next on MD countdowns, Hashtags, Hero Banners, and Theme & Visual Design.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenNewComposer}
+            className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <Plus className="h-4 w-4" />
+            Compose New Entry
+          </button>
+        </div>
+
+        <div
+          role="tablist"
+          aria-label="Settings Sections"
+          className="mt-4 flex flex-wrap items-center gap-1.5 rounded-2xl bg-slate-100/90 p-1.5 dark:bg-slate-800/80"
+        >
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => onSelectTab(tab.id)}
+                className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  isActive
+                    ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5 shrink-0" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Tab 1: Posting & Scheduling Manager */}
+      {activeTab === 'compose' && (
+        <div className="space-y-5">
+          <section className="aero-glass rounded-3xl p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                  Scheduled Entries ({scheduledPosts.length})
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Queued entries publish automatically at their target time.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onOpenNewComposer}
+                className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                + Schedule Entry
+              </button>
+            </div>
+
+            {scheduledPosts.length === 0 ? (
+              <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
+                No posts in the future schedule queue.
+              </p>
+            ) : (
+              <div className="mt-4 divide-y divide-slate-200/70 dark:divide-slate-700/60">
+                {scheduledPosts.map((post) => (
+                  <div
+                    key={post.id}
+                    className="flex flex-col gap-3 py-3.5 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-mono text-[11px] font-semibold text-amber-700 tabular-nums dark:text-amber-300">
+                        Scheduled · {formatPostTimestamp(post.scheduledFor || post.publishedAt)}
+                      </div>
+                      <div className="mt-0.5 truncate font-display text-sm font-bold text-slate-900 dark:text-white">
+                        {post.title || 'Untitled Scheduled Entry'}
+                      </div>
+                      <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                        {stripHtml(post.bodyHtml) || 'Multimedia entry'}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onPublishNow(post)}
+                        className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 cursor-pointer"
+                      >
+                        Publish Now
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onEditPost(post)}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeletePost(post.id)}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="aero-glass rounded-3xl p-6">
+            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              All Published & Pinned Entries ({posts.length})
+            </h3>
+            <div className="mt-4 divide-y divide-slate-200/70 dark:divide-slate-700/60">
+              {posts.map((post) => {
+                const isPinned =
+                  !!post.pinnedUntil && new Date(post.pinnedUntil).getTime() > nowMs;
+                return (
+                  <div
+                    key={post.id}
+                    className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-slate-500 tabular-nums dark:text-slate-400">
+                        <span>{formatPostTimestamp(post.publishedAt)}</span>
+                        {isPinned && (
+                          <>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-sans font-semibold text-sky-700 dark:text-sky-300">
+                              Pinned
+                            </span>
+                          </>
+                        )}
+                      </div>
+                      <div className="truncate font-display text-sm font-semibold text-slate-900 dark:text-white">
+                        {post.title || stripHtml(post.bodyHtml).slice(0, 70) || 'Multimedia Entry'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onTogglePin(post)}
+                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                      >
+                        <Pin className="h-3 w-3" />
+                        {isPinned ? 'Unpin' : 'Pin 7d'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onEditPost(post)}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeletePost(post.id)}
+                        className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* Tab 2: Next on MD (Countdown Setup with RTF, Custom Format & Multimedia) */}
+      {activeTab === 'countdowns' && (
+        <div className="space-y-5">
+          <section className="aero-glass rounded-3xl p-6">
+            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              Next on MD — Countdown Setup
+            </h3>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+              Create customized event countdowns with rich text notes (RTF), display format options, optional hashtags, and optional multimedia files. The Next on MD widget appears in the sidebar automatically whenever at least one countdown is active.
+            </p>
+
+            <form onSubmit={handleCreateCountdown} className="mt-4 space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Event Title
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={cdTitle}
+                    onChange={(e) => setCdTitle(e.target.value)}
+                    placeholder="e.g., Kyoto Autumn Trip"
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Target Date & Time
+                  </label>
+                  <input
+                    type="datetime-local"
+                    required
+                    value={cdTarget}
+                    onChange={(e) => setCdTarget(e.target.value)}
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Countdown Display Format
+                  </label>
+                  <select
+                    value={cdFormat}
+                    onChange={(e) => setCdFormat(e.target.value as CountdownFormat)}
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  >
+                    <option value="full">Full Timer (00d : 00h : 00m : 00s)</option>
+                    <option value="days-only">Days Remaining (e.g. 14 days left)</option>
+                    <option value="compact">Compact Clock (HH:MM:SS)</option>
+                    <option value="date-only">Target Date Only</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Hashtag (optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={cdTag}
+                    onChange={(e) => setCdTag(e.target.value)}
+                    placeholder="Optional #EventTag"
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              {/* Mini RTF Editor for Countdown */}
+              <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white/85 dark:border-slate-700 dark:bg-slate-900/75">
+                <div className="flex flex-wrap items-center gap-1 border-b border-slate-200/80 bg-slate-50/80 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/60">
+                  <button
+                    type="button"
+                    onClick={() => execCdFormat('bold')}
+                    title="Bold"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                  >
+                    <Bold className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => execCdFormat('italic')}
+                    title="Italic"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                  >
+                    <Italic className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => execCdFormat('underline')}
+                    title="Underline"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                  >
+                    <Underline className="h-3.5 w-3.5" />
+                  </button>
+                  <span className="mx-1 h-4 w-px bg-slate-300 dark:bg-slate-600" />
+                  {COUNTDOWN_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => execCdFormat('foreColor', c)}
+                      style={{ backgroundColor: c }}
+                      className="h-4 w-4 rounded-full border border-white shadow-sm cursor-pointer"
+                      title={`Text color ${c}`}
+                    />
+                  ))}
+                  <select
+                    value={cdFont}
+                    onChange={(e) => setCdFont(e.target.value as DiaryFont)}
+                    className="ml-auto rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                  >
+                    <option value="sans">DM Sans</option>
+                    <option value="serif">Fraunces Serif</option>
+                    <option value="mono">JetBrains Mono</option>
+                    <option value="hand">Caveat Journal</option>
+                  </select>
+                </div>
+
+                <div
+                  ref={cdEditorRef}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={(e) => setCdBodyHtml((e.target as HTMLDivElement).innerHTML)}
+                  className={`diary-prose min-h-[84px] px-3.5 py-2.5 text-sm text-slate-800 focus:outline-none dark:text-slate-100 ${getFontClass(
+                    cdFont
+                  )}`}
+                />
+              </div>
+
+              {/* Optional Multimedia Upload for Countdown */}
+              <div className="rounded-2xl border border-slate-200/80 bg-white/60 p-4 dark:border-slate-700/60 dark:bg-slate-900/40">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Optional Countdown Multimedia (Image, GIF, Video, Audio, File)
+                  </span>
+                  <input
+                    ref={cdFileRef}
+                    type="file"
+                    multiple
+                    accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip"
+                    onChange={(e) => handleCountdownMediaUpload(e.target.files)}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={cdUploading}
+                    onClick={() => cdFileRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    {cdUploading ? 'Uploading...' : 'Attach Media'}
+                  </button>
+                </div>
+
+                {cdAttachments.length > 0 && (
+                  <div className="mt-3 space-y-1.5">
+                    {cdAttachments.map((att) => (
+                      <div
+                        key={att.id}
+                        className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-900"
+                      >
+                        <span className="inline-flex items-center gap-2 truncate">
+                          {att.type === 'image' || att.type === 'gif' ? (
+                            <ImageIcon className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                          ) : att.type === 'video' ? (
+                            <Film className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                          ) : att.type === 'audio' ? (
+                            <Music className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                          )}
+                          <span className="truncate">{att.title}</span>
+                          {att.fileSize ? (
+                            <span className="font-mono text-[10px] text-slate-400">
+                              {formatFileSize(att.fileSize)}
+                            </span>
+                          ) : null}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCdAttachments((prev) =>
+                              prev.filter((a) => a.id !== att.id)
+                            )
+                          }
+                          className="text-rose-600 hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  type="submit"
+                  disabled={cdUploading}
+                  className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add to Next on MD
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <section className="aero-glass rounded-3xl p-6">
+            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              Active Countdowns ({countdowns.length})
+            </h3>
+            {countdowns.length === 0 ? (
+              <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                No countdowns configured. The Next on MD sidebar card stays hidden until you add one.
+              </p>
+            ) : (
+              <div className="mt-4 divide-y divide-slate-200/70 dark:divide-slate-700/60">
+                {countdowns.map((cd) => (
+                  <div
+                    key={cd.id}
+                    className="flex flex-wrap items-center justify-between gap-3 py-3"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                        {cd.title}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                        {formatPostTimestamp(cd.targetAt)} · Format: {cd.displayFormat || 'full'}
+                        {cd.tag ? ` · #${cd.tag}` : ''}
+                        {cd.attachments?.length ? ` · ${cd.attachments.length} file(s)` : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteCountdown(cd.id)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {/* Tab 3: Hashtags Manager */}
+      {activeTab === 'tags' && (
+        <section className="aero-glass rounded-3xl p-6">
+          <div>
+            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              Manage Hashtags
+            </h3>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+              Rename or merge a hashtag across all posts (updating both inline #tags and dedicated tag boxes), or remove tags cleanly.
+            </p>
+          </div>
+
+          {tagCounts.length === 0 ? (
+            <p className="mt-5 text-sm text-slate-500 dark:text-slate-400">
+              No hashtags found yet. Add #EventTags when creating a post.
+            </p>
+          ) : (
+            <div className="mt-5 divide-y divide-slate-200/70 dark:divide-slate-700/60">
+              {tagCounts.map(({ tag, count }) => {
+                const isEditing = editingTag === tag;
+                return (
+                  <div
+                    key={tag}
+                    className="flex flex-wrap items-center justify-between gap-3 py-3"
+                  >
+                    {isEditing ? (
+                      <div className="flex flex-1 items-center gap-2 min-w-[220px]">
+                        <span className="font-mono text-sm text-slate-400">#</span>
+                        <input
+                          type="text"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleConfirmRenameTag(tag);
+                          }}
+                          className="flex-1 rounded-xl border border-sky-400 bg-white px-3 py-1.5 text-sm text-slate-900 focus:outline-none dark:bg-slate-900 dark:text-white"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          disabled={tagBusy}
+                          onClick={() => handleConfirmRenameTag(tag)}
+                          className="inline-flex items-center gap-1 rounded-xl bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingTag(null)}
+                          className="rounded-xl px-2.5 py-1.5 text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => onFilterByTag(tag)}
+                          className="text-sm font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+                        >
+                          #{tag}
+                        </button>
+                        <span className="font-mono text-xs text-slate-500 tabular-nums dark:text-slate-400">
+                          {count} {count === 1 ? 'entry' : 'entries'}
+                        </span>
+                      </div>
+                    )}
+
+                    {!isEditing && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingTag(tag);
+                            setRenameValue(tag);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                          Rename / Merge
+                        </button>
+                        <button
+                          type="button"
+                          disabled={tagBusy}
+                          onClick={() => onDeleteTag(tag)}
+                          className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Remove
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Tab 4: Hero Banner Upload & Scheduler */}
+      {activeTab === 'banners' && (
+        <div className="space-y-5">
+          <section className="aero-glass rounded-3xl p-6">
+            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              Change or Schedule Hero Banner (Image or Animated GIF)
+            </h3>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+              Upload a wide photo or animated GIF to display immediately, or schedule automatic banner swaps by date window or daily hours.
+            </p>
+
+            <form
+              onSubmit={handleCreateBanner}
+              className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2"
+            >
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Banner Caption (optional)
+                </label>
+                <input
+                  type="text"
+                  value={bannerTitle}
+                  onChange={(e) => setBannerTitle(e.target.value)}
+                  placeholder="Leave blank for clean image-only banner"
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Subtitle (optional)
+                </label>
+                <input
+                  type="text"
+                  value={bannerSubtitle}
+                  onChange={(e) => setBannerSubtitle(e.target.value)}
+                  placeholder="e.g., Kyoto Autumn Memories"
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Upload Image / Animated GIF or Paste URL
+                </label>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={bannerImageUrl}
+                    onChange={(e) => setBannerImageUrl(e.target.value)}
+                    className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                  <input
+                    ref={bannerFileRef}
+                    type="file"
+                    accept="image/*,.gif"
+                    onChange={(e) => handleBannerFileChange(e.target.files?.[0])}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={isUploadingBanner}
+                    onClick={() => bannerFileRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-slate-800 dark:bg-sky-600 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    {isUploadingBanner ? 'Uploading...' : 'Upload Image / GIF'}
+                  </button>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
+                  <span className="text-slate-500">Built-in presets:</span>
+                  {PRESET_BANNERS.map((p) => (
+                    <button
+                      key={p.url}
+                      type="button"
+                      onClick={() => setBannerImageUrl(p.url)}
+                      className="font-medium text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                  Activation Mode
+                </label>
+                <select
+                  value={bannerMode}
+                  onChange={(e) => setBannerMode(e.target.value as BannerMode)}
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                >
+                  <option value="default">Set as Default Banner</option>
+                  <option value="window">Schedule Date & Time Window</option>
+                  <option value="daily-hours">Schedule Daily Hours</option>
+                </select>
+              </div>
+
+              {bannerMode === 'window' && (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      Start At
+                    </label>
+                    <input
+                      type="datetime-local"
+                      required
+                      value={bannerStartAt}
+                      onChange={(e) => setBannerStartAt(e.target.value)}
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      End At
+                    </label>
+                    <input
+                      type="datetime-local"
+                      required
+                      value={bannerEndAt}
+                      onChange={(e) => setBannerEndAt(e.target.value)}
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {bannerMode === 'daily-hours' && (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      Start Hour (0–23)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={23}
+                      value={bannerStartHour}
+                      onChange={(e) => setBannerStartHour(Number(e.target.value))}
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      End Hour (0–23)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={23}
+                      value={bannerEndHour}
+                      onChange={(e) => setBannerEndHour(Number(e.target.value))}
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="sm:col-span-2 flex justify-end">
+                <button
+                  type="submit"
+                  className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  Save Banner
+                </button>
+              </div>
+            </form>
+          </section>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {banners.map((b) => {
+              const isActive = activeBanner?.id === b.id;
+              return (
+                <div
+                  key={b.id}
+                  className="aero-glass overflow-hidden rounded-3xl flex flex-col"
+                >
+                  <div className="h-36 w-full bg-slate-200">
+                    <img
+                      src={b.imageUrl}
+                      alt={b.title || 'Hero banner'}
+                      referrerPolicy="no-referrer"
+                      className="h-full w-full object-cover"
+                    />
+                  </div>
+                  <div className="flex flex-1 flex-col justify-between p-4">
+                    <div>
+                      <div className="flex items-center justify-between gap-2 text-xs text-slate-500 dark:text-slate-400">
+                        <span className="inline-flex items-center gap-1">
+                          <CalendarClock className="h-3.5 w-3.5 text-sky-600" />
+                          {b.mode === 'daily-hours'
+                            ? `Daily ${String(b.dailyStartHour ?? 0).padStart(2, '0')}:00 – ${String(
+                                b.dailyEndHour ?? 23
+                              ).padStart(2, '0')}:59`
+                            : b.mode === 'window'
+                            ? 'Scheduled Window'
+                            : 'Default Banner'}
+                        </span>
+                        {isActive && (
+                          <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                            Active Now
+                          </span>
+                        )}
+                      </div>
+                      {b.title && b.title.toUpperCase() !== 'MY DIARIES DASHBOARD' && (
+                        <h4 className="mt-1 font-display text-sm font-bold text-slate-900 dark:text-white">
+                          {b.title}
+                        </h4>
+                      )}
+                      {b.subtitle && (
+                        <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+                          {b.subtitle}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="mt-3 flex items-center justify-between border-t border-slate-200/70 pt-2.5 text-xs dark:border-slate-700/60">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateBanner(b.id, {
+                            priority: (activeBanner?.priority ?? 30) + 10,
+                            mode: 'default',
+                          })
+                        }
+                        className="font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+                      >
+                        Activate Now
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteBanner(b.id)}
+                        className="font-medium text-rose-600 hover:underline cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Tab 5: Theme & Visual Design Studio */}
+      {activeTab === 'design' && (
+        <section className="aero-glass rounded-3xl p-6 space-y-6">
+          <div>
+            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              Theme & Visual Design
+            </h3>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+              Switch between Frutiger Aero palettes and 2026 minimal surfaces, or apply a custom wallpaper/GIF backdrop across the entire dashboard.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {THEME_PRESETS.map((preset) => {
+              const selected = design.theme === preset.id;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => onUpdateDesign({ theme: preset.id })}
+                  className={`flex items-start justify-between gap-3 rounded-2xl border p-4 text-left transition-all cursor-pointer ${
+                    selected
+                      ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
+                      : 'border-slate-200/80 bg-white/60 hover:bg-white dark:border-slate-700 dark:bg-slate-900/40'
+                  }`}
+                >
+                  <div>
+                    <div className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                      {preset.label}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                      {preset.description}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                    {preset.swatches.map((hex) => (
+                      <span
+                        key={hex}
+                        style={{ backgroundColor: hex }}
+                        className="h-4 w-4 rounded-full border border-white shadow-sm"
+                      />
+                    ))}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200">
+              <Layers className="h-4 w-4 text-sky-600" />
+              <span>Card Surface Material</span>
+            </div>
+            <div className="mt-2.5 flex flex-wrap gap-2">
+              {(
+                [
+                  { id: 'aero-glass', label: 'Frutiger Aero Frosted Glass' },
+                  { id: 'crisp-2026', label: 'Crisp Solid 2026 Minimal' },
+                ] as { id: SurfaceStyle; label: string }[]
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => onUpdateDesign({ surfaceStyle: opt.id })}
+                  className={`rounded-xl border px-4 py-2 text-xs font-semibold transition-colors cursor-pointer ${
+                    design.surfaceStyle === opt.id
+                      ? 'border-sky-600 bg-sky-600 text-white'
+                      : 'border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
+            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+              Custom Page Background Image or GIF (optional)
+            </label>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={customBackdropInput}
+                onChange={(e) => setCustomBackdropInput(e.target.value)}
+                placeholder="Paste image/GIF URL or upload from device..."
+                className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+              />
+              <input
+                ref={backdropFileRef}
+                type="file"
+                accept="image/*,.gif"
+                onChange={(e) => handleBackdropFileChange(e.target.files?.[0])}
+                className="hidden"
+              />
+              <button
+                type="button"
+                disabled={isUploadingBackdrop}
+                onClick={() => backdropFileRef.current?.click()}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+              >
+                <Upload className="h-3.5 w-3.5" />
+                {isUploadingBackdrop ? 'Uploading...' : 'Upload'}
+              </button>
+              <button
+                type="button"
+                onClick={() => onUpdateDesign({ customBackdropUrl: customBackdropInput.trim() })}
+                className="rounded-xl bg-sky-600 px-3.5 py-2 text-xs font-semibold text-white cursor-pointer"
+              >
+                Apply
+              </button>
+              {design.customBackdropUrl && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCustomBackdropInput('');
+                    onUpdateDesign({ customBackdropUrl: '' });
+                  }}
+                  className="rounded-xl px-3 py-2 text-xs font-medium text-rose-600 hover:underline cursor-pointer"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
+    </div>
+  );
+};

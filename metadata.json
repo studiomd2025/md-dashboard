@@ -1,0 +1,6 @@
+{
+  "name": "MyDiaries Intranet",
+  "description": "Personal Frutiger Aero 2026 multimedia diary, event timeline, and scheduled intranet dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

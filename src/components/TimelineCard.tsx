@@ -1,0 +1,401 @@
+import React from 'react';
+import {
+  ExternalLink,
+  FileText,
+  Film,
+  Music,
+  Pencil,
+  Pin,
+  PinOff,
+  Trash2,
+} from 'lucide-react';
+import type { MediaAttachment, Post } from '../types';
+import {
+  formatFileSize,
+  formatPostTimestamp,
+  getFontClass,
+  getMergedPostTags,
+  sanitizeRichHtml,
+} from '../lib/mediaUtils';
+
+interface TimelineCardProps {
+  post: Post;
+  nowMs: number;
+  activeTag: string | null;
+  onSelectTag: (tag: string) => void;
+  onEdit: (post: Post) => void;
+  onDelete: (id: string) => void;
+  onTogglePin: (post: Post) => void;
+  onOpenLightbox: (url: string, title?: string) => void;
+}
+
+function renderTextWithClickableHashtags(
+  text: string,
+  onSelectTag: (tag: string) => void
+): React.ReactNode {
+  const parts = text.split(/(#[\p{L}\p{N}_-]{2,40})/gu);
+  return parts.map((part, idx) => {
+    if (part.startsWith('#') && part.length > 2) {
+      const clean = part.slice(1);
+      return (
+        <button
+          key={idx}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelectTag(clean);
+          }}
+          className="diary-hashtag-inline"
+        >
+          {part}
+        </button>
+      );
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+}
+
+function enhanceBodyHtmlWithTagLinks(html: string): string {
+  const safe = sanitizeRichHtml(html);
+  if (typeof DOMParser === 'undefined') return safe;
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(safe, 'text/html');
+
+  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  let current: Node | null;
+  while ((current = walker.nextNode())) {
+    const parentTag = current.parentElement?.tagName.toUpperCase();
+    if (parentTag !== 'A' && parentTag !== 'BUTTON') {
+      textNodes.push(current as Text);
+    }
+  }
+
+  for (const node of textNodes) {
+    const val = node.nodeValue || '';
+    const regex = /#([\p{L}\p{N}_-]{2,40})/gu;
+    if (!regex.test(val)) continue;
+    regex.lastIndex = 0;
+
+    const frag = doc.createDocumentFragment();
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(val)) !== null) {
+      if (match.index > lastIndex) {
+        frag.appendChild(doc.createTextNode(val.slice(lastIndex, match.index)));
+      }
+      const btn = doc.createElement('button');
+      btn.setAttribute('type', 'button');
+      btn.setAttribute('data-inline-tag', match[1]);
+      btn.className = 'diary-hashtag-inline';
+      btn.textContent = `#${match[1]}`;
+      frag.appendChild(btn);
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < val.length) {
+      frag.appendChild(doc.createTextNode(val.slice(lastIndex)));
+    }
+    node.parentNode?.replaceChild(frag, node);
+  }
+
+  return doc.body.innerHTML;
+}
+
+const AttachmentRenderer: React.FC<{
+  attachment: MediaAttachment;
+  onOpenLightbox: (url: string, title?: string) => void;
+}> = ({ attachment, onOpenLightbox }) => {
+  if (attachment.type === 'image' || attachment.type === 'gif') {
+    return (
+      <figure className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-100/80 dark:border-slate-700/60 dark:bg-slate-900/60">
+        <button
+          type="button"
+          onClick={() => onOpenLightbox(attachment.url, attachment.title)}
+          className="block w-full text-left cursor-zoom-in"
+        >
+          <img
+            src={attachment.url}
+            alt={attachment.title || 'Diary media attachment'}
+            referrerPolicy="no-referrer"
+            className="max-h-[460px] w-full object-cover transition-transform duration-300 hover:scale-[1.01]"
+          />
+        </button>
+        {(attachment.title || attachment.type === 'gif') && (
+          <figcaption className="flex items-center justify-between gap-4 px-4 py-2 text-xs text-slate-600 dark:text-slate-300">
+            <span className="truncate">{attachment.title || 'Animated GIF'}</span>
+            {attachment.type === 'gif' && (
+              <span className="font-mono text-[11px] uppercase tracking-wide text-sky-700 dark:text-sky-300 shrink-0">
+                GIF
+              </span>
+            )}
+          </figcaption>
+        )}
+      </figure>
+    );
+  }
+
+  if (attachment.type === 'video') {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950 dark:border-slate-700/60">
+        <video
+          controls
+          preload="metadata"
+          className="max-h-[420px] w-full"
+          src={attachment.url}
+        />
+        {attachment.title && (
+          <div className="flex items-center gap-2 bg-white/90 px-4 py-2 text-xs text-slate-700 dark:bg-slate-900/90 dark:text-slate-300">
+            <Film className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+            <span className="truncate">{attachment.title}</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (attachment.type === 'audio') {
+    return (
+      <div className="flex flex-col gap-2 rounded-2xl border border-sky-200/70 bg-sky-50/70 p-4 dark:border-sky-800/50 dark:bg-sky-950/30">
+        <div className="flex items-center gap-2.5 text-xs font-medium text-slate-800 dark:text-slate-100">
+          <Music className="h-4 w-4 text-sky-600 dark:text-sky-400 shrink-0" />
+          <span className="truncate">{attachment.title || 'Audio Recording'}</span>
+          {attachment.fileSize ? (
+            <span className="ml-auto font-mono text-[11px] text-slate-500 tabular-nums shrink-0">
+              {formatFileSize(attachment.fileSize)}
+            </span>
+          ) : null}
+        </div>
+        <audio controls preload="metadata" className="w-full" src={attachment.url} />
+      </div>
+    );
+  }
+
+  if (attachment.type === 'embed' && attachment.embedUrl) {
+    const isCompactAudio =
+      attachment.embedKind === 'spotify' || attachment.embedKind === 'soundcloud';
+    return (
+      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950/5 dark:border-slate-700/60 dark:bg-slate-900/70">
+        <div className={isCompactAudio ? 'h-[152px] w-full' : 'aspect-video w-full'}>
+          <iframe
+            src={attachment.embedUrl}
+            title={attachment.title || 'Embedded media player'}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            loading="lazy"
+            className="h-full w-full border-0"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-3 bg-white/80 px-4 py-2 text-xs text-slate-600 dark:bg-slate-900/85 dark:text-slate-300">
+          <span className="truncate font-medium">
+            {attachment.title || 'Playable Media Embed'}
+          </span>
+          <a
+            href={attachment.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-sky-700 hover:underline dark:text-sky-300 whitespace-nowrap shrink-0"
+          >
+            <span>Open source</span>
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (attachment.type === 'document') {
+    return (
+      <a
+        href={attachment.url}
+        download={attachment.title || true}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3 text-sm transition-colors hover:bg-white dark:border-slate-700/60 dark:bg-slate-900/70 dark:hover:bg-slate-800/80"
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <FileText className="h-5 w-5 text-sky-600 dark:text-sky-400 shrink-0" />
+          <div className="min-w-0">
+            <div className="truncate font-medium text-slate-900 dark:text-white">
+              {attachment.title || 'Attached Document'}
+            </div>
+            <div className="text-xs text-slate-500 dark:text-slate-400">
+              Document attachment
+              {attachment.fileSize ? ` · ${formatFileSize(attachment.fileSize)}` : ''}
+            </div>
+          </div>
+        </div>
+        <span className="text-xs font-semibold text-sky-700 dark:text-sky-300 whitespace-nowrap shrink-0">
+          Download
+        </span>
+      </a>
+    );
+  }
+
+  // Web link card
+  return (
+    <a
+      href={attachment.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3 text-sm transition-colors hover:bg-white dark:border-slate-700/60 dark:bg-slate-900/70 dark:hover:bg-slate-800/80"
+    >
+      <div className="min-w-0">
+        <div className="truncate font-medium text-slate-900 dark:text-white">
+          {attachment.title || attachment.url}
+        </div>
+        <div className="truncate text-xs text-slate-500 dark:text-slate-400">
+          {attachment.subtitle || attachment.url}
+        </div>
+      </div>
+      <ExternalLink className="h-4 w-4 text-sky-600 dark:text-sky-400 shrink-0" />
+    </a>
+  );
+};
+
+export const TimelineCard: React.FC<TimelineCardProps> = ({
+  post,
+  nowMs,
+  activeTag,
+  onSelectTag,
+  onEdit,
+  onDelete,
+  onTogglePin,
+  onOpenLightbox,
+}) => {
+  const isPinned =
+    !!post.pinnedUntil && new Date(post.pinnedUntil).getTime() > nowMs;
+  const isScheduledFuture =
+    !!post.scheduledFor && new Date(post.scheduledFor).getTime() > nowMs;
+
+  const mergedTags = getMergedPostTags(post);
+  const processedHtml = React.useMemo(
+    () => enhanceBodyHtmlWithTagLinks(post.bodyHtml),
+    [post.bodyHtml]
+  );
+
+  const handleProseClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const tagAttr = target.getAttribute('data-inline-tag');
+    if (tagAttr) {
+      e.preventDefault();
+      onSelectTag(tagAttr);
+    }
+  };
+
+  return (
+    <article className="aero-glass rounded-3xl p-5 sm:p-7 transition-shadow">
+      {/* Unboxed Metadata Row (Zero-Pill Rule) */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+          <time dateTime={post.publishedAt}>
+            {formatPostTimestamp(post.publishedAt)}
+          </time>
+          {isPinned && post.pinnedUntil && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="inline-flex items-center gap-1 font-sans font-semibold text-sky-700 dark:text-sky-300">
+                <Pin className="h-3 w-3" />
+                Pinned until {formatPostTimestamp(post.pinnedUntil)}
+              </span>
+            </>
+          )}
+          {isScheduledFuture && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span className="font-sans font-semibold text-amber-700 dark:text-amber-300">
+                Scheduled
+              </span>
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => onTogglePin(post)}
+            title={isPinned ? 'Unpin entry' : 'Pin entry to top for 7 days'}
+            aria-label={isPinned ? 'Unpin entry' : 'Pin entry to top'}
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
+          >
+            {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+          </button>
+          <button
+            type="button"
+            onClick={() => onEdit(post)}
+            title="Edit entry"
+            aria-label="Edit entry"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
+          >
+            <Pencil className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(post.id)}
+            title="Delete entry"
+            aria-label="Delete entry"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-rose-100/80 hover:text-rose-700 dark:text-slate-400 dark:hover:bg-rose-950/50 dark:hover:text-rose-300 cursor-pointer"
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Optional Post Title with Inline Clickable Hashtags */}
+      {post.title.trim() && (
+        <h2 className="mt-2.5 font-display text-xl font-bold tracking-tight text-slate-900 sm:text-2xl dark:text-white [text-wrap:balance]">
+          {renderTextWithClickableHashtags(post.title, onSelectTag)}
+        </h2>
+      )}
+
+      {/* Rich Text Body with Typeface Selection + Inline Clickable Hashtags */}
+      {post.bodyHtml.trim() && (
+        <div
+          onClick={handleProseClick}
+          className={`diary-prose mt-3 text-[15px] text-slate-700 dark:text-slate-200 ${getFontClass(
+            post.font
+          )}`}
+          dangerouslySetInnerHTML={{ __html: processedHtml }}
+        />
+      )}
+
+      {/* Multimedia Attachments */}
+      {post.attachments.length > 0 && (
+        <div className="mt-4 space-y-3">
+          {post.attachments.map((att) => (
+            <AttachmentRenderer
+              key={att.id}
+              attachment={att}
+              onOpenLightbox={onOpenLightbox}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Dedicated Event Hashtags Section (Method 2 of Dual-Method Tags) */}
+      {mergedTags.length > 0 && (
+        <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-slate-200/70 pt-3.5 text-xs dark:border-slate-700/60">
+          <span className="font-medium text-slate-500 dark:text-slate-400">
+            Event Tags:
+          </span>
+          {mergedTags.map((tag) => {
+            const isSelected = activeTag?.toLowerCase() === tag.toLowerCase();
+            return (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => onSelectTag(tag)}
+                className={`font-medium transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                  isSelected
+                    ? 'font-semibold text-sky-700 underline underline-offset-4 dark:text-sky-300'
+                    : 'text-sky-600 hover:text-sky-800 hover:underline hover:underline-offset-4 dark:text-sky-400 dark:hover:text-sky-200'
+                }`}
+              >
+                #{tag}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </article>
+  );
+};
