@@ -10,6 +10,7 @@ import {
   Image as ImageIcon,
   Italic,
   Layers,
+  Link2,
   Music,
   Palette,
   Pin,
@@ -165,11 +166,15 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
 
   // Banner upload/schedule state
   const bannerFileRef = useRef<HTMLInputElement>(null);
+  const bannerCaptionRef = useRef<HTMLDivElement>(null);
+  const savedBannerRangeRef = useRef<Range | null>(null);
   const backdropFileRef = useRef<HTMLInputElement>(null);
   const [bannerTitle, setBannerTitle] = useState('');
-  const [bannerSubtitle, setBannerSubtitle] = useState('');
+  const [bannerSubtitleHtml, setBannerSubtitleHtml] = useState('');
+  const [showBannerLinkInput, setShowBannerLinkInput] = useState(false);
+  const [bannerLinkUrl, setBannerLinkUrl] = useState('');
   const [bannerImageUrl, setBannerImageUrl] = useState('/samples/banner-aero-horizon.jpg');
-  const [bannerMode, setBannerMode] = useState<BannerMode>('default');
+  const [bannerMode, setBannerMode] = useState<BannerMode>('slideshow');
   const [bannerStartAt, setBannerStartAt] = useState('');
   const [bannerEndAt, setBannerEndAt] = useState('');
   const [bannerStartHour, setBannerStartHour] = useState(9);
@@ -301,12 +306,72 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     }
   };
 
+  const captureBannerSelection = () => {
+    const sel = window.getSelection();
+    if (
+      sel &&
+      sel.rangeCount > 0 &&
+      bannerCaptionRef.current?.contains(sel.anchorNode)
+    ) {
+      savedBannerRangeRef.current = sel.getRangeAt(0).cloneRange();
+    }
+  };
+
+  const execBannerCaptionFormat = (command: string, value?: string) => {
+    bannerCaptionRef.current?.focus();
+    if (savedBannerRangeRef.current) {
+      const sel = window.getSelection();
+      if (sel) {
+        sel.removeAllRanges();
+        sel.addRange(savedBannerRangeRef.current);
+      }
+    }
+    document.execCommand(command, false, value);
+    if (bannerCaptionRef.current) {
+      setBannerSubtitleHtml(bannerCaptionRef.current.innerHTML);
+    }
+  };
+
+  const handleApplyBannerLink = () => {
+    const trimmed = bannerLinkUrl.trim();
+    if (!trimmed) return;
+    const normalized =
+      /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/') || trimmed.startsWith('#')
+        ? trimmed
+        : `https://${trimmed}`;
+
+    bannerCaptionRef.current?.focus();
+    const sel = window.getSelection();
+    if (sel && savedBannerRangeRef.current) {
+      sel.removeAllRanges();
+      sel.addRange(savedBannerRangeRef.current);
+    }
+
+    const activeSel = window.getSelection();
+    if (activeSel && activeSel.toString().length > 0) {
+      document.execCommand('createLink', false, normalized);
+    } else {
+      const anchorHtml = `<a href="${normalized.replace(/"/g, '&quot;')}">${normalized}</a>`;
+      document.execCommand('insertHTML', false, anchorHtml);
+    }
+
+    if (bannerCaptionRef.current) {
+      setBannerSubtitleHtml(bannerCaptionRef.current.innerHTML);
+    }
+    savedBannerRangeRef.current = null;
+    setBannerLinkUrl('');
+    setShowBannerLinkInput(false);
+  };
+
   const handleCreateBanner = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!bannerImageUrl.trim()) return;
+    const rawHtml = bannerCaptionRef.current?.innerHTML || bannerSubtitleHtml;
+    const cleanedCaption = sanitizeRichHtml(rawHtml);
     await onAddBanner({
       title: bannerTitle.trim(),
-      subtitle: bannerSubtitle.trim(),
+      subtitle: stripHtml(cleanedCaption),
+      subtitleHtml: cleanedCaption,
       imageUrl: bannerImageUrl.trim(),
       mode: bannerMode,
       startAt:
@@ -319,10 +384,18 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
           : undefined,
       dailyStartHour: bannerMode === 'daily-hours' ? bannerStartHour : undefined,
       dailyEndHour: bannerMode === 'daily-hours' ? bannerEndHour : undefined,
-      priority: bannerMode === 'window' ? 40 : bannerMode === 'daily-hours' ? 20 : 50,
+      priority:
+        bannerMode === 'window'
+          ? 40
+          : bannerMode === 'daily-hours'
+          ? 20
+          : bannerMode === 'slideshow'
+          ? 15
+          : 50,
     });
     setBannerTitle('');
-    setBannerSubtitle('');
+    setBannerSubtitleHtml('');
+    if (bannerCaptionRef.current) bannerCaptionRef.current.innerHTML = '';
   };
 
   const handleConfirmRenameTag = async (oldTag: string) => {
@@ -919,17 +992,91 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 />
               </div>
 
-              <div>
+              <div className="sm:col-span-2">
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
-                  Subtitle (optional)
+                  Banner Caption / Subtitle (select text and click Link for clickable CTA)
                 </label>
-                <input
-                  type="text"
-                  value={bannerSubtitle}
-                  onChange={(e) => setBannerSubtitle(e.target.value)}
-                  placeholder="e.g., Kyoto Autumn Memories"
-                  className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                />
+                <div className="mt-1.5 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+                  <div className="flex flex-wrap items-center gap-1 border-b border-slate-200/80 bg-slate-50/80 px-3 py-1.5 dark:border-slate-700 dark:bg-slate-800/60">
+                    <button
+                      type="button"
+                      onClick={() => execBannerCaptionFormat('bold')}
+                      title="Bold"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                    >
+                      <Bold className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => execBannerCaptionFormat('italic')}
+                      title="Italic"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                    >
+                      <Italic className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => execBannerCaptionFormat('underline')}
+                      title="Underline"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                    >
+                      <Underline className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        captureBannerSelection();
+                      }}
+                      onClick={() => {
+                        captureBannerSelection();
+                        setShowBannerLinkInput((v) => !v);
+                      }}
+                      className="ml-1 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-50 dark:border-slate-700 dark:bg-slate-900 dark:text-sky-300 cursor-pointer"
+                    >
+                      <Link2 className="h-3.5 w-3.5" />
+                      Add Link to Selected Text
+                    </button>
+                  </div>
+
+                  {showBannerLinkInput && (
+                    <div className="flex items-center gap-2 border-b border-slate-200/80 bg-sky-50/70 px-3 py-2 dark:border-slate-700 dark:bg-sky-950/30">
+                      <input
+                        type="text"
+                        value={bannerLinkUrl}
+                        onChange={(e) => setBannerLinkUrl(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleApplyBannerLink();
+                          }
+                        }}
+                        placeholder="https://... or #live / #timeline (select text first)"
+                        className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleApplyBannerLink}
+                        className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white cursor-pointer"
+                      >
+                        Apply Link
+                      </button>
+                    </div>
+                  )}
+
+                  <div
+                    ref={bannerCaptionRef}
+                    contentEditable
+                    suppressContentEditableWarning
+                    onMouseUp={captureBannerSelection}
+                    onKeyUp={captureBannerSelection}
+                    onInput={(e) => {
+                      setBannerSubtitleHtml((e.target as HTMLDivElement).innerHTML);
+                      captureBannerSelection();
+                    }}
+                    className="diary-prose min-h-[54px] px-3.5 py-2.5 text-sm text-slate-900 focus:outline-none dark:text-white"
+                  />
+                </div>
               </div>
 
               <div className="sm:col-span-2">
@@ -985,7 +1132,8 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                   onChange={(e) => setBannerMode(e.target.value as BannerMode)}
                   className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                 >
-                  <option value="default">Set as Default Banner</option>
+                  <option value="slideshow">Slideshow Rotation (Fade)</option>
+                  <option value="default">Single Default Banner</option>
                   <option value="window">Schedule Date & Time Window</option>
                   <option value="daily-hours">Schedule Daily Hours</option>
                 </select>
@@ -1090,6 +1238,8 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                               ).padStart(2, '0')}:59`
                             : b.mode === 'window'
                             ? 'Scheduled Window'
+                            : b.mode === 'slideshow'
+                            ? 'Slideshow Rotation'
                             : 'Default Banner'}
                         </span>
                         {isActive && (
@@ -1103,10 +1253,13 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                           {b.title}
                         </h4>
                       )}
-                      {b.subtitle && (
-                        <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
-                          {b.subtitle}
-                        </p>
+                      {(b.subtitleHtml || b.subtitle) && (
+                        <div
+                          className="mt-0.5 text-xs text-slate-600 dark:text-slate-300 [&_a]:font-semibold [&_a]:text-sky-700 [&_a]:underline dark:[&_a]:text-sky-300"
+                          dangerouslySetInnerHTML={{
+                            __html: sanitizeRichHtml(b.subtitleHtml || b.subtitle || ''),
+                          }}
+                        />
                       )}
                     </div>
 

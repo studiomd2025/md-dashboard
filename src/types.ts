@@ -43,12 +43,13 @@ export interface Post {
   pinnedUntil: string | null;
 }
 
-export type BannerMode = 'default' | 'window' | 'daily-hours';
+export type BannerMode = 'default' | 'slideshow' | 'window' | 'daily-hours';
 
 export interface BannerSchedule {
   id: string;
   title: string;
   subtitle: string;
+  subtitleHtml?: string;
   imageUrl: string;
   mode: BannerMode;
   startAt?: string;

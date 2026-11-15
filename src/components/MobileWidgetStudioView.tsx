@@ -259,7 +259,7 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
           </p>
         </div>
 
-        <div className="mt-5 mx-auto max-w-md rounded-[36px] border-4 border-slate-900/90 bg-gradient-to-br from-sky-200 via-cyan-100 to-emerald-100 p-4 shadow-2xl dark:border-slate-700 dark:from-slate-900 dark:via-cyan-950 dark:to-slate-900">
+        <div className="mt-5 mx-auto max-w-md rounded-3xl border-4 border-slate-900/90 bg-gradient-to-br from-sky-200 via-cyan-100 to-emerald-100 p-4 shadow-2xl dark:border-slate-700 dark:from-slate-900 dark:via-cyan-950 dark:to-slate-900">
           <div className="mb-3 flex items-center justify-between px-2 font-mono text-[11px] font-semibold text-slate-700 dark:text-slate-300">
             <span>MY DIARIES WIDGET</span>
             {countdowns[0] && (

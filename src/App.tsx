@@ -26,7 +26,7 @@ import type {
 } from './types';
 import { getMergedPostTags, getMonthKey, stripHtml } from './lib/mediaUtils';
 import { Header } from './components/Header';
-import { ScheduledBanner, resolveActiveBanner } from './components/ScheduledBanner';
+import { ScheduledBanner } from './components/ScheduledBanner';
 import { TimelineCard } from './components/TimelineCard';
 import { Sidebar } from './components/Sidebar';
 import { RichComposerModal } from './components/RichComposerModal';
@@ -101,10 +101,6 @@ export default function App() {
   }, []);
 
   const nowDate = useMemo(() => new Date(nowMs), [nowMs]);
-  const activeBanner = useMemo(
-    () => resolveActiveBanner(banners, nowDate),
-    [banners, nowDate]
-  );
 
   const { livePosts, scheduledPosts } = useMemo(() => {
     const live: Post[] = [];
@@ -437,15 +433,19 @@ export default function App() {
         onOpenComposer={openNewComposer}
       />
 
-      <main className="mx-auto max-w-[1380px] space-y-6 px-4 pt-5 sm:px-6 lg:px-8">
+      {activeView !== 'live' && (
         <ScheduledBanner
-          banner={activeBanner}
+          banners={banners}
+          now={nowDate}
           onManageBanners={() => {
             setSettingsTab('banners');
             setActiveView('settings');
           }}
+          onNavigateView={setActiveView}
         />
+      )}
 
+      <main className="mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
           <div className="lg:col-span-8 space-y-5">
             {activeView === 'timeline' && (
@@ -729,7 +729,7 @@ export default function App() {
               type="button"
               onClick={() => setLightbox(null)}
               aria-label="Close lightbox"
-              className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full bg-slate-950/70 text-white hover:bg-slate-950 cursor-pointer"
+              className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950/70 text-white hover:bg-slate-950 cursor-pointer"
             >
               <X className="h-5 w-5" />
             </button>

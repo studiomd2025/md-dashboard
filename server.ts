@@ -150,10 +150,20 @@ function buildSeedData(): StoreData {
     {
       id: 'banner-default',
       title: '',
-      subtitle: 'Always-on fallback horizon banner',
+      subtitle: 'Personal Aero workspace · <a href="#timeline">Explore latest entries</a>',
+      subtitleHtml: 'Personal Aero workspace · <a href="#timeline">Explore latest entries</a>',
       imageUrl: '/samples/banner-aero-horizon.jpg',
-      mode: 'default',
-      priority: 1,
+      mode: 'slideshow',
+      priority: 5,
+    },
+    {
+      id: 'banner-slideshow-2',
+      title: '',
+      subtitle: 'Morning desk & coastal horizon · <a href="#live">Watch LIVE channels</a>',
+      subtitleHtml: 'Morning desk & coastal horizon · <a href="#live">Watch LIVE channels</a>',
+      imageUrl: '/samples/post-widescreen.jpg',
+      mode: 'slideshow',
+      priority: 5,
     },
   ];
 
@@ -424,10 +434,11 @@ async function startServer() {
     const b = req.body as Partial<BannerSchedule>;
     const created: BannerSchedule = {
       id: `banner-${crypto.randomUUID()}`,
-      title: b.title || 'MY DIARIES DASHBOARD',
+      title: typeof b.title === 'string' ? b.title : '',
       subtitle: b.subtitle || '',
+      subtitleHtml: typeof b.subtitleHtml === 'string' ? b.subtitleHtml : undefined,
       imageUrl: b.imageUrl || '/samples/banner-aero-horizon.jpg',
-      mode: b.mode || 'window',
+      mode: b.mode || 'slideshow',
       startAt: b.startAt,
       endAt: b.endAt,
       dailyStartHour: b.dailyStartHour,
