@@ -33,11 +33,12 @@
   body {
     margin: 0;
     min-height: 100vh;
-    background-color: #f2f9fc;
+    background-color: #eff8fd;
     background-image:
-      radial-gradient(960px 520px at 10% -8%, rgba(56, 189, 248, 0.24), transparent 65%),
-      radial-gradient(760px 480px at 92% 4%, rgba(16, 185, 129, 0.18), transparent 62%),
-      linear-gradient(180deg, #eff8fd 0%, #f7fbfd 45%, #f3f9fb 100%);
+      linear-gradient(rgba(239, 248, 253, 0.45), rgba(247, 251, 253, 0.48)),
+      url("/samples/aero-daylight.jpg");
+    background-size: cover;
+    background-position: center;
     background-attachment: fixed;
     color: #0f172a;
     transition: background-color 200ms ease, color 200ms ease;
@@ -46,9 +47,11 @@
   html[data-theme="twilight-lagoon"] body {
     background-color: #06131c;
     background-image:
-      radial-gradient(960px 520px at 10% -8%, rgba(14, 165, 233, 0.18), transparent 65%),
-      radial-gradient(760px 480px at 92% 4%, rgba(16, 185, 129, 0.13), transparent 62%),
-      linear-gradient(180deg, #06131c 0%, #081824 55%, #07141f 100%);
+      linear-gradient(rgba(6, 19, 28, 0.42), rgba(7, 20, 31, 0.48)),
+      url("/samples/twilight-lagoon.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
     color: #f1f5f9;
   }
 
@@ -61,9 +64,11 @@
   html[data-theme="meadow-mint"] body {
     background-color: #f1fbf6;
     background-image:
-      radial-gradient(960px 520px at 10% -8%, rgba(52, 211, 153, 0.24), transparent 65%),
-      radial-gradient(760px 480px at 92% 4%, rgba(56, 189, 248, 0.16), transparent 62%),
-      linear-gradient(180deg, #ecfdf5 0%, #f5fcf8 50%, #f0f9ff 100%);
+      linear-gradient(rgba(236, 253, 245, 0.46), rgba(245, 252, 248, 0.5)),
+      url("/samples/meadow-mint.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
   }
 
   html[data-theme="crystal-pearl"] {
@@ -75,8 +80,11 @@
   html[data-theme="crystal-pearl"] body {
     background-color: #f8fafc;
     background-image:
-      radial-gradient(960px 520px at 12% -8%, rgba(148, 163, 184, 0.18), transparent 65%),
-      linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+      linear-gradient(rgba(248, 250, 252, 0.44), rgba(241, 245, 249, 0.48)),
+      url("/samples/crystal-pearl.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
   }
 
   html[data-theme="sunset-glass"] {
@@ -88,9 +96,45 @@
   html[data-theme="sunset-glass"] body {
     background-color: #fff8f3;
     background-image:
-      radial-gradient(960px 520px at 10% -8%, rgba(251, 146, 60, 0.22), transparent 65%),
-      radial-gradient(760px 480px at 92% 4%, rgba(56, 189, 248, 0.16), transparent 62%),
-      linear-gradient(180deg, #fff7ed 0%, #fdf8f6 55%, #f0f9ff 100%);
+      linear-gradient(rgba(255, 247, 237, 0.46), rgba(253, 248, 246, 0.5)),
+      url("/samples/sunset-glass.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+  }
+
+  html[data-theme="metro-prism-light"] {
+    --accent-start: #06b6d4;
+    --accent-end: #2563eb;
+    --accent-shadow: rgba(37, 99, 235, 0.35);
+  }
+
+  html[data-theme="metro-prism-light"] body {
+    background-color: #f4fbff;
+    background-image:
+      linear-gradient(rgba(248, 252, 255, 0.56), rgba(244, 251, 255, 0.56)),
+      url("/samples/metro-prism-light.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: #0f172a;
+  }
+
+  html[data-theme="metro-eclipse-dark"] {
+    --accent-start: #22d3ee;
+    --accent-end: #0284c7;
+    --accent-shadow: rgba(34, 211, 238, 0.35);
+  }
+
+  html[data-theme="metro-eclipse-dark"] body {
+    background-color: #050d17;
+    background-image:
+      linear-gradient(rgba(4, 11, 20, 0.55), rgba(5, 13, 23, 0.55)),
+      url("/samples/metro-eclipse-dark.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: #f1f5f9;
   }
 
   h1, h2, h3, h4, .font-display {

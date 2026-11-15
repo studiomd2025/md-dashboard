@@ -25,6 +25,7 @@ const DEFAULT_DESIGN: DesignSettings = {
   theme: 'aero-daylight',
   surfaceStyle: 'aero-glass',
   customBackdropUrl: '',
+  customThemes: [],
 };
 
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -206,6 +207,9 @@ function readStore(): StoreData {
               theme: parsed.design.theme || 'aero-daylight',
               surfaceStyle: parsed.design.surfaceStyle || 'aero-glass',
               customBackdropUrl: parsed.design.customBackdropUrl || '',
+              customThemes: Array.isArray(parsed.design.customThemes)
+                ? parsed.design.customThemes
+                : [],
             }
           : { ...DEFAULT_DESIGN },
       };
@@ -484,6 +488,12 @@ async function startServer() {
       font: c.font || 'sans',
       displayFormat: c.displayFormat || 'full',
       attachments: Array.isArray(c.attachments) ? c.attachments : [],
+      milestoneBodyHtml:
+        typeof c.milestoneBodyHtml === 'string' ? c.milestoneBodyHtml : '',
+      milestoneFont: c.milestoneFont || 'sans',
+      milestoneAttachments: Array.isArray(c.milestoneAttachments)
+        ? c.milestoneAttachments
+        : [],
     };
     store.countdowns.push(created);
     writeStore(store);
@@ -521,6 +531,9 @@ async function startServer() {
         body.customBackdropUrl !== undefined
           ? body.customBackdropUrl
           : store.design.customBackdropUrl || '',
+      customThemes: Array.isArray(body.customThemes)
+        ? body.customThemes
+        : store.design.customThemes || [],
     };
     writeStore(store);
     res.json(store.design);
@@ -628,7 +641,7 @@ async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);

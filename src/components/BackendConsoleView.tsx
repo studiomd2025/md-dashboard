@@ -25,6 +25,7 @@ import type {
   BannerMode,
   BannerSchedule,
   CountdownFormat,
+  CustomThemePreset,
   DesignSettings,
   DiaryFont,
   EventCountdown,
@@ -66,6 +67,9 @@ interface BackendConsoleViewProps {
     font?: DiaryFont;
     displayFormat?: CountdownFormat;
     attachments?: MediaAttachment[];
+    milestoneBodyHtml?: string;
+    milestoneFont?: DiaryFont;
+    milestoneAttachments?: MediaAttachment[];
   }) => Promise<void>;
   onDeleteCountdown: (id: string) => Promise<void>;
   onRenameTag: (oldTag: string, newTag: string) => Promise<void>;
@@ -96,22 +100,34 @@ export const THEME_PRESETS: {
     swatches: ['#06131c', '#0ea5e9', '#10b981'],
   },
   {
+    id: 'metro-prism-light',
+    label: 'Frutiger Metro Daylight',
+    description: 'Bright geometric vector ribbons and rings over crisp light glass.',
+    swatches: ['#f4fbff', '#06b6d4', '#2563eb'],
+  },
+  {
+    id: 'metro-eclipse-dark',
+    label: 'Frutiger Metro Eclipse (Dark)',
+    description: 'Midnight obsidian canvas with sleek cyan-teal Frutiger Metro vector art.',
+    swatches: ['#050d17', '#22d3ee', '#0284c7'],
+  },
+  {
     id: 'meadow-mint',
     label: 'Meadow Mint Breeze',
     description: 'Fresh botanical mint canvas with emerald glass highlights.',
     swatches: ['#ecfdf5', '#34d399', '#0284c7'],
   },
   {
-    id: 'crystal-pearl',
-    label: 'Crystal Pearl Minimal',
-    description: 'Crisp 2026 alabaster surfaces with high-contrast slate ink.',
-    swatches: ['#f8fafc', '#cbd5e1', '#0f172a'],
-  },
-  {
     id: 'sunset-glass',
     label: 'Sunset Tangerine Glass',
     description: 'Warm nostalgic peach-amber glow paired with clean glass.',
     swatches: ['#fff7ed', '#fb923c', '#e11d48'],
+  },
+  {
+    id: 'crystal-pearl',
+    label: 'Crystal Pearl Minimal',
+    description: 'Crisp 2026 alabaster surfaces with high-contrast slate ink.',
+    swatches: ['#f8fafc', '#cbd5e1', '#0f172a'],
   },
 ];
 
@@ -155,6 +171,8 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   // Next on MD (Countdown) creator state
   const cdEditorRef = useRef<HTMLDivElement>(null);
   const cdFileRef = useRef<HTMLInputElement>(null);
+  const milestoneEditorRef = useRef<HTMLDivElement>(null);
+  const milestoneFileRef = useRef<HTMLInputElement>(null);
   const [cdTitle, setCdTitle] = useState('');
   const [cdTarget, setCdTarget] = useState('');
   const [cdTag, setCdTag] = useState('');
@@ -163,12 +181,17 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [cdBodyHtml, setCdBodyHtml] = useState('');
   const [cdAttachments, setCdAttachments] = useState<MediaAttachment[]>([]);
   const [cdUploading, setCdUploading] = useState(false);
+  const [milestoneFont, setMilestoneFont] = useState<DiaryFont>('sans');
+  const [milestoneBodyHtml, setMilestoneBodyHtml] = useState('');
+  const [milestoneAttachments, setMilestoneAttachments] = useState<MediaAttachment[]>([]);
+  const [milestoneUploading, setMilestoneUploading] = useState(false);
 
   // Banner upload/schedule state
   const bannerFileRef = useRef<HTMLInputElement>(null);
   const bannerCaptionRef = useRef<HTMLDivElement>(null);
   const savedBannerRangeRef = useRef<Range | null>(null);
   const backdropFileRef = useRef<HTMLInputElement>(null);
+  const customThemeBackdropRef = useRef<HTMLInputElement>(null);
   const [bannerTitle, setBannerTitle] = useState('');
   const [bannerSubtitleHtml, setBannerSubtitleHtml] = useState('');
   const [showBannerLinkInput, setShowBannerLinkInput] = useState(false);
@@ -184,6 +207,17 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [customBackdropInput, setCustomBackdropInput] = useState(
     design.customBackdropUrl || ''
   );
+
+  // Custom Theme Creator state
+  const [showCustomThemeBuilder, setShowCustomThemeBuilder] = useState(false);
+  const [ctName, setCtName] = useState('');
+  const [ctIsDark, setCtIsDark] = useState(false);
+  const [ctSurface, setCtSurface] = useState<SurfaceStyle>('aero-glass');
+  const [ctCanvasBg, setCtCanvasBg] = useState('#f0f9ff');
+  const [ctAccentStart, setCtAccentStart] = useState('#38bdf8');
+  const [ctAccentEnd, setCtAccentEnd] = useState('#0284c7');
+  const [ctBackdropUrl, setCtBackdropUrl] = useState('');
+  const [isUploadingCustomThemeBg, setIsUploadingCustomThemeBg] = useState(false);
 
   const activeBanner = resolveActiveBanner(banners, now);
   const nowMs = now.getTime();
@@ -258,10 +292,56 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     }
   };
 
+  const execMilestoneFormat = (command: string, value?: string) => {
+    milestoneEditorRef.current?.focus();
+    document.execCommand(command, false, value);
+    if (milestoneEditorRef.current) {
+      setMilestoneBodyHtml(milestoneEditorRef.current.innerHTML);
+    }
+  };
+
+  const handleMilestoneMediaUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setMilestoneUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        const uploaded = await uploadFileToServer(file);
+        if (!uploaded) continue;
+        let type: MediaAttachment['type'] = 'document';
+        if (file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')) {
+          type = 'gif';
+        } else if (file.type.startsWith('image/')) {
+          type = 'image';
+        } else if (file.type.startsWith('video/')) {
+          type = 'video';
+        } else if (file.type.startsWith('audio/')) {
+          type = 'audio';
+        }
+        setMilestoneAttachments((prev) => [
+          ...prev,
+          {
+            id: `ms-att-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            type,
+            url: uploaded.url,
+            title: uploaded.fileName,
+            mimeType: uploaded.mimeType,
+            fileSize: uploaded.fileSize,
+          },
+        ]);
+      }
+    } finally {
+      setMilestoneUploading(false);
+      if (milestoneFileRef.current) milestoneFileRef.current.value = '';
+    }
+  };
+
   const handleCreateCountdown = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cdTitle.trim() || !cdTarget) return;
     const cleanedHtml = sanitizeRichHtml(cdEditorRef.current?.innerHTML || cdBodyHtml);
+    const cleanedMilestoneHtml = sanitizeRichHtml(
+      milestoneEditorRef.current?.innerHTML || milestoneBodyHtml
+    );
     await onAddCountdown({
       title: cdTitle.trim(),
       targetAt: new Date(cdTarget).toISOString(),
@@ -270,13 +350,63 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       font: cdFont,
       displayFormat: cdFormat,
       attachments: cdAttachments,
+      milestoneBodyHtml: cleanedMilestoneHtml,
+      milestoneFont,
+      milestoneAttachments,
     });
     setCdTitle('');
     setCdTarget('');
     setCdTag('');
     setCdBodyHtml('');
     setCdAttachments([]);
+    setMilestoneBodyHtml('');
+    setMilestoneAttachments([]);
     if (cdEditorRef.current) cdEditorRef.current.innerHTML = '';
+    if (milestoneEditorRef.current) milestoneEditorRef.current.innerHTML = '';
+  };
+
+  const handleCustomThemeBackdropUpload = async (file: File | undefined) => {
+    if (!file) return;
+    setIsUploadingCustomThemeBg(true);
+    try {
+      const uploaded = await uploadFileToServer(file);
+      if (uploaded?.url) setCtBackdropUrl(uploaded.url);
+    } finally {
+      setIsUploadingCustomThemeBg(false);
+      if (customThemeBackdropRef.current) customThemeBackdropRef.current.value = '';
+    }
+  };
+
+  const handleSaveCustomTheme = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ctName.trim()) return;
+    const newTheme: CustomThemePreset = {
+      id: `custom-${Date.now()}`,
+      name: ctName.trim(),
+      isDark: ctIsDark,
+      canvasBg: ctCanvasBg,
+      surfaceStyle: ctSurface,
+      accentStart: ctAccentStart,
+      accentEnd: ctAccentEnd,
+      backdropImageUrl: ctBackdropUrl.trim() || undefined,
+    };
+    const nextList = [...(design.customThemes || []), newTheme];
+    await onUpdateDesign({
+      customThemes: nextList,
+      theme: newTheme.id,
+      surfaceStyle: newTheme.surfaceStyle,
+    });
+    setCtName('');
+    setCtBackdropUrl('');
+    setShowCustomThemeBuilder(false);
+  };
+
+  const handleDeleteCustomTheme = async (id: string) => {
+    const nextList = (design.customThemes || []).filter((t) => t.id !== id);
+    await onUpdateDesign({
+      customThemes: nextList,
+      ...(design.theme === id ? { theme: 'aero-daylight' } : {}),
+    });
   };
 
   const handleBannerFileChange = async (file: File | undefined) => {
@@ -422,7 +552,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     { id: 'countdowns', label: 'Next on MD', icon: CalendarClock },
     { id: 'tags', label: 'Hashtags', icon: Hash },
     { id: 'banners', label: 'Hero Banner', icon: ImageIcon },
-    { id: 'design', label: 'Theme & Design', icon: Palette },
+    { id: 'design', label: 'Theme', icon: Palette },
   ];
 
   return (
@@ -435,7 +565,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
               Settings
             </h2>
             <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
-              Manage posting, scheduling, Next on MD countdowns, Hashtags, Hero Banners, and Theme & Visual Design.
+              Manage posting, scheduling, Next on MD countdowns, Hashtags, Hero Banners, and Theme.
             </p>
           </div>
           <button
@@ -808,10 +938,147 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 )}
               </div>
 
+              {/* Optional Milestone Content When Countdown Ends */}
+              <div className="rounded-2xl border border-slate-200/80 bg-white/60 p-4 space-y-3 dark:border-slate-700/60 dark:bg-slate-900/40">
+                <div>
+                  <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    When Countdown Ends — Optional Milestone Content (RTF & Multimedia)
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    Replaces the pre-event note automatically as soon as the timer reaches zero.
+                  </p>
+                </div>
+
+                <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white/85 dark:border-slate-700 dark:bg-slate-900/75">
+                  <div className="flex flex-wrap items-center gap-1 border-b border-slate-200/80 bg-slate-50/80 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/60">
+                    <button
+                      type="button"
+                      onClick={() => execMilestoneFormat('bold')}
+                      title="Bold"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                    >
+                      <Bold className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => execMilestoneFormat('italic')}
+                      title="Italic"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                    >
+                      <Italic className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => execMilestoneFormat('underline')}
+                      title="Underline"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                    >
+                      <Underline className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="mx-1 h-4 w-px bg-slate-300 dark:bg-slate-600" />
+                    {COUNTDOWN_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => execMilestoneFormat('foreColor', c)}
+                        style={{ backgroundColor: c }}
+                        className="h-4 w-4 rounded-full border border-white shadow-sm cursor-pointer"
+                        title={`Text color ${c}`}
+                      />
+                    ))}
+                    <select
+                      value={milestoneFont}
+                      onChange={(e) => setMilestoneFont(e.target.value as DiaryFont)}
+                      className="ml-auto rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                    >
+                      <option value="sans">DM Sans</option>
+                      <option value="serif">Fraunces Serif</option>
+                      <option value="mono">JetBrains Mono</option>
+                      <option value="hand">Caveat Journal</option>
+                    </select>
+                  </div>
+
+                  <div
+                    ref={milestoneEditorRef}
+                    contentEditable
+                    suppressContentEditableWarning
+                    onInput={(e) =>
+                      setMilestoneBodyHtml((e.target as HTMLDivElement).innerHTML)
+                    }
+                    className={`diary-prose min-h-[76px] px-3.5 py-2.5 text-sm text-slate-800 focus:outline-none dark:text-slate-100 ${getFontClass(
+                      milestoneFont
+                    )}`}
+                  />
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                    Optional Milestone Multimedia (Image, GIF, Video, Audio, File)
+                  </span>
+                  <input
+                    ref={milestoneFileRef}
+                    type="file"
+                    multiple
+                    accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip"
+                    onChange={(e) => handleMilestoneMediaUpload(e.target.files)}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={milestoneUploading}
+                    onClick={() => milestoneFileRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    {milestoneUploading ? 'Uploading...' : 'Attach Milestone Media'}
+                  </button>
+                </div>
+
+                {milestoneAttachments.length > 0 && (
+                  <div className="space-y-1.5">
+                    {milestoneAttachments.map((att) => (
+                      <div
+                        key={att.id}
+                        className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-900"
+                      >
+                        <span className="inline-flex items-center gap-2 truncate">
+                          {att.type === 'image' || att.type === 'gif' ? (
+                            <ImageIcon className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                          ) : att.type === 'video' ? (
+                            <Film className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                          ) : att.type === 'audio' ? (
+                            <Music className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                          )}
+                          <span className="truncate">{att.title}</span>
+                          {att.fileSize ? (
+                            <span className="font-mono text-[10px] text-slate-400">
+                              {formatFileSize(att.fileSize)}
+                            </span>
+                          ) : null}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMilestoneAttachments((prev) =>
+                              prev.filter((a) => a.id !== att.id)
+                            )
+                          }
+                          className="text-rose-600 hover:underline cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="flex justify-end">
                 <button
                   type="submit"
-                  disabled={cdUploading}
+                  disabled={cdUploading || milestoneUploading}
                   className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white cursor-pointer"
                 >
                   <Plus className="h-4 w-4" />
@@ -844,6 +1111,9 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                         {formatPostTimestamp(cd.targetAt)} · Format: {cd.displayFormat || 'full'}
                         {cd.tag ? ` · #${cd.tag}` : ''}
                         {cd.attachments?.length ? ` · ${cd.attachments.length} file(s)` : ''}
+                        {cd.milestoneBodyHtml || cd.milestoneAttachments?.length
+                          ? ' · Milestone configured'
+                          : ''}
                       </div>
                     </div>
                     <button
@@ -1292,53 +1562,313 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
         </div>
       )}
 
-      {/* Tab 5: Theme & Visual Design Studio */}
+      {/* Tab 5: Theme */}
       {activeTab === 'design' && (
         <section className="aero-glass rounded-3xl p-6 space-y-6">
           <div>
             <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Theme & Visual Design
+              Theme
             </h3>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              Switch between Frutiger Aero palettes and 2026 minimal surfaces, or apply a custom wallpaper/GIF backdrop across the entire dashboard.
+              Switch between Frutiger Aero, Frutiger Metro, and 2026 minimal palettes, or create and save your own custom theme.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {THEME_PRESETS.map((preset) => {
-              const selected = design.theme === preset.id;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => onUpdateDesign({ theme: preset.id })}
-                  className={`flex items-start justify-between gap-3 rounded-2xl border p-4 text-left transition-all cursor-pointer ${
-                    selected
-                      ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
-                      : 'border-slate-200/80 bg-white/60 hover:bg-white dark:border-slate-700 dark:bg-slate-900/40'
-                  }`}
-                >
-                  <div>
-                    <div className="font-display text-sm font-bold text-slate-900 dark:text-white">
-                      {preset.label}
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {THEME_PRESETS.map((preset) => {
+                const selected = design.theme === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => onUpdateDesign({ theme: preset.id })}
+                    className={`flex items-start justify-between gap-3 rounded-2xl border p-4 text-left transition-all cursor-pointer ${
+                      selected
+                        ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
+                        : 'border-slate-200/80 bg-white/60 hover:bg-white dark:border-slate-700 dark:bg-slate-900/40'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                        {preset.label}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
+                        {preset.description}
+                      </p>
                     </div>
-                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                      {preset.description}
-                    </p>
+                    <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                      {preset.swatches.map((hex) => (
+                        <span
+                          key={hex}
+                          style={{ backgroundColor: hex }}
+                          className="h-4 w-4 rounded-full border border-white shadow-sm"
+                        />
+                      ))}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* + Add New Theme card directly below Crystal Pearl Minimal */}
+            <button
+              type="button"
+              onClick={() => setShowCustomThemeBuilder((v) => !v)}
+              aria-expanded={showCustomThemeBuilder}
+              className={`flex w-full items-center justify-between gap-3 rounded-2xl border border-dashed p-4 text-left transition-colors cursor-pointer ${
+                showCustomThemeBuilder
+                  ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
+                  : 'border-slate-300/90 bg-white/55 hover:border-sky-400 hover:bg-white/80 dark:border-slate-700 dark:bg-slate-900/40 dark:hover:border-sky-500'
+              }`}
+            >
+              <div>
+                <div className="flex items-center gap-2 font-display text-sm font-bold text-sky-700 dark:text-sky-300">
+                  <Plus className="h-4 w-4" />
+                  <span>Add New Theme</span>
+                </div>
+                <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+                  Create and save a custom color & background graphic theme to this list.
+                </p>
+              </div>
+              <span className="text-xs font-semibold text-sky-700 dark:text-sky-300 whitespace-nowrap shrink-0">
+                {showCustomThemeBuilder ? 'Close' : 'Open Builder'}
+              </span>
+            </button>
+
+            {/* Integrated Sub-Panel inside Theme */}
+            {showCustomThemeBuilder && (
+              <form
+                onSubmit={handleSaveCustomTheme}
+                className="space-y-4 rounded-2xl border border-slate-200/90 bg-white/75 p-5 dark:border-slate-700 dark:bg-slate-900/70"
+              >
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      Theme Name
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={ctName}
+                      onChange={(e) => setCtName(e.target.value)}
+                      placeholder="e.g., Kyoto Autumn 2026"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
                   </div>
-                  <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                    {preset.swatches.map((hex) => (
-                      <span
-                        key={hex}
-                        style={{ backgroundColor: hex }}
-                        className="h-4 w-4 rounded-full border border-white shadow-sm"
-                      />
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      Base Brightness Mode
+                    </label>
+                    <div className="mt-1.5 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCtIsDark(false);
+                          if (ctCanvasBg === '#09111c') setCtCanvasBg('#f0f9ff');
+                        }}
+                        className={`rounded-xl border px-3 py-2 text-xs font-semibold cursor-pointer ${
+                          !ctIsDark
+                            ? 'border-sky-600 bg-sky-600 text-white'
+                            : 'border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+                        }`}
+                      >
+                        Light Mode
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCtIsDark(true);
+                          if (ctCanvasBg === '#f0f9ff') setCtCanvasBg('#09111c');
+                        }}
+                        className={`rounded-xl border px-3 py-2 text-xs font-semibold cursor-pointer ${
+                          ctIsDark
+                            ? 'border-sky-600 bg-sky-600 text-white'
+                            : 'border-slate-200 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+                        }`}
+                      >
+                        Dark Mode
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white/80 px-3.5 py-2.5 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                    <span>Canvas Color</span>
+                    <input
+                      type="color"
+                      value={ctCanvasBg}
+                      onChange={(e) => setCtCanvasBg(e.target.value)}
+                      className="h-7 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white/80 px-3.5 py-2.5 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                    <span>Accent Top</span>
+                    <input
+                      type="color"
+                      value={ctAccentStart}
+                      onChange={(e) => setCtAccentStart(e.target.value)}
+                      className="h-7 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-white/80 px-3.5 py-2.5 text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                    <span>Accent Bottom</span>
+                    <input
+                      type="color"
+                      value={ctAccentEnd}
+                      onChange={(e) => setCtAccentEnd(e.target.value)}
+                      className="h-7 w-10 cursor-pointer rounded border-0 bg-transparent p-0"
+                    />
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Theme Surface Style
+                  </label>
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    {(
+                      [
+                        { id: 'aero-glass', label: 'Frosted Glass' },
+                        { id: 'crisp-2026', label: 'Crisp Solid' },
+                      ] as { id: SurfaceStyle; label: string }[]
+                    ).map((opt) => (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        onClick={() => setCtSurface(opt.id)}
+                        className={`rounded-xl border px-3.5 py-1.5 text-xs font-semibold cursor-pointer ${
+                          ctSurface === opt.id
+                            ? 'border-sky-600 bg-sky-600 text-white'
+                            : 'border-slate-200 bg-white/80 text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
                     ))}
                   </div>
-                </button>
-              );
-            })}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Theme Background Image or GIF (optional)
+                  </label>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={ctBackdropUrl}
+                      onChange={(e) => setCtBackdropUrl(e.target.value)}
+                      placeholder="Paste URL or upload custom graphic..."
+                      className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                    <input
+                      ref={customThemeBackdropRef}
+                      type="file"
+                      accept="image/*,.gif"
+                      onChange={(e) =>
+                        handleCustomThemeBackdropUpload(e.target.files?.[0])
+                      }
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={isUploadingCustomThemeBg}
+                      onClick={() => customThemeBackdropRef.current?.click()}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      {isUploadingCustomThemeBg ? 'Uploading...' : 'Upload Image / GIF'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomThemeBuilder(false)}
+                    className="rounded-xl px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-semibold text-white cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4" />
+                    Save & Apply Theme
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
+
+          {(design.customThemes?.length ?? 0) > 0 && (
+            <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
+              <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                My Saved Custom Themes ({design.customThemes?.length})
+              </h4>
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {(design.customThemes || []).map((ct) => {
+                  const selected = design.theme === ct.id;
+                  return (
+                    <div
+                      key={ct.id}
+                      className={`flex items-center justify-between gap-3 rounded-2xl border p-4 ${
+                        selected
+                          ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
+                          : 'border-slate-200/80 bg-white/60 dark:border-slate-700 dark:bg-slate-900/40'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateDesign({
+                            theme: ct.id,
+                            surfaceStyle: ct.surfaceStyle,
+                          })
+                        }
+                        className="min-w-0 flex-1 text-left cursor-pointer"
+                      >
+                        <div className="truncate font-display text-sm font-bold text-slate-900 dark:text-white">
+                          {ct.name}
+                        </div>
+                        <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                          {ct.isDark ? 'Dark' : 'Light'} ·{' '}
+                          {ct.surfaceStyle === 'aero-glass' ? 'Glass' : 'Solid'}
+                          {ct.backdropImageUrl ? ' · Custom backdrop' : ''}
+                        </div>
+                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-1">
+                          {[ct.canvasBg, ct.accentStart, ct.accentEnd].map(
+                            (hex, idx) => (
+                              <span
+                                key={`${ct.id}-${idx}`}
+                                style={{ backgroundColor: hex }}
+                                className="h-4 w-4 rounded-full border border-white shadow-sm"
+                              />
+                            )
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCustomTheme(ct.id)}
+                          aria-label={`Delete theme ${ct.name}`}
+                          className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200">
@@ -1370,7 +1900,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
 
           <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
-              Custom Page Background Image or GIF (optional)
+              Global Background Override Image or GIF (optional)
             </label>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <input

@@ -71,6 +71,9 @@ export interface EventCountdown {
   font?: DiaryFont;
   displayFormat?: CountdownFormat;
   attachments?: MediaAttachment[];
+  milestoneBodyHtml?: string;
+  milestoneFont?: DiaryFont;
+  milestoneAttachments?: MediaAttachment[];
 }
 
 export type ThemePresetId =
@@ -78,14 +81,30 @@ export type ThemePresetId =
   | 'twilight-lagoon'
   | 'meadow-mint'
   | 'crystal-pearl'
-  | 'sunset-glass';
+  | 'sunset-glass'
+  | 'metro-prism-light'
+  | 'metro-eclipse-dark';
+
+export type ThemeId = ThemePresetId | (string & {});
 
 export type SurfaceStyle = 'aero-glass' | 'crisp-2026';
 
+export interface CustomThemePreset {
+  id: string;
+  name: string;
+  isDark: boolean;
+  canvasBg: string;
+  surfaceStyle: SurfaceStyle;
+  accentStart: string;
+  accentEnd: string;
+  backdropImageUrl?: string;
+}
+
 export interface DesignSettings {
-  theme: ThemePresetId;
+  theme: ThemeId;
   surfaceStyle: SurfaceStyle;
   customBackdropUrl?: string;
+  customThemes?: CustomThemePreset[];
 }
 
 export interface IntranetState {

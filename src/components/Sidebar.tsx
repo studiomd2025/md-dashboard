@@ -6,12 +6,14 @@ import {
   FileText,
   Hash,
   Palette,
+  Tv,
 } from 'lucide-react';
 import type {
+  ActiveView,
   DesignSettings,
   EventCountdown,
   MediaAttachment,
-  ThemePresetId,
+  ThemeId,
 } from '../types';
 import {
   formatMonthLabel,
@@ -21,8 +23,13 @@ import {
 } from '../lib/mediaUtils';
 import { PWAInstallButton } from './PWAInstallButton';
 import { THEME_PRESETS } from './BackendConsoleView';
+import { STATIONS, type BroadcastChannel } from './LiveTvView';
 
 interface SidebarProps {
+  activeView: ActiveView;
+  activeStation: BroadcastChannel;
+  isEventActive?: boolean;
+  onSelectStation: (station: BroadcastChannel) => void;
   nowMs: number;
   design: DesignSettings;
   onUpdateDesign: (next: Partial<DesignSettings>) => Promise<void>;
@@ -35,6 +42,15 @@ interface SidebarProps {
   activeMonth: string | null;
   onSelectMonth: (month: string | null) => void;
 }
+
+const MD_LINKS = [
+  { label: 'MD Memo', url: 'https://officialmdmemo.blogspot.com' },
+  { label: 'Magazine', url: 'http://mydiariesmagazine.wordpress.com' },
+  {
+    label: 'Time Capsule',
+    url: 'https://mydiaries2023.notion.site/MD-Notion-1be78586424c40e9845793644856dc96',
+  },
+];
 
 function formatCountdownDisplay(cd: EventCountdown, nowMs: number): string {
   const diff = new Date(cd.targetAt).getTime() - nowMs;
@@ -119,6 +135,10 @@ const CountdownMediaPreview: React.FC<{ attachment: MediaAttachment }> = ({
 };
 
 export const Sidebar: React.FC<SidebarProps> = ({
+  activeView,
+  activeStation,
+  isEventActive = false,
+  onSelectStation,
   nowMs,
   design,
   onUpdateDesign,
@@ -131,8 +151,67 @@ export const Sidebar: React.FC<SidebarProps> = ({
   activeMonth,
   onSelectMonth,
 }) => {
+  const customThemes = design.customThemes || [];
+
+  const handleThemeChange = (nextThemeId: ThemeId) => {
+    const customMatch = customThemes.find((t) => t.id === nextThemeId);
+    if (customMatch) {
+      onUpdateDesign({
+        theme: customMatch.id,
+        surfaceStyle: customMatch.surfaceStyle,
+      });
+    } else {
+      onUpdateDesign({ theme: nextThemeId });
+    }
+  };
+
   return (
     <aside className="space-y-5">
+      {/* Desktop Remote Control — sits above Theme on LIVE view */}
+      {activeView === 'live' && (
+        <section className="aero-glass hidden rounded-3xl p-5 lg:block">
+          <h2 className="flex items-center gap-2 font-display text-sm font-bold text-slate-900 dark:text-white">
+            <Tv className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+            Remote Control
+          </h2>
+
+          <div
+            role="tablist"
+            aria-label="Broadcast Channels"
+            className="mt-3 grid grid-cols-2 gap-2"
+          >
+            {STATIONS.map((station) => {
+              const isSelected = !isEventActive && activeStation.callsign === station.callsign;
+              return (
+                <button
+                  key={station.callsign}
+                  type="button"
+                  role="tab"
+                  aria-selected={isSelected}
+                  onClick={() => onSelectStation(station)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition-colors cursor-pointer ${
+                    isSelected
+                      ? 'aero-button-primary border-transparent text-white'
+                      : 'border-slate-200/90 bg-white/80 text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100'
+                  }`}
+                >
+                  <div
+                    className={`font-mono text-[10px] font-semibold uppercase tracking-wider tabular-nums ${
+                      isSelected ? 'text-sky-100' : 'text-sky-700 dark:text-sky-300'
+                    }`}
+                  >
+                    CH 0{station.number}
+                  </div>
+                  <div className="mt-0.5 truncate font-display text-xs font-bold">
+                    {station.callsign}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       {/* Theme Switcher & Mobile Install */}
       <section className="aero-glass rounded-3xl p-5 space-y-3.5">
         <div className="flex items-center justify-between gap-2">
@@ -155,16 +234,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <select
           id="sidebar-theme-select"
           value={design.theme}
-          onChange={(e) =>
-            onUpdateDesign({ theme: e.target.value as ThemePresetId })
-          }
+          onChange={(e) => handleThemeChange(e.target.value)}
           className="w-full rounded-xl border border-slate-200/90 bg-white/85 px-3 py-2 text-xs font-medium text-slate-800 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100"
         >
-          {THEME_PRESETS.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.label}
-            </option>
-          ))}
+          <optgroup label="Built-in Themes">
+            {THEME_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </optgroup>
+          {customThemes.length > 0 && (
+            <optgroup label="My Custom Themes">
+              {customThemes.map((ct) => (
+                <option key={ct.id} value={ct.id}>
+                  {ct.name} ({ct.isDark ? 'Dark' : 'Light'})
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
 
         <PWAInstallButton variant="full" />
@@ -180,31 +268,70 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
           <div className="mt-4 divide-y divide-slate-200/70 dark:divide-slate-700/60">
             {countdowns.map((cd) => {
+              const targetMs = new Date(cd.targetAt).getTime();
+              const hasEnded = !Number.isNaN(targetMs) && nowMs >= targetMs;
               const safeHtml = cd.bodyHtml ? sanitizeRichHtml(cd.bodyHtml) : '';
+              const safeMilestoneHtml = cd.milestoneBodyHtml
+                ? sanitizeRichHtml(cd.milestoneBodyHtml)
+                : '';
+              const hasMilestoneContent =
+                hasEnded &&
+                (Boolean(safeMilestoneHtml) ||
+                  (cd.milestoneAttachments?.length ?? 0) > 0);
+
               return (
                 <div key={cd.id} className="py-3.5 first:pt-0 last:pb-0">
                   <div className="text-sm font-semibold text-slate-900 dark:text-white">
                     {cd.title}
                   </div>
-                  <div className="mt-1 font-mono text-sm font-semibold text-sky-800 tabular-nums dark:text-sky-200">
+                  <div className="mt-1 font-display text-2xl sm:text-[28px] leading-tight font-bold tracking-tight text-sky-800 tabular-nums dark:text-sky-200">
                     {formatCountdownDisplay(cd, nowMs)}
                   </div>
 
-                  {safeHtml && (
-                    <div
-                      className={`diary-prose mt-2 text-xs text-slate-700 dark:text-slate-200 ${getFontClass(
-                        cd.font || 'sans'
-                      )}`}
-                      dangerouslySetInnerHTML={{ __html: safeHtml }}
-                    />
-                  )}
-
-                  {cd.attachments && cd.attachments.length > 0 && (
-                    <div className="mt-2 space-y-2">
-                      {cd.attachments.map((att) => (
-                        <CountdownMediaPreview key={att.id} attachment={att} />
-                      ))}
+                  {hasMilestoneContent ? (
+                    <div className="mt-2.5 space-y-2 border-t border-slate-200/70 pt-2.5 dark:border-slate-700/60">
+                      {safeMilestoneHtml && (
+                        <div
+                          className={`diary-prose text-xs text-slate-700 dark:text-slate-200 ${getFontClass(
+                            cd.milestoneFont || 'sans'
+                          )}`}
+                          dangerouslySetInnerHTML={{ __html: safeMilestoneHtml }}
+                        />
+                      )}
+                      {cd.milestoneAttachments &&
+                        cd.milestoneAttachments.length > 0 && (
+                          <div className="space-y-2">
+                            {cd.milestoneAttachments.map((att) => (
+                              <CountdownMediaPreview
+                                key={att.id}
+                                attachment={att}
+                              />
+                            ))}
+                          </div>
+                        )}
                     </div>
+                  ) : (
+                    <>
+                      {safeHtml && (
+                        <div
+                          className={`diary-prose mt-2 text-xs text-slate-700 dark:text-slate-200 ${getFontClass(
+                            cd.font || 'sans'
+                          )}`}
+                          dangerouslySetInnerHTML={{ __html: safeHtml }}
+                        />
+                      )}
+
+                      {cd.attachments && cd.attachments.length > 0 && (
+                        <div className="mt-2 space-y-2">
+                          {cd.attachments.map((att) => (
+                            <CountdownMediaPreview
+                              key={att.id}
+                              attachment={att}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {cd.tag && (
@@ -222,6 +349,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </section>
       )}
+
+      {/* Quick External Links right below Next on MD (no header, button style) */}
+      <section className="aero-glass rounded-3xl p-5">
+        <div className="space-y-2">
+          {MD_LINKS.map((item) => (
+            <a
+              key={item.url}
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200/90 bg-white/85 px-4 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-white hover:text-sky-700 dark:border-slate-700 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-900 dark:hover:text-sky-300"
+            >
+              <span>{item.label}</span>
+              <ExternalLink className="h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-400" />
+            </a>
+          ))}
+        </div>
+      </section>
 
       {/* Hashtags */}
       <section className="aero-glass rounded-3xl p-5">

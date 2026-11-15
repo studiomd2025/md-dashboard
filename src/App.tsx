@@ -31,7 +31,12 @@ import { TimelineCard } from './components/TimelineCard';
 import { Sidebar } from './components/Sidebar';
 import { RichComposerModal } from './components/RichComposerModal';
 import { BackendConsoleView } from './components/BackendConsoleView';
-import { LiveTvView } from './components/LiveTvView';
+import {
+  LiveTvView,
+  STATIONS,
+  type BroadcastChannel,
+  type PlayEventItem,
+} from './components/LiveTvView';
 import { MobileWidgetStudioView } from './components/MobileWidgetStudioView';
 import { OfflineIndicator } from './components/PWAInstallButton';
 
@@ -43,11 +48,14 @@ export default function App() {
     theme: 'aero-daylight',
     surfaceStyle: 'aero-glass',
     customBackdropUrl: '',
+    customThemes: [],
   });
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
 
   const [activeView, setActiveView] = useState<ActiveView>('timeline');
+  const [activeStation, setActiveStation] = useState<BroadcastChannel>(STATIONS[0]);
+  const [activeEvent, setActiveEvent] = useState<PlayEventItem | null>(null);
   const [settingsTab, setSettingsTab] = useState<BackendTab>('compose');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -63,12 +71,31 @@ export default function App() {
 
   const [nowMs, setNowMs] = useState(() => Date.now());
 
+  const activeCustomTheme = useMemo(
+    () => (design.customThemes || []).find((t) => t.id === design.theme) || null,
+    [design.customThemes, design.theme]
+  );
+
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute('data-theme', design.theme);
     root.setAttribute('data-surface', design.surfaceStyle);
-    root.classList.toggle('dark', design.theme === 'twilight-lagoon');
-  }, [design.theme, design.surfaceStyle]);
+
+    const isDark = activeCustomTheme
+      ? activeCustomTheme.isDark
+      : design.theme === 'twilight-lagoon' || design.theme === 'metro-eclipse-dark';
+    root.classList.toggle('dark', isDark);
+
+    if (activeCustomTheme) {
+      root.style.setProperty('--accent-start', activeCustomTheme.accentStart);
+      root.style.setProperty('--accent-end', activeCustomTheme.accentEnd);
+      root.style.setProperty('--accent-shadow', 'rgba(15, 23, 42, 0.25)');
+    } else {
+      root.style.removeProperty('--accent-start');
+      root.style.removeProperty('--accent-end');
+      root.style.removeProperty('--accent-shadow');
+    }
+  }, [design.theme, design.surfaceStyle, activeCustomTheme]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -360,6 +387,9 @@ export default function App() {
     font?: DiaryFont;
     displayFormat?: CountdownFormat;
     attachments?: MediaAttachment[];
+    milestoneBodyHtml?: string;
+    milestoneFont?: DiaryFont;
+    milestoneAttachments?: MediaAttachment[];
   }) => {
     const res = await fetch('/api/countdowns', {
       method: 'POST',
@@ -413,20 +443,32 @@ export default function App() {
 
   const hasAnyFilter = Boolean(activeTag || activeMonth || searchQuery || dateFrom || dateTo);
 
-  return (
-    <div
-      style={
-        design.customBackdropUrl
-          ? {
-              backgroundImage: `linear-gradient(rgba(255,255,255,0.28), rgba(255,255,255,0.28)), url(${design.customBackdropUrl})`,
-              backgroundSize: 'cover',
-              backgroundPosition: 'center',
-              backgroundAttachment: 'fixed',
-            }
-          : undefined
+  const effectiveBackdropUrl =
+    design.customBackdropUrl || activeCustomTheme?.backdropImageUrl || '';
+  const isEffectiveDark = activeCustomTheme
+    ? activeCustomTheme.isDark
+    : design.theme === 'twilight-lagoon' || design.theme === 'metro-eclipse-dark';
+
+  const wrapperStyle: React.CSSProperties | undefined = effectiveBackdropUrl
+    ? {
+        backgroundColor: activeCustomTheme?.canvasBg,
+        backgroundImage: isEffectiveDark
+          ? `linear-gradient(rgba(4,11,20,0.52), rgba(4,11,20,0.52)), url(${effectiveBackdropUrl})`
+          : `linear-gradient(rgba(255,255,255,0.34), rgba(255,255,255,0.34)), url(${effectiveBackdropUrl})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundAttachment: 'fixed',
       }
-      className="min-h-screen pb-20 md:pb-12"
-    >
+    : activeCustomTheme
+    ? {
+        backgroundColor: activeCustomTheme.canvasBg,
+        backgroundImage: 'none',
+        color: activeCustomTheme.isDark ? '#f1f5f9' : '#0f172a',
+      }
+    : undefined;
+
+  return (
+    <div style={wrapperStyle} className="min-h-screen pb-20 md:pb-12">
       <Header
         activeView={activeView}
         onSelectView={setActiveView}
@@ -607,7 +649,17 @@ export default function App() {
               </>
             )}
 
-            {activeView === 'live' && <LiveTvView />}
+            {activeView === 'live' && (
+              <LiveTvView
+                activeStation={activeStation}
+                activeEvent={activeEvent}
+                onSelectStation={(station) => {
+                  setActiveEvent(null);
+                  setActiveStation(station);
+                }}
+                onSelectEvent={(ev) => setActiveEvent(ev)}
+              />
+            )}
 
             {activeView === 'settings' && (
               <BackendConsoleView
@@ -648,6 +700,13 @@ export default function App() {
 
           <div className="lg:col-span-4">
             <Sidebar
+              activeView={activeView}
+              activeStation={activeStation}
+              isEventActive={Boolean(activeEvent)}
+              onSelectStation={(station) => {
+                setActiveEvent(null);
+                setActiveStation(station);
+              }}
               nowMs={nowMs}
               design={design}
               onUpdateDesign={handleUpdateDesign}
