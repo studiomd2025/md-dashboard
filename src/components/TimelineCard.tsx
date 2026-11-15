@@ -31,6 +31,7 @@ interface TimelineCardProps {
   onOpenPost?: (post: Post) => void;
   isDetailView?: boolean;
   canEdit?: boolean;
+  layoutMode?: 'stack' | 'grid';
 }
 
 function renderTextWithClickableHashtags(
@@ -118,9 +119,14 @@ function isCarouselAttachment(att: MediaAttachment): boolean {
 const CarouselSlide: React.FC<{
   attachment: MediaAttachment;
   isMulti: boolean;
+  isCompactGrid?: boolean;
   onOpenLightbox: (url: string, title?: string) => void;
-}> = ({ attachment, isMulti, onOpenLightbox }) => {
-  const frameHeightClass = isMulti ? 'h-[240px] sm:h-[310px]' : '';
+}> = ({ attachment, isMulti, isCompactGrid = false, onOpenLightbox }) => {
+  const frameHeightClass = isMulti
+    ? isCompactGrid
+      ? 'h-[190px] sm:h-[220px]'
+      : 'h-[240px] sm:h-[310px]'
+    : '';
 
   if (attachment.type === 'image' || attachment.type === 'gif') {
     return (
@@ -284,7 +290,9 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
   onOpenPost,
   isDetailView = false,
   canEdit = false,
+  layoutMode = 'stack',
 }) => {
+  const isGridMode = !isDetailView && layoutMode === 'grid';
   const carouselTrackRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
@@ -328,7 +336,7 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
     const obs = new ResizeObserver(checkOverflow);
     obs.observe(el);
     return () => obs.disconnect();
-  }, [processedHtml, isDetailView, post.font]);
+  }, [processedHtml, isDetailView, post.font, layoutMode]);
 
   const handleProseClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
@@ -372,7 +380,9 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
   return (
     <article
       onClick={handleCardClick}
-      className={`aero-glass rounded-3xl p-5 sm:p-7 transition-shadow ${
+      className={`aero-glass rounded-3xl transition-shadow ${
+        isGridMode ? 'p-4 sm:p-5' : 'p-5 sm:p-7'
+      } ${
         !isDetailView && onOpenPost
           ? 'cursor-pointer hover:shadow-lg'
           : ''
@@ -441,7 +451,11 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
 
       {/* Title */}
       {post.title.trim() && (
-        <h2 className="mt-2.5 font-display text-xl font-bold tracking-tight text-slate-900 sm:text-2xl dark:text-white [text-wrap:balance]">
+        <h2
+          className={`mt-2.5 font-display font-bold tracking-tight text-slate-900 dark:text-white [text-wrap:balance] ${
+            isGridMode ? 'text-lg sm:text-xl' : 'text-xl sm:text-2xl'
+          }`}
+        >
           {renderTextWithClickableHashtags(post.title, onSelectTag)}
         </h2>
       )}
@@ -454,7 +468,13 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
             onClick={handleProseClick}
             className={`diary-prose text-[15px] text-slate-700 dark:text-slate-200 ${getFontClass(
               post.font
-            )} ${!isDetailView ? 'max-h-[156px] overflow-hidden' : ''}`}
+            )} ${
+              !isDetailView
+                ? isGridMode
+                  ? 'max-h-[116px] overflow-hidden'
+                  : 'max-h-[156px] overflow-hidden'
+                : ''
+            }`}
             dangerouslySetInnerHTML={{ __html: processedHtml }}
           />
           {!isDetailView && isBodyTruncated && onOpenPost && (
@@ -550,6 +570,7 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
                     key={att.id}
                     attachment={att}
                     isMulti={true}
+                    isCompactGrid={isGridMode}
                     onOpenLightbox={onOpenLightbox}
                   />
                 ))}

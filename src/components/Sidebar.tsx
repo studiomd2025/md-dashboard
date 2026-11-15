@@ -79,10 +79,10 @@ function formatCountdownDisplay(cd: EventCountdown, nowMs: number): string {
       '0'
     )}:${String(secs).padStart(2, '0')}`;
   }
-  return `${String(days).padStart(2, '0')}d : ${String(hours).padStart(
+  return `${String(days).padStart(2, '0')} : ${String(hours).padStart(
     2,
     '0'
-  )}h : ${String(mins).padStart(2, '0')}m : ${String(secs).padStart(2, '0')}s`;
+  )} : ${String(mins).padStart(2, '0')} : ${String(secs).padStart(2, '0')}`;
 }
 
 const CountdownMediaPreview: React.FC<{ attachment: MediaAttachment }> = ({

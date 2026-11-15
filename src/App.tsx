@@ -7,6 +7,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   Home,
+  LayoutGrid,
+  Rows3,
   Search,
   Settings as SettingsIcon,
   Smartphone,
@@ -94,6 +96,16 @@ export default function App() {
   const [dateTo, setDateTo] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
+  const [timelineLayout, setTimelineLayout] = useState<'stack' | 'grid'>(() => {
+    if (typeof window === 'undefined') return 'stack';
+    return window.localStorage.getItem('md_timeline_layout') === 'grid'
+      ? 'grid'
+      : 'stack';
+  });
+  const [isTwoColViewport, setIsTwoColViewport] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia('(min-width: 640px)').matches;
+  });
 
   const [composerOpen, setComposerOpen] = useState(false);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
@@ -136,6 +148,20 @@ export default function App() {
       setNowMs(Date.now());
     }, 1000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('md_timeline_layout', timelineLayout);
+  }, [timelineLayout]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 640px)');
+    const onChange = (e: MediaQueryListEvent) => setIsTwoColViewport(e.matches);
+    setIsTwoColViewport(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
   }, []);
 
   useEffect(() => {
@@ -743,7 +769,7 @@ export default function App() {
                         type="search"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder="Search entries, quotes, or #Hashtags..."
+                        placeholder="Search"
                         className="w-full rounded-2xl border border-slate-200/90 bg-white/85 py-2.5 pl-10 pr-4 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
                       />
                     </div>
@@ -769,6 +795,41 @@ export default function App() {
                           className="rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
                         />
                       </label>
+
+                      <div
+                        role="group"
+                        aria-label="Timeline layout"
+                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200/90 bg-white/75 p-1 dark:border-slate-700 dark:bg-slate-900/70 shrink-0"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setTimelineLayout('stack')}
+                          aria-pressed={timelineLayout === 'stack'}
+                          aria-label="Single column stack"
+                          title="Single column stack"
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
+                            timelineLayout === 'stack'
+                              ? 'bg-sky-600 text-white shadow-sm'
+                              : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+                          }`}
+                        >
+                          <Rows3 className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTimelineLayout('grid')}
+                          aria-pressed={timelineLayout === 'grid'}
+                          aria-label="Pinterest masonry grid"
+                          title="Pinterest masonry grid"
+                          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
+                            timelineLayout === 'grid'
+                              ? 'bg-sky-600 text-white shadow-sm'
+                              : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+                          }`}
+                        >
+                          <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -874,6 +935,33 @@ export default function App() {
                       </button>
                     )}
                   </div>
+                ) : timelineLayout === 'grid' && isTwoColViewport ? (
+                  <div className="grid grid-cols-2 items-start gap-5">
+                    {[0, 1].map((colIdx) => (
+                      <div key={colIdx} className="space-y-5 min-w-0">
+                        {filteredTimelinePosts
+                          .filter((_, idx) => idx % 2 === colIdx)
+                          .map((post) => (
+                            <TimelineCard
+                              key={post.id}
+                              post={post}
+                              nowMs={nowMs}
+                              activeTag={activeTag}
+                              canEdit={isAdmin}
+                              layoutMode="grid"
+                              onOpenPost={openPostDetail}
+                              onSelectTag={handleSelectTag}
+                              onEdit={openEditComposer}
+                              onDelete={handleDeletePost}
+                              onTogglePin={handleTogglePin}
+                              onOpenLightbox={(url, title) =>
+                                setLightbox({ url, title })
+                              }
+                            />
+                          ))}
+                      </div>
+                    ))}
+                  </div>
                 ) : (
                   <div className="space-y-5">
                     {filteredTimelinePosts.map((post) => (
@@ -883,6 +971,7 @@ export default function App() {
                         nowMs={nowMs}
                         activeTag={activeTag}
                         canEdit={isAdmin}
+                        layoutMode={timelineLayout}
                         onOpenPost={openPostDetail}
                         onSelectTag={handleSelectTag}
                         onEdit={openEditComposer}

@@ -956,7 +956,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     onChange={(e) => setCdFormat(e.target.value as CountdownFormat)}
                     className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                   >
-                    <option value="full">Full Timer (00d : 00h : 00m : 00s)</option>
+                    <option value="full">Full Timer (00 : 00 : 00 : 00)</option>
                     <option value="days-only">Days Remaining (e.g. 14 days left)</option>
                     <option value="compact">Compact Clock (HH:MM:SS)</option>
                     <option value="date-only">Target Date Only</option>
