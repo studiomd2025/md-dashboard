@@ -245,16 +245,29 @@ export function getFontClass(font: DiaryFont): string {
   }
 }
 
-export function formatPostTimestamp(iso: string): string {
+export function formatDateYmd(input: string | Date): string {
+  const date = input instanceof Date ? input : new Date(input);
+  if (Number.isNaN(date.getTime())) return typeof input === 'string' ? input : '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate());
+  return `${y}.${m}.${d}`;
+}
+
+export function formatHourMinute12h(hour24: number, minute = 0): string {
+  const normalizedHour = ((Math.floor(hour24) % 24) + 24) % 24;
+  const period = normalizedHour >= 12 ? 'pm' : 'am';
+  const hour12 = normalizedHour % 12 || 12;
+  const min = String(Math.max(0, Math.min(59, Math.floor(minute)))).padStart(2, '0');
+  return `${hour12}:${min} ${period}`;
+}
+
+export function formatPostTimestamp(iso: string, includeTime = true): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(date);
+  const datePart = formatDateYmd(date);
+  if (!includeTime) return datePart;
+  return `${datePart} ${formatHourMinute12h(date.getHours(), date.getMinutes())}`;
 }
 
 export function getMonthKey(iso: string): string {
@@ -267,7 +280,8 @@ export function getMonthKey(iso: string): string {
 
 export function formatMonthLabel(monthKey: string): string {
   const [y, m] = monthKey.split('-');
+  if (!y || !m) return monthKey;
   const date = new Date(Number(y), Number(m) - 1, 1);
   if (Number.isNaN(date.getTime())) return monthKey;
-  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(date);
+  return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }

@@ -11,6 +11,9 @@ import {
   Italic,
   Layers,
   Link2,
+  Lock,
+  LogIn,
+  LogOut,
   Music,
   Palette,
   Pin,
@@ -36,12 +39,14 @@ import type {
 } from '../types';
 import {
   formatFileSize,
+  formatHourMinute12h,
   formatPostTimestamp,
   getFontClass,
   normalizeTag,
   sanitizeRichHtml,
   stripHtml,
 } from '../lib/mediaUtils';
+import { uploadMediaFile } from '../lib/cloudinaryUpload';
 import { resolveActiveBanner } from './ScheduledBanner';
 
 interface BackendConsoleViewProps {
@@ -80,6 +85,11 @@ interface BackendConsoleViewProps {
   onUpdateBanner: (id: string, patch: Partial<BannerSchedule>) => Promise<void>;
   onDeleteBanner: (id: string) => Promise<void>;
   onUpdateDesign: (next: Partial<DesignSettings>) => Promise<void>;
+  isAdmin: boolean;
+  userEmail?: string | null;
+  authError?: string;
+  onSignIn: () => Promise<void>;
+  onSignOut: () => Promise<void>;
 }
 
 export const THEME_PRESETS: {
@@ -111,6 +121,18 @@ export const THEME_PRESETS: {
     label: 'Frutiger Metro Eclipse (Dark)',
     description: 'Midnight obsidian canvas with sleek cyan-teal Frutiger Metro vector art.',
     swatches: ['#050d17', '#22d3ee', '#0284c7'],
+  },
+  {
+    id: 'metro-ipod-pop',
+    label: 'Frutiger Metro Neon Pop',
+    description: 'Bright iPod-era lime, hot pink, cyan, and tangerine vector burst over light glass.',
+    swatches: ['#f7fff4', '#ec4899', '#84cc16'],
+  },
+  {
+    id: 'metro-ipod-electric',
+    label: 'Frutiger Metro Electric Club (Dark)',
+    description: 'Deep midnight violet canvas with glowing neon cyan, acid lime, and hot pink swooshes.',
+    swatches: ['#0b0719', '#22d3ee', '#ec4899'],
   },
   {
     id: 'meadow-mint',
@@ -164,6 +186,11 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   onUpdateBanner,
   onDeleteBanner,
   onUpdateDesign,
+  isAdmin,
+  userEmail,
+  authError,
+  onSignIn,
+  onSignOut,
 }) => {
   // Tag management state
   const [editingTag, setEditingTag] = useState<string | null>(null);
@@ -221,31 +248,25 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [ctBackdropUrl, setCtBackdropUrl] = useState('');
   const [isUploadingCustomThemeBg, setIsUploadingCustomThemeBg] = useState(false);
 
+  const [uploadError, setUploadError] = useState('');
+
   const activeBanner = resolveActiveBanner(banners, now);
   const nowMs = now.getTime();
 
   const uploadFileToServer = async (
     file: File
   ): Promise<{ url: string; fileName: string; mimeType: string; fileSize: number } | null> => {
-    const res = await fetch(
-      `/api/upload-raw?fileName=${encodeURIComponent(
-        file.name
-      )}&mimeType=${encodeURIComponent(
-        file.type || 'application/octet-stream'
-      )}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: file,
-      }
-    );
-    if (!res.ok) return null;
-    return (await res.json()) as {
-      url: string;
-      fileName: string;
-      mimeType: string;
-      fileSize: number;
-    };
+    setUploadError('');
+    try {
+      return await uploadMediaFile(file);
+    } catch (err) {
+      setUploadError(
+        err instanceof Error && err.message
+          ? err.message
+          : 'Failed to upload file. Please check file size and try again.'
+      );
+      return null;
+    }
   };
 
   const handleCountdownMediaUpload = async (files: FileList | null) => {
@@ -567,14 +588,27 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
               Manage posts, drafts, Next on MD countdowns, Hashtags, Banners, and Theme.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onOpenNewComposer}
-            className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />
-            New Post
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={onOpenNewComposer}
+                className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <Plus className="h-4 w-4" />
+                New Post
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={onSignIn}
+                className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <LogIn className="h-4 w-4" />
+                Owner Sign In
+              </button>
+            )}
+          </div>
         </div>
 
         <div
@@ -606,8 +640,67 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
         </div>
       </section>
 
+      {!isAdmin && activeTab !== 'design' && (
+        <section className="aero-glass rounded-3xl p-8 text-center space-y-4">
+          <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">
+            <Lock className="h-6 w-6" />
+          </div>
+          <div>
+            <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white">
+              Owner Sign-In Required
+            </h3>
+            <p className="mx-auto mt-1 max-w-md text-xs text-slate-600 dark:text-slate-300">
+              Sign in with the dashboard owner Google account (<span className="font-mono">officialmdworkspace@gmail.com</span>) to create posts, manage drafts, update Next on MD, edit banners, or modify hashtags.
+            </p>
+            {userEmail && (
+              <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+                Currently signed in as {userEmail}. Please switch to the owner account.
+              </p>
+            )}
+            {authError && (
+              <p className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400">
+                {authError}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={onSignIn}
+              className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-semibold text-white cursor-pointer"
+            >
+              <LogIn className="h-4 w-4" />
+              Sign in with Google
+            </button>
+            {userEmail && (
+              <button
+                type="button"
+                onClick={onSignOut}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Sign Out
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      {uploadError && (
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/50 dark:text-rose-200">
+          <span>{uploadError}</span>
+          <button
+            type="button"
+            onClick={() => setUploadError('')}
+            className="font-semibold hover:underline cursor-pointer"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Tab 1: Posting, Drafts & Scheduling Manager */}
-      {activeTab === 'compose' && (
+      {isAdmin && activeTab === 'compose' && (
         <div className="space-y-5">
           {/* Drafts */}
           <section className="aero-glass rounded-3xl p-6">
@@ -815,7 +908,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       )}
 
       {/* Tab 2: Next on MD (Countdown Setup with RTF, Custom Format & Multimedia) */}
-      {activeTab === 'countdowns' && (
+      {isAdmin && activeTab === 'countdowns' && (
         <div className="space-y-5">
           <section className="aero-glass rounded-3xl p-6">
             <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
@@ -1206,7 +1299,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       )}
 
       {/* Tab 3: Hashtags Manager */}
-      {activeTab === 'tags' && (
+      {isAdmin && activeTab === 'tags' && (
         <section className="aero-glass rounded-3xl p-6">
           <div>
             <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
@@ -1308,7 +1401,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       )}
 
       {/* Tab 4: Banner Upload & Scheduler */}
-      {activeTab === 'banners' && (
+      {isAdmin && activeTab === 'banners' && (
         <div className="space-y-5">
           <section className="aero-glass rounded-3xl p-6">
             <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
@@ -1581,9 +1674,10 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                           <span className="inline-flex items-center gap-1">
                             <CalendarClock className="h-3.5 w-3.5 text-sky-600" />
                             {b.mode === 'daily-hours'
-                              ? `Daily ${String(b.dailyStartHour ?? 0).padStart(2, '0')}:00 – ${String(
-                                  b.dailyEndHour ?? 23
-                                ).padStart(2, '0')}:59`
+                              ? `Daily ${formatHourMinute12h(
+                                  b.dailyStartHour ?? 0,
+                                  0
+                                )} – ${formatHourMinute12h(b.dailyEndHour ?? 23, 59)}`
                               : b.mode === 'window'
                               ? 'Scheduled Window'
                               : b.mode === 'slideshow'
@@ -1645,11 +1739,24 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       {activeTab === 'design' && (
         <section className="aero-glass rounded-3xl p-6 space-y-6">
           <div>
-            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Theme
-            </h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                Theme
+              </h3>
+              {!isAdmin && (
+                <button
+                  type="button"
+                  onClick={onSignIn}
+                  className="text-xs font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+                >
+                  Sign in as Owner to save globally
+                </button>
+              )}
+            </div>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              Switch between Frutiger Aero, Frutiger Metro, and 2026 minimal palettes, or create and save your own custom theme.
+              {isAdmin
+                ? 'Switch between Frutiger Aero, Frutiger Metro, and 2026 minimal palettes, or create and save your own custom theme.'
+                : 'Preview themes locally in your browser. Owner sign-in is required to create themes or save global defaults.'}
             </p>
           </div>
 
@@ -1691,32 +1798,34 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
             </div>
 
             {/* + Add New Theme card directly below Crystal Pearl Minimal */}
-            <button
-              type="button"
-              onClick={() => setShowCustomThemeBuilder((v) => !v)}
-              aria-expanded={showCustomThemeBuilder}
-              className={`flex w-full items-center justify-between gap-3 rounded-2xl border border-dashed p-4 text-left transition-colors cursor-pointer ${
-                showCustomThemeBuilder
-                  ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
-                  : 'border-slate-300/90 bg-white/55 hover:border-sky-400 hover:bg-white/80 dark:border-slate-700 dark:bg-slate-900/40 dark:hover:border-sky-500'
-              }`}
-            >
-              <div>
-                <div className="flex items-center gap-2 font-display text-sm font-bold text-sky-700 dark:text-sky-300">
-                  <Plus className="h-4 w-4" />
-                  <span>Add New Theme</span>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setShowCustomThemeBuilder((v) => !v)}
+                aria-expanded={showCustomThemeBuilder}
+                className={`flex w-full items-center justify-between gap-3 rounded-2xl border border-dashed p-4 text-left transition-colors cursor-pointer ${
+                  showCustomThemeBuilder
+                    ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
+                    : 'border-slate-300/90 bg-white/55 hover:border-sky-400 hover:bg-white/80 dark:border-slate-700 dark:bg-slate-900/40 dark:hover:border-sky-500'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center gap-2 font-display text-sm font-bold text-sky-700 dark:text-sky-300">
+                    <Plus className="h-4 w-4" />
+                    <span>Add New Theme</span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+                    Create and save a custom color & background graphic theme to this list.
+                  </p>
                 </div>
-                <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
-                  Create and save a custom color & background graphic theme to this list.
-                </p>
-              </div>
-              <span className="text-xs font-semibold text-sky-700 dark:text-sky-300 whitespace-nowrap shrink-0">
-                {showCustomThemeBuilder ? 'Close' : 'Open Builder'}
-              </span>
-            </button>
+                <span className="text-xs font-semibold text-sky-700 dark:text-sky-300 whitespace-nowrap shrink-0">
+                  {showCustomThemeBuilder ? 'Close' : 'Open Builder'}
+                </span>
+              </button>
+            )}
 
             {/* Integrated Sub-Panel inside Theme */}
-            {showCustomThemeBuilder && (
+            {isAdmin && showCustomThemeBuilder && (
               <form
                 onSubmit={handleSaveCustomTheme}
                 className="space-y-4 rounded-2xl border border-slate-200/90 bg-white/75 p-5 dark:border-slate-700 dark:bg-slate-900/70"
@@ -1933,14 +2042,16 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                             )
                           )}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteCustomTheme(ct.id)}
-                          aria-label={`Delete theme ${ct.name}`}
-                          className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        {isAdmin && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCustomTheme(ct.id)}
+                            aria-label={`Delete theme ${ct.name}`}
+                            className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -1977,7 +2088,8 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
             </div>
           </div>
 
-          <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
+          {isAdmin && (
+            <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
               Global Background Override Image or GIF (optional)
             </label>
@@ -2025,7 +2137,8 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 </button>
               )}
             </div>
-          </div>
+            </div>
+          )}
         </section>
       )}
     </div>

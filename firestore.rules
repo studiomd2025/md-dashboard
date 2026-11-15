@@ -1,0 +1,280 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (
+          request.auth.token.email == 'officialmdworkspace@gmail.com' &&
+          request.auth.token.email_verified == true
+        ) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOptionalStr(data, key, maxLen) {
+      return !(key in data) || data[key] == null || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isBoundedStrList(listVal, maxItems) {
+      return listVal is list && listVal.size() <= maxItems && (listVal.size() == 0 || listVal[0] is string);
+    }
+
+    function isBoundedMapList(listVal, maxItems) {
+      return listVal is list && listVal.size() <= maxItems && (listVal.size() == 0 || listVal[0] is map);
+    }
+
+    function isValidPost(data) {
+      return data.keys().hasAll([
+          'title',
+          'bodyHtml',
+          'font',
+          'manualTags',
+          'inlineTags',
+          'attachments',
+          'createdAt',
+          'publishedAt',
+          'isDraft',
+          'authorId',
+          'serverCreatedAt',
+          'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'title',
+          'bodyHtml',
+          'font',
+          'manualTags',
+          'inlineTags',
+          'attachments',
+          'createdAt',
+          'publishedAt',
+          'scheduledFor',
+          'pinnedUntil',
+          'isDraft',
+          'authorId',
+          'serverCreatedAt',
+          'serverUpdatedAt'
+        ]) &&
+        data.title is string && data.title.size() <= 300 &&
+        data.bodyHtml is string && data.bodyHtml.size() <= 200000 &&
+        data.font in ['sans', 'serif', 'mono', 'hand'] &&
+        isBoundedStrList(data.manualTags, 40) &&
+        isBoundedStrList(data.inlineTags, 40) &&
+        isBoundedMapList(data.attachments, 30) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        data.publishedAt is string && data.publishedAt.size() <= 64 &&
+        isOptionalStr(data, 'scheduledFor', 64) &&
+        isOptionalStr(data, 'pinnedUntil', 64) &&
+        data.isDraft is bool &&
+        data.authorId is string && data.authorId.size() <= 128 &&
+        data.serverCreatedAt is timestamp &&
+        data.serverUpdatedAt == request.time;
+    }
+
+    function isValidBanner(data) {
+      return data.keys().hasAll([
+          'title',
+          'subtitle',
+          'imageUrl',
+          'mode',
+          'priority',
+          'authorId',
+          'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'title',
+          'subtitle',
+          'subtitleHtml',
+          'imageUrl',
+          'mode',
+          'startAt',
+          'endAt',
+          'dailyStartHour',
+          'dailyEndHour',
+          'priority',
+          'authorId',
+          'serverUpdatedAt'
+        ]) &&
+        data.title is string && data.title.size() <= 200 &&
+        data.subtitle is string && data.subtitle.size() <= 1000 &&
+        isOptionalStr(data, 'subtitleHtml', 4000) &&
+        data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 2000 &&
+        data.mode in ['default', 'slideshow', 'window', 'daily-hours'] &&
+        isOptionalStr(data, 'startAt', 64) &&
+        isOptionalStr(data, 'endAt', 64) &&
+        (!('dailyStartHour' in data) || data.dailyStartHour == null || (data.dailyStartHour is number && data.dailyStartHour >= 0 && data.dailyStartHour <= 23)) &&
+        (!('dailyEndHour' in data) || data.dailyEndHour == null || (data.dailyEndHour is number && data.dailyEndHour >= 0 && data.dailyEndHour <= 23)) &&
+        data.priority is number && data.priority >= 0 && data.priority <= 10000 &&
+        data.authorId is string && data.authorId.size() <= 128 &&
+        data.serverUpdatedAt == request.time;
+    }
+
+    function isValidCountdown(data) {
+      return data.keys().hasAll([
+          'title',
+          'targetAt',
+          'authorId',
+          'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'title',
+          'targetAt',
+          'tag',
+          'location',
+          'bodyHtml',
+          'font',
+          'displayFormat',
+          'attachments',
+          'milestoneBodyHtml',
+          'milestoneFont',
+          'milestoneAttachments',
+          'authorId',
+          'serverUpdatedAt'
+        ]) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.targetAt is string && data.targetAt.size() <= 64 &&
+        isOptionalStr(data, 'tag', 80) &&
+        isOptionalStr(data, 'location', 200) &&
+        isOptionalStr(data, 'bodyHtml', 100000) &&
+        (!('font' in data) || data.font == null || data.font in ['sans', 'serif', 'mono', 'hand']) &&
+        (!('displayFormat' in data) || data.displayFormat == null || data.displayFormat in ['full', 'days-only', 'compact', 'date-only']) &&
+        (!('attachments' in data) || isBoundedMapList(data.attachments, 20)) &&
+        isOptionalStr(data, 'milestoneBodyHtml', 100000) &&
+        (!('milestoneFont' in data) || data.milestoneFont == null || data.milestoneFont in ['sans', 'serif', 'mono', 'hand']) &&
+        (!('milestoneAttachments' in data) || isBoundedMapList(data.milestoneAttachments, 20)) &&
+        data.authorId is string && data.authorId.size() <= 128 &&
+        data.serverUpdatedAt == request.time;
+    }
+
+    function isValidDesign(data) {
+      return data.keys().hasAll([
+          'theme',
+          'surfaceStyle',
+          'customBackdropUrl',
+          'customThemes',
+          'authorId',
+          'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'theme',
+          'surfaceStyle',
+          'customBackdropUrl',
+          'customThemes',
+          'authorId',
+          'serverUpdatedAt'
+        ]) &&
+        data.theme is string && data.theme.size() >= 1 && data.theme.size() <= 128 &&
+        data.surfaceStyle in ['aero-glass', 'crisp-2026'] &&
+        data.customBackdropUrl is string && data.customBackdropUrl.size() <= 2000 &&
+        isBoundedMapList(data.customThemes, 50) &&
+        data.authorId is string && data.authorId.size() <= 128 &&
+        data.serverUpdatedAt == request.time;
+    }
+
+    match /test/{docId} {
+      allow get: if docId == 'connection';
+    }
+
+    match /posts/{postId} {
+      allow get: if isValidId(postId) && (resource.data.isDraft == false || isAdmin());
+      allow list: if resource.data.isDraft == false || isAdmin();
+      allow create: if isAdmin() &&
+        isValidId(postId) &&
+        isValidPost(incoming()) &&
+        incoming().authorId == request.auth.uid &&
+        incoming().serverCreatedAt == request.time;
+      allow update: if isAdmin() &&
+        isValidId(postId) &&
+        isValidPost(incoming()) &&
+        incoming().authorId == existing().authorId &&
+        incoming().serverCreatedAt == existing().serverCreatedAt &&
+        incoming().createdAt == existing().createdAt && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['pinnedUntil', 'serverUpdatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'bodyHtml', 'font', 'manualTags', 'inlineTags',
+            'attachments', 'publishedAt', 'scheduledFor', 'pinnedUntil',
+            'isDraft', 'serverUpdatedAt'
+          ])
+        );
+      allow delete: if isAdmin() && isValidId(postId);
+    }
+
+    match /banners/{bannerId} {
+      allow get: if isValidId(bannerId);
+      allow list: if true;
+      allow create: if isAdmin() &&
+        isValidId(bannerId) &&
+        isValidBanner(incoming()) &&
+        incoming().authorId == request.auth.uid;
+      allow update: if isAdmin() &&
+        isValidId(bannerId) &&
+        isValidBanner(incoming()) &&
+        incoming().authorId == existing().authorId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'subtitle', 'subtitleHtml', 'imageUrl', 'mode',
+          'startAt', 'endAt', 'dailyStartHour', 'dailyEndHour',
+          'priority', 'serverUpdatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(bannerId);
+    }
+
+    match /countdowns/{countdownId} {
+      allow get: if isValidId(countdownId);
+      allow list: if true;
+      allow create: if isAdmin() &&
+        isValidId(countdownId) &&
+        isValidCountdown(incoming()) &&
+        incoming().authorId == request.auth.uid;
+      allow update: if isAdmin() &&
+        isValidId(countdownId) &&
+        isValidCountdown(incoming()) &&
+        incoming().authorId == existing().authorId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'targetAt', 'tag', 'location', 'bodyHtml', 'font',
+          'displayFormat', 'attachments', 'milestoneBodyHtml',
+          'milestoneFont', 'milestoneAttachments', 'serverUpdatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(countdownId);
+    }
+
+    match /config/{configId} {
+      allow get: if configId == 'design';
+      allow create: if isAdmin() &&
+        configId == 'design' &&
+        isValidDesign(incoming()) &&
+        incoming().authorId == request.auth.uid;
+      allow update: if isAdmin() &&
+        configId == 'design' &&
+        isValidDesign(incoming()) &&
+        incoming().authorId == existing().authorId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'theme', 'surfaceStyle', 'customBackdropUrl', 'customThemes', 'serverUpdatedAt'
+        ]);
+    }
+
+    match /admins/{userId} {
+      allow get: if isSignedIn() && request.auth.uid == userId;
+      allow list, write: if false;
+    }
+  }
+}

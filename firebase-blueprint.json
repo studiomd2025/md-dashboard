@@ -1,0 +1,126 @@
+{
+  "entities": {
+    "Post": {
+      "title": "Post",
+      "description": "A diary post, scheduled entry, or unpublished draft stored in Firestore.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 300 },
+        "bodyHtml": { "type": "string", "maxLength": 200000 },
+        "font": { "type": "string", "enum": ["sans", "serif", "mono", "hand"] },
+        "manualTags": { "type": "array" },
+        "inlineTags": { "type": "array" },
+        "attachments": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "publishedAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "scheduledFor": { "type": "string", "maxLength": 64 },
+        "pinnedUntil": { "type": "string", "maxLength": 64 },
+        "isDraft": { "type": "boolean" },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "serverCreatedAt": { "type": "string", "format": "date-time" },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "title",
+        "bodyHtml",
+        "font",
+        "manualTags",
+        "inlineTags",
+        "attachments",
+        "createdAt",
+        "publishedAt",
+        "isDraft",
+        "authorId",
+        "serverCreatedAt",
+        "serverUpdatedAt"
+      ]
+    },
+    "Banner": {
+      "title": "Banner",
+      "description": "A header banner or scheduled slideshow slide.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "subtitle": { "type": "string", "maxLength": 1000 },
+        "subtitleHtml": { "type": "string", "maxLength": 4000 },
+        "imageUrl": { "type": "string", "maxLength": 2000 },
+        "mode": { "type": "string", "enum": ["default", "slideshow", "window", "daily-hours"] },
+        "startAt": { "type": "string", "maxLength": 64 },
+        "endAt": { "type": "string", "maxLength": 64 },
+        "dailyStartHour": { "type": "number" },
+        "dailyEndHour": { "type": "number" },
+        "priority": { "type": "number" },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "subtitle", "imageUrl", "mode", "priority", "authorId", "serverUpdatedAt"]
+    },
+    "EventCountdown": {
+      "title": "EventCountdown",
+      "description": "A Next on MD countdown event with optional milestone content.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "targetAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "tag": { "type": "string", "maxLength": 80 },
+        "location": { "type": "string", "maxLength": 200 },
+        "bodyHtml": { "type": "string", "maxLength": 100000 },
+        "font": { "type": "string", "enum": ["sans", "serif", "mono", "hand"] },
+        "displayFormat": { "type": "string", "enum": ["full", "days-only", "compact", "date-only"] },
+        "attachments": { "type": "array" },
+        "milestoneBodyHtml": { "type": "string", "maxLength": 100000 },
+        "milestoneFont": { "type": "string", "enum": ["sans", "serif", "mono", "hand"] },
+        "milestoneAttachments": { "type": "array" },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "targetAt", "authorId", "serverUpdatedAt"]
+    },
+    "DesignConfig": {
+      "title": "DesignConfig",
+      "description": "Global dashboard theme, surface style, backdrop override, and custom user themes.",
+      "type": "object",
+      "properties": {
+        "theme": { "type": "string", "maxLength": 128 },
+        "surfaceStyle": { "type": "string", "enum": ["aero-glass", "crisp-2026"] },
+        "customBackdropUrl": { "type": "string", "maxLength": 2000 },
+        "customThemes": { "type": "array" },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["theme", "surfaceStyle", "customBackdropUrl", "customThemes", "authorId", "serverUpdatedAt"]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized dashboard administrator record.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 254 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email"]
+    }
+  },
+  "firestore": {
+    "/posts/{postId}": {
+      "schema": { "$ref": "#/entities/Post" },
+      "description": "Diary posts, scheduled posts, and private drafts."
+    },
+    "/banners/{bannerId}": {
+      "schema": { "$ref": "#/entities/Banner" },
+      "description": "Scheduled header banners and slideshow items."
+    },
+    "/countdowns/{countdownId}": {
+      "schema": { "$ref": "#/entities/EventCountdown" },
+      "description": "Next on MD upcoming event countdowns."
+    },
+    "/config/{configId}": {
+      "schema": { "$ref": "#/entities/DesignConfig" },
+      "description": "Theme and visual design configuration (document id: design)."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Authorized dashboard owner accounts."
+    }
+  }
+}

@@ -16,8 +16,8 @@ import type {
   ThemeId,
 } from '../types';
 import {
+  formatDateYmd,
   formatMonthLabel,
-  formatPostTimestamp,
   getFontClass,
   sanitizeRichHtml,
 } from '../lib/mediaUtils';
@@ -57,7 +57,7 @@ function formatCountdownDisplay(cd: EventCountdown, nowMs: number): string {
   const format = cd.displayFormat || 'full';
 
   if (format === 'date-only') {
-    return formatPostTimestamp(cd.targetAt);
+    return formatDateYmd(cd.targetAt);
   }
   if (Number.isNaN(diff) || diff <= 0) {
     return 'Event arrived';

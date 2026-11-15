@@ -1,10 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
   ExternalLink,
   FileText,
-  Film,
   Music,
   Pencil,
   Pin,
@@ -29,6 +28,9 @@ interface TimelineCardProps {
   onDelete: (id: string) => void;
   onTogglePin: (post: Post) => void;
   onOpenLightbox: (url: string, title?: string) => void;
+  onOpenPost?: (post: Post) => void;
+  isDetailView?: boolean;
+  canEdit?: boolean;
 }
 
 function renderTextWithClickableHashtags(
@@ -141,16 +143,6 @@ const CarouselSlide: React.FC<{
             } object-cover transition-transform duration-300 hover:scale-[1.01]`}
           />
         </button>
-        {(attachment.title || attachment.type === 'gif') && (
-          <figcaption className="flex items-center justify-between gap-4 px-3.5 py-2 text-xs text-slate-600 dark:text-slate-300">
-            <span className="truncate">{attachment.title || 'Animated GIF'}</span>
-            {attachment.type === 'gif' && (
-              <span className="font-mono text-[11px] uppercase tracking-wide text-sky-700 dark:text-sky-300 shrink-0">
-                GIF
-              </span>
-            )}
-          </figcaption>
-        )}
       </figure>
     );
   }
@@ -170,12 +162,6 @@ const CarouselSlide: React.FC<{
             src={attachment.url}
           />
         </div>
-        {attachment.title && (
-          <div className="flex items-center gap-2 bg-white/90 px-3.5 py-2 text-xs text-slate-700 dark:bg-slate-900/90 dark:text-slate-300">
-            <Film className="h-3.5 w-3.5 text-sky-600 shrink-0" />
-            <span className="truncate">{attachment.title}</span>
-          </div>
-        )}
       </div>
     );
   }
@@ -196,20 +182,6 @@ const CarouselSlide: React.FC<{
           loading="lazy"
           className="h-full w-full border-0"
         />
-      </div>
-      <div className="flex items-center justify-between gap-3 bg-white/85 px-3.5 py-2 text-xs text-slate-600 dark:bg-slate-900/85 dark:text-slate-300">
-        <span className="truncate font-medium">
-          {attachment.title || 'YouTube Video'}
-        </span>
-        <a
-          href={attachment.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1 text-sky-700 hover:underline dark:text-sky-300 whitespace-nowrap shrink-0"
-        >
-          <span>Open</span>
-          <ExternalLink className="h-3 w-3" />
-        </a>
       </div>
     </div>
   );
@@ -309,9 +281,14 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
   onDelete,
   onTogglePin,
   onOpenLightbox,
+  onOpenPost,
+  isDetailView = false,
+  canEdit = false,
 }) => {
   const carouselTrackRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
+  const [isBodyTruncated, setIsBodyTruncated] = useState(false);
 
   const isPinned =
     !!post.pinnedUntil && new Date(post.pinnedUntil).getTime() > nowMs;
@@ -333,13 +310,45 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
     [post.attachments]
   );
 
+  useEffect(() => {
+    if (isDetailView) {
+      setIsBodyTruncated(false);
+      return;
+    }
+    const el = bodyRef.current;
+    if (!el) {
+      setIsBodyTruncated(false);
+      return;
+    }
+    const checkOverflow = () => {
+      setIsBodyTruncated(el.scrollHeight > el.clientHeight + 2);
+    };
+    checkOverflow();
+    if (typeof ResizeObserver === 'undefined') return;
+    const obs = new ResizeObserver(checkOverflow);
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [processedHtml, isDetailView, post.font]);
+
   const handleProseClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     const tagAttr = target.getAttribute('data-inline-tag');
     if (tagAttr) {
       e.preventDefault();
+      e.stopPropagation();
       onSelectTag(tagAttr);
     }
+  };
+
+  const handleCardClick = (e: React.MouseEvent<HTMLElement>) => {
+    if (isDetailView || !onOpenPost) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('a, button, video, audio, iframe, input, select, textarea')) {
+      return;
+    }
+    const selection = window.getSelection()?.toString();
+    if (selection && selection.length > 0) return;
+    onOpenPost(post);
   };
 
   const scrollCarouselBy = (direction: -1 | 1) => {
@@ -361,19 +370,29 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
   };
 
   return (
-    <article className="aero-glass rounded-3xl p-5 sm:p-7 transition-shadow">
+    <article
+      onClick={handleCardClick}
+      className={`aero-glass rounded-3xl p-5 sm:p-7 transition-shadow ${
+        !isDetailView && onOpenPost
+          ? 'cursor-pointer hover:shadow-lg'
+          : ''
+      }`}
+    >
       {/* Metadata & Actions Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
           <time dateTime={post.publishedAt}>
             {formatPostTimestamp(post.publishedAt)}
           </time>
-          {isPinned && post.pinnedUntil && (
+          {isPinned && (
             <>
               <span aria-hidden="true">·</span>
-              <span className="inline-flex items-center gap-1 font-sans font-semibold text-sky-700 dark:text-sky-300">
-                <Pin className="h-3 w-3" />
-                Pinned until {formatPostTimestamp(post.pinnedUntil)}
+              <span
+                title="Pinned"
+                aria-label="Pinned"
+                className="inline-flex items-center text-sky-700 dark:text-sky-300"
+              >
+                <Pin className="h-3.5 w-3.5" aria-hidden="true" />
               </span>
             </>
           )}
@@ -387,35 +406,37 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => onTogglePin(post)}
-            title={isPinned ? 'Unpin post' : 'Pin post to top for 7 days'}
-            aria-label={isPinned ? 'Unpin post' : 'Pin post to top'}
-            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
-          >
-            {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
-          </button>
-          <button
-            type="button"
-            onClick={() => onEdit(post)}
-            title="Edit post"
-            aria-label="Edit post"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
-          >
-            <Pencil className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => onDelete(post.id)}
-            title="Delete post"
-            aria-label="Delete post"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-rose-100/80 hover:text-rose-700 dark:text-slate-400 dark:hover:bg-rose-950/50 dark:hover:text-rose-300 cursor-pointer"
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </div>
+        {canEdit && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onTogglePin(post)}
+              title={isPinned ? 'Unpin post' : 'Pin post to top for 7 days'}
+              aria-label={isPinned ? 'Unpin post' : 'Pin post to top'}
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
+            >
+              {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => onEdit(post)}
+              title="Edit post"
+              aria-label="Edit post"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(post.id)}
+              title="Delete post"
+              aria-label="Delete post"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-rose-100/80 hover:text-rose-700 dark:text-slate-400 dark:hover:bg-rose-950/50 dark:hover:text-rose-300 cursor-pointer"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Title */}
@@ -427,13 +448,28 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
 
       {/* Rich Text Body */}
       {post.bodyHtml.trim() && (
-        <div
-          onClick={handleProseClick}
-          className={`diary-prose mt-3 text-[15px] text-slate-700 dark:text-slate-200 ${getFontClass(
-            post.font
-          )}`}
-          dangerouslySetInnerHTML={{ __html: processedHtml }}
-        />
+        <div className="mt-3">
+          <div
+            ref={bodyRef}
+            onClick={handleProseClick}
+            className={`diary-prose text-[15px] text-slate-700 dark:text-slate-200 ${getFontClass(
+              post.font
+            )} ${!isDetailView ? 'max-h-[156px] overflow-hidden' : ''}`}
+            dangerouslySetInnerHTML={{ __html: processedHtml }}
+          />
+          {!isDetailView && isBodyTruncated && onOpenPost && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenPost(post);
+              }}
+              className="mt-1.5 text-xs font-semibold text-sky-600 hover:underline dark:text-sky-400 cursor-pointer"
+            >
+              Show more
+            </button>
+          )}
+        </div>
       )}
 
       {/* Tags (kept directly with text above media, matching X layout) */}
@@ -459,10 +495,21 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
         </div>
       )}
 
-      {/* First Below Text/Tags: Visual Media & Video/YouTube Carousel (X-style) */}
+      {/* First Below Text/Tags: Visual Media & Video/YouTube Carousel (Timeline) or Vertical Stack (Expanded) */}
       {carouselItems.length > 0 && (
         <div className="relative mt-4">
-          {carouselItems.length === 1 ? (
+          {isDetailView ? (
+            <div className="space-y-3">
+              {carouselItems.map((att) => (
+                <CarouselSlide
+                  key={att.id}
+                  attachment={att}
+                  isMulti={false}
+                  onOpenLightbox={onOpenLightbox}
+                />
+              ))}
+            </div>
+          ) : carouselItems.length === 1 ? (
             <CarouselSlide
               attachment={carouselItems[0]}
               isMulti={false}
@@ -472,7 +519,7 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
             <>
               <div className="mb-2 flex items-center justify-between text-[11px] font-mono text-slate-500 tabular-nums dark:text-slate-400">
                 <span>
-                  {activeSlideIndex + 1} / {carouselItems.length} media
+                  {activeSlideIndex + 1} / {carouselItems.length}
                 </span>
                 <div className="flex items-center gap-1">
                   <button

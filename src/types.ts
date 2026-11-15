@@ -84,7 +84,9 @@ export type ThemePresetId =
   | 'crystal-pearl'
   | 'sunset-glass'
   | 'metro-prism-light'
-  | 'metro-eclipse-dark';
+  | 'metro-eclipse-dark'
+  | 'metro-ipod-pop'
+  | 'metro-ipod-electric';
 
 export type ThemeId = ThemePresetId | (string & {});
 

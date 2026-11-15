@@ -13,6 +13,158 @@ const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 const STORE_PATH = path.join(DATA_DIR, 'store.json');
+const FIREBASE_CONFIG_PATH = path.resolve(process.cwd(), 'firebase-applet-config.json');
+
+interface FirebaseAppletConfig {
+  projectId?: string;
+  apiKey?: string;
+  firestoreDatabaseId?: string;
+}
+
+function readFirebaseConfig(): FirebaseAppletConfig | null {
+  try {
+    if (!fs.existsSync(FIREBASE_CONFIG_PATH)) return null;
+    return JSON.parse(fs.readFileSync(FIREBASE_CONFIG_PATH, 'utf-8')) as FirebaseAppletConfig;
+  } catch {
+    return null;
+  }
+}
+
+type FsValue = {
+  stringValue?: string;
+  booleanValue?: boolean;
+  integerValue?: string;
+  doubleValue?: number;
+  timestampValue?: string;
+  nullValue?: null;
+  arrayValue?: { values?: FsValue[] };
+  mapValue?: { fields?: Record<string, FsValue> };
+};
+
+function decodeFirestoreValue(val: FsValue | undefined): unknown {
+  if (!val) return undefined;
+  if ('nullValue' in val) return null;
+  if ('stringValue' in val) return val.stringValue;
+  if ('booleanValue' in val) return val.booleanValue;
+  if ('integerValue' in val) return Number(val.integerValue);
+  if ('doubleValue' in val) return val.doubleValue;
+  if ('timestampValue' in val) return val.timestampValue;
+  if ('arrayValue' in val) {
+    return (val.arrayValue?.values || []).map((v) => decodeFirestoreValue(v));
+  }
+  if ('mapValue' in val) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(val.mapValue?.fields || {})) {
+      out[k] = decodeFirestoreValue(v);
+    }
+    return out;
+  }
+  return undefined;
+}
+
+function decodeFirestoreDoc(docName: string, fields: Record<string, FsValue> = {}): Record<string, unknown> {
+  const id = docName.split('/').pop() || '';
+  const out: Record<string, unknown> = { id };
+  for (const [k, v] of Object.entries(fields)) {
+    out[k] = decodeFirestoreValue(v);
+  }
+  return out;
+}
+
+async function fetchPublicFirestoreState(): Promise<{
+  posts: Post[];
+  countdowns: EventCountdown[];
+} | null> {
+  const cfg = readFirebaseConfig();
+  if (!cfg?.projectId || !cfg?.firestoreDatabaseId) return null;
+
+  const base = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+    cfg.projectId
+  )}/databases/${encodeURIComponent(cfg.firestoreDatabaseId)}/documents`;
+  const keyParam = cfg.apiKey ? `?key=${encodeURIComponent(cfg.apiKey)}` : '';
+
+  try {
+    const [postsRes, cdRes] = await Promise.all([
+      fetch(`${base}:runQuery${keyParam}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: 'posts' }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath: 'isDraft' },
+                op: 'EQUAL',
+                value: { booleanValue: false },
+              },
+            },
+          },
+        }),
+      }),
+      fetch(`${base}/countdowns${keyParam}&pageSize=50`.replace('/countdowns&', '/countdowns?')),
+    ]);
+
+    if (!postsRes.ok) return null;
+    const rows = (await postsRes.json()) as {
+      document?: { name: string; fields?: Record<string, FsValue> };
+    }[];
+
+    const posts: Post[] = rows
+      .filter((r) => Boolean(r.document?.name))
+      .map((r) => {
+        const d = decodeFirestoreDoc(r.document!.name, r.document!.fields);
+        return {
+          id: String(d.id || ''),
+          title: String(d.title || ''),
+          bodyHtml: String(d.bodyHtml || ''),
+          font: (d.font as Post['font']) || 'sans',
+          manualTags: Array.isArray(d.manualTags) ? (d.manualTags as string[]) : [],
+          inlineTags: Array.isArray(d.inlineTags) ? (d.inlineTags as string[]) : [],
+          attachments: Array.isArray(d.attachments) ? (d.attachments as Post['attachments']) : [],
+          createdAt: String(d.createdAt || new Date().toISOString()),
+          publishedAt: String(d.publishedAt || new Date().toISOString()),
+          scheduledFor: (d.scheduledFor as string | null) ?? null,
+          pinnedUntil: (d.pinnedUntil as string | null) ?? null,
+          isDraft: Boolean(d.isDraft),
+        };
+      });
+
+    let countdowns: EventCountdown[] = [];
+    if (cdRes.ok) {
+      const cdJson = (await cdRes.json()) as {
+        documents?: { name: string; fields?: Record<string, FsValue> }[];
+      };
+      countdowns = (cdJson.documents || []).map((docItem) => {
+        const d = decodeFirestoreDoc(docItem.name, docItem.fields);
+        return {
+          id: String(d.id || ''),
+          title: String(d.title || ''),
+          targetAt: String(d.targetAt || ''),
+          tag: (d.tag as string | undefined) ?? undefined,
+          location: (d.location as string | undefined) ?? undefined,
+          bodyHtml: (d.bodyHtml as string | undefined) ?? undefined,
+          font: (d.font as EventCountdown['font']) ?? undefined,
+          displayFormat: (d.displayFormat as EventCountdown['displayFormat']) ?? undefined,
+          attachments: Array.isArray(d.attachments)
+            ? (d.attachments as EventCountdown['attachments'])
+            : [],
+          milestoneBodyHtml: (d.milestoneBodyHtml as string | undefined) ?? undefined,
+          milestoneFont: (d.milestoneFont as EventCountdown['milestoneFont']) ?? undefined,
+          milestoneAttachments: Array.isArray(d.milestoneAttachments)
+            ? (d.milestoneAttachments as EventCountdown['milestoneAttachments'])
+            : [],
+        };
+      });
+    }
+
+    if (posts.length === 0 && countdowns.length === 0) {
+      return null;
+    }
+    return { posts, countdowns };
+  } catch {
+    return null;
+  }
+}
 
 interface StoreData {
   posts: Post[];
@@ -541,11 +693,14 @@ async function startServer() {
     res.json(store.design);
   });
 
-  app.get('/api/widget-feed.json', (req, res) => {
+  app.get('/api/widget-feed.json', async (req, res) => {
+    const remote = await fetchPublicFirestoreState();
     const store = readStore();
+    const sourcePosts = remote ? remote.posts : store.posts;
+    const sourceCountdowns = remote ? remote.countdowns : store.countdowns;
     const nowMs = Date.now();
     const origin = `${req.protocol}://${req.get('host')}`;
-    const livePosts = store.posts
+    const livePosts = sourcePosts
       .filter((p) => isPostLive(p, nowMs))
       .sort((a, b) => {
         const aPin = isPostPinned(a, nowMs) ? 1 : 0;
@@ -558,7 +713,7 @@ async function startServer() {
     res.json({
       title: 'MY DIARIES DASHBOARD',
       updatedAt: new Date().toISOString(),
-      countdowns: store.countdowns,
+      countdowns: sourceCountdowns,
       items: livePosts.map((p) => {
         const visual = p.attachments.find((a) => a.type === 'image' || a.type === 'gif');
         const mediaUrl = visual
@@ -581,11 +736,13 @@ async function startServer() {
     });
   });
 
-  app.get('/api/rss.xml', (req, res) => {
+  app.get('/api/rss.xml', async (req, res) => {
+    const remote = await fetchPublicFirestoreState();
     const store = readStore();
+    const sourcePosts = remote ? remote.posts : store.posts;
     const nowMs = Date.now();
     const origin = `${req.protocol}://${req.get('host')}`;
-    const livePosts = store.posts
+    const livePosts = sourcePosts
       .filter((p) => isPostLive(p, nowMs))
       .sort((a, b) => {
         const aPin = isPostPinned(a, nowMs) ? 1 : 0;

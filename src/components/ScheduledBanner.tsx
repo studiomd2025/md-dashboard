@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CalendarClock, ChevronLeft, ChevronRight, Image as ImageIcon } from 'lucide-react';
 import type { ActiveView, BannerSchedule } from '../types';
-import { sanitizeRichHtml } from '../lib/mediaUtils';
+import { formatHourMinute12h, sanitizeRichHtml } from '../lib/mediaUtils';
 
 export function resolveActiveBanner(banners: BannerSchedule[], now: Date): BannerSchedule | null {
   const slides = resolveBannerSlides(banners, now);
@@ -171,10 +171,10 @@ export const ScheduledBanner: React.FC<ScheduledBannerProps> = ({
               <CalendarClock className="h-3.5 w-3.5 shrink-0" />
               <span>
                 {activeSlide.mode === 'daily-hours'
-                  ? `Daily Schedule (${String(activeSlide.dailyStartHour ?? 0).padStart(
-                      2,
-                      '0'
-                    )}:00 – ${String(activeSlide.dailyEndHour ?? 23).padStart(2, '0')}:59)`
+                  ? `Daily Schedule (${formatHourMinute12h(
+                      activeSlide.dailyStartHour ?? 0,
+                      0
+                    )} – ${formatHourMinute12h(activeSlide.dailyEndHour ?? 23, 59)})`
                   : activeSlide.mode === 'window'
                   ? 'Scheduled Banner Window'
                   : activeSlide.mode === 'slideshow'

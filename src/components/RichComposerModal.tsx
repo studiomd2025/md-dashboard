@@ -30,6 +30,7 @@ import {
   parsePlayableMediaUrl,
   sanitizeRichHtml,
 } from '../lib/mediaUtils';
+import { uploadMediaFile } from '../lib/cloudinaryUpload';
 
 interface RichComposerModalProps {
   isOpen: boolean;
@@ -179,25 +180,7 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
     setErrorMsg('');
     try {
       for (const file of Array.from(files)) {
-        const res = await fetch(
-          `/api/upload-raw?fileName=${encodeURIComponent(
-            file.name
-          )}&mimeType=${encodeURIComponent(
-            file.type || 'application/octet-stream'
-          )}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream' },
-            body: file,
-          }
-        );
-        if (!res.ok) throw new Error('Upload failed');
-        const uploaded = (await res.json()) as {
-          url: string;
-          fileName: string;
-          mimeType: string;
-          fileSize: number;
-        };
+        const uploaded = await uploadMediaFile(file);
 
         let type: MediaAttachment['type'] = 'document';
         if (file.type === 'image/gif' || file.name.toLowerCase().endsWith('.gif')) {
@@ -222,8 +205,12 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
           },
         ]);
       }
-    } catch {
-      setErrorMsg('Could not upload one or more files. Please check file size and try again.');
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Could not upload one or more files. Please check file size and try again.';
+      setErrorMsg(msg);
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -619,7 +606,7 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
                 type="text"
                 value={mediaTitleInput}
                 onChange={(e) => setMediaTitleInput(e.target.value)}
-                placeholder="Caption / link title (optional)"
+                placeholder="Link / file title (optional)"
                 className="sm:col-span-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
               />
               <button

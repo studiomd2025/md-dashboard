@@ -297,9 +297,12 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
                       {isPinned && (
                         <>
                           <span aria-hidden="true">·</span>
-                          <span className="inline-flex items-center gap-0.5 font-sans font-semibold text-sky-700 dark:text-sky-300">
-                            <Pin className="h-2.5 w-2.5" />
-                            Pinned
+                          <span
+                            title="Pinned"
+                            aria-label="Pinned"
+                            className="inline-flex items-center text-sky-700 dark:text-sky-300"
+                          >
+                            <Pin className="h-2.5 w-2.5" aria-hidden="true" />
                           </span>
                         </>
                       )}

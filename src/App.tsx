@@ -5,6 +5,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowLeft,
   Home,
   Search,
   Settings as SettingsIcon,
@@ -24,7 +25,29 @@ import type {
   MediaAttachment,
   Post,
 } from './types';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import { getMergedPostTags, getMonthKey, stripHtml } from './lib/mediaUtils';
+import {
+  auth,
+  isOwnerUser,
+  signInOwnerWithGoogle,
+  signOutOwner,
+} from './lib/firebase';
+import {
+  createBannerDoc,
+  createCountdownDoc,
+  createPostDoc,
+  deleteBannerDoc,
+  deleteCountdownDoc,
+  deletePostDoc,
+  deleteTagBatch,
+  renameTagBatch,
+  saveDesignConfigDoc,
+  seedFirestoreIfEmpty,
+  subscribeDashboardData,
+  updateBannerDoc,
+  updatePostDoc,
+} from './lib/firestoreStore';
 import { Header } from './components/Header';
 import { ScheduledBanner } from './components/ScheduledBanner';
 import { TimelineCard } from './components/TimelineCard';
@@ -52,8 +75,17 @@ export default function App() {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [subNonce, setSubNonce] = useState(0);
+  const isAdmin = useMemo(() => isOwnerUser(user), [user]);
 
   const [activeView, setActiveView] = useState<ActiveView>('timeline');
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('post');
+  });
   const [activeStation, setActiveStation] = useState<BroadcastChannel>(STATIONS[0]);
   const [activeEvent, setActiveEvent] = useState<PlayEventItem | null>(null);
   const [settingsTab, setSettingsTab] = useState<BackendTab>('compose');
@@ -83,7 +115,9 @@ export default function App() {
 
     const isDark = activeCustomTheme
       ? activeCustomTheme.isDark
-      : design.theme === 'twilight-lagoon' || design.theme === 'metro-eclipse-dark';
+      : design.theme === 'twilight-lagoon' ||
+        design.theme === 'metro-eclipse-dark' ||
+        design.theme === 'metro-ipod-electric';
     root.classList.toggle('dark', isDark);
 
     if (activeCustomTheme) {
@@ -104,28 +138,156 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const fetchState = async () => {
-    try {
-      setLoadError('');
-      const res = await fetch('/api/state');
-      if (!res.ok) throw new Error('Failed to load dashboard state');
-      const data = (await res.json()) as IntranetState;
-      setPosts(data.posts || []);
-      setBanners(data.banners || []);
-      setCountdowns(data.countdowns || []);
-      if (data.design) {
-        setDesign(data.design);
+  useEffect(() => {
+    const onPopState = () => {
+      const nextPostId = new URLSearchParams(window.location.search).get('post');
+      setSelectedPostId(nextPostId);
+      if (nextPostId) {
+        setActiveView('timeline');
       }
-    } catch {
-      setLoadError('Unable to reach dashboard server.');
-    } finally {
-      setIsLoading(false);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (nextUser) => {
+      setUser(nextUser);
+      setAuthReady(true);
+      if (nextUser && !isOwnerUser(nextUser)) {
+        setAuthError(
+          `Signed in as ${nextUser.email || 'unknown account'}. Only the owner account can save changes.`
+        );
+      } else {
+        setAuthError('');
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (!authReady) return;
+    if (isAdmin && user) {
+      seedFirestoreIfEmpty(user.uid).catch((err) => {
+        console.error('Starter seed skipped or failed:', err);
+      });
+    }
+  }, [authReady, isAdmin, user]);
+
+  useEffect(() => {
+    if (!authReady) return;
+
+    let cancelled = false;
+    let fallbackFetched = false;
+    let sawDesignInFirestore = false;
+    let sawPostsInFirestore = false;
+
+    setLoadError('');
+
+    const maybeLoadStarterPreview = async () => {
+      if (fallbackFetched || sawDesignInFirestore || sawPostsInFirestore || isAdmin) {
+        return;
+      }
+      fallbackFetched = true;
+      try {
+        const res = await fetch('/api/state');
+        if (!res.ok || cancelled || sawDesignInFirestore || sawPostsInFirestore) return;
+        const data = (await res.json()) as IntranetState;
+        if (cancelled || sawDesignInFirestore || sawPostsInFirestore) return;
+        setPosts(data.posts || []);
+        setBanners(data.banners || []);
+        setCountdowns(data.countdowns || []);
+        if (data.design) setDesign(data.design);
+      } catch {
+        // Ignore if local API fallback unavailable
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    const unsub = subscribeDashboardData({
+      isAdmin,
+      onPosts: (rows, hasDocs) => {
+        if (cancelled) return;
+        sawPostsInFirestore = hasDocs;
+        if (hasDocs || sawDesignInFirestore || isAdmin) {
+          setPosts(rows);
+          setIsLoading(false);
+        } else {
+          maybeLoadStarterPreview();
+        }
+      },
+      onBanners: (rows) => {
+        if (cancelled) return;
+        if (rows.length > 0 || sawDesignInFirestore || sawPostsInFirestore || isAdmin) {
+          setBanners(rows);
+        }
+      },
+      onCountdowns: (rows) => {
+        if (cancelled) return;
+        if (rows.length > 0 || sawDesignInFirestore || sawPostsInFirestore || isAdmin) {
+          setCountdowns(rows);
+        }
+      },
+      onDesign: (nextDesign, existsInFirestore) => {
+        if (cancelled) return;
+        sawDesignInFirestore = existsInFirestore;
+        if (existsInFirestore) {
+          if (!isAdmin) {
+            try {
+              const savedLocal = localStorage.getItem('md-visitor-design');
+              if (savedLocal) {
+                const parsed = JSON.parse(savedLocal) as Partial<DesignSettings>;
+                setDesign({
+                  ...nextDesign,
+                  theme: parsed.theme || nextDesign.theme,
+                  surfaceStyle: parsed.surfaceStyle || nextDesign.surfaceStyle,
+                });
+                setIsLoading(false);
+                return;
+              }
+            } catch {
+              // ignore localStorage parse error
+            }
+          }
+          setDesign(nextDesign);
+          setIsLoading(false);
+        } else {
+          maybeLoadStarterPreview();
+        }
+      },
+      onError: () => {
+        if (cancelled) return;
+        setLoadError('Unable to reach Firestore database.');
+        setIsLoading(false);
+      },
+    });
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [authReady, isAdmin, subNonce]);
+
+  const handleOwnerSignIn = async () => {
+    try {
+      setAuthError('');
+      const signedIn = await signInOwnerWithGoogle();
+      if (!isOwnerUser(signedIn)) {
+        setAuthError(
+          `Signed in as ${signedIn.email || 'guest'}. Only officialmdworkspace@gmail.com has owner permissions.`
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Sign-in cancelled.';
+      setAuthError(msg);
     }
   };
 
-  useEffect(() => {
-    fetchState();
-  }, []);
+  const handleOwnerSignOut = async () => {
+    await signOutOwner();
+    setAuthError('');
+  };
 
   const nowDate = useMemo(() => new Date(nowMs), [nowMs]);
 
@@ -260,134 +422,87 @@ export default function App() {
     pinnedUntil: string | null;
     isDraft?: boolean;
   }) => {
+    if (!user || !isAdmin) {
+      throw new Error('Owner sign-in is required to save posts.');
+    }
     if (payload.id) {
-      const res = await fetch(`/api/posts/${payload.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+      await updatePostDoc(payload.id, {
+        title: payload.title,
+        bodyHtml: payload.bodyHtml,
+        font: payload.font,
+        manualTags: payload.manualTags,
+        inlineTags: payload.inlineTags,
+        attachments: payload.attachments,
+        scheduledFor: payload.scheduledFor,
+        publishedAt: payload.scheduledFor || new Date().toISOString(),
+        pinnedUntil: payload.pinnedUntil,
+        isDraft: Boolean(payload.isDraft),
       });
-      if (!res.ok) throw new Error('Update failed');
-      const updated = (await res.json()) as Post;
-      setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
     } else {
-      const res = await fetch('/api/posts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error('Create failed');
-      const created = (await res.json()) as Post;
-      setPosts((prev) => [created, ...prev]);
+      await createPostDoc(user.uid, payload);
     }
   };
 
   const handleDeletePost = async (id: string) => {
-    const res = await fetch(`/api/posts/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      setPosts((prev) => prev.filter((p) => p.id !== id));
+    if (!isAdmin) return;
+    await deletePostDoc(id);
+    if (selectedPostId === id) {
+      closePostDetail();
     }
   };
 
   const handleTogglePin = async (post: Post) => {
+    if (!isAdmin) return;
     const currentlyPinned =
       !!post.pinnedUntil && new Date(post.pinnedUntil).getTime() > nowMs;
     const nextPinnedUntil = currentlyPinned
       ? null
       : new Date(Date.now() + 7 * 86400 * 1000).toISOString();
-    const res = await fetch(`/api/posts/${post.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pinnedUntil: nextPinnedUntil }),
-    });
-    if (res.ok) {
-      const updated = (await res.json()) as Post;
-      setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-    }
+    await updatePostDoc(post.id, { pinnedUntil: nextPinnedUntil });
   };
 
   const handlePublishScheduledNow = async (post: Post) => {
+    if (!isAdmin) return;
     const nowIso = new Date().toISOString();
-    const res = await fetch(`/api/posts/${post.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isDraft: false, scheduledFor: null, publishedAt: nowIso }),
+    await updatePostDoc(post.id, {
+      isDraft: false,
+      scheduledFor: null,
+      publishedAt: nowIso,
     });
-    if (res.ok) {
-      const updated = (await res.json()) as Post;
-      setPosts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
-    }
   };
 
   const handleRenameTag = async (oldTag: string, newTag: string) => {
-    const res = await fetch('/api/tags/rename', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ oldTag, newTag }),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as {
-        posts: Post[];
-        countdowns: EventCountdown[];
-      };
-      setPosts(data.posts);
-      setCountdowns(data.countdowns);
-      if (activeTag && activeTag.toLowerCase() === oldTag.toLowerCase()) {
-        setActiveTag(newTag);
-      }
+    if (!isAdmin) return;
+    await renameTagBatch(oldTag, newTag, posts, countdowns);
+    if (activeTag && activeTag.toLowerCase() === oldTag.toLowerCase()) {
+      setActiveTag(newTag);
     }
   };
 
   const handleDeleteTag = async (tag: string) => {
-    const res = await fetch('/api/tags/delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tag }),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as {
-        posts: Post[];
-        countdowns: EventCountdown[];
-      };
-      setPosts(data.posts);
-      setCountdowns(data.countdowns);
-      if (activeTag && activeTag.toLowerCase() === tag.toLowerCase()) {
-        setActiveTag(null);
-      }
+    if (!isAdmin) return;
+    await deleteTagBatch(tag, posts, countdowns);
+    if (activeTag && activeTag.toLowerCase() === tag.toLowerCase()) {
+      setActiveTag(null);
     }
   };
 
   const handleAddBanner = async (payload: Omit<BannerSchedule, 'id'>) => {
-    const res = await fetch('/api/banners', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      const created = (await res.json()) as BannerSchedule;
-      setBanners((prev) => [created, ...prev]);
-    }
+    if (!user || !isAdmin) return;
+    await createBannerDoc(user.uid, payload);
   };
 
   const handleUpdateBanner = async (
     id: string,
     patch: Partial<BannerSchedule>
   ) => {
-    const res = await fetch(`/api/banners/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (res.ok) {
-      const updated = (await res.json()) as BannerSchedule;
-      setBanners((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
-    }
+    if (!isAdmin) return;
+    await updateBannerDoc(id, patch);
   };
 
   const handleDeleteBanner = async (id: string) => {
-    const res = await fetch(`/api/banners/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      setBanners((prev) => prev.filter((b) => b.id !== id));
-    }
+    if (!isAdmin) return;
+    await deleteBannerDoc(id);
   };
 
   const handleAddCountdown = async (payload: {
@@ -402,35 +517,45 @@ export default function App() {
     milestoneFont?: DiaryFont;
     milestoneAttachments?: MediaAttachment[];
   }) => {
-    const res = await fetch('/api/countdowns', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      const created = (await res.json()) as EventCountdown;
-      setCountdowns((prev) => [...prev, created]);
-    }
+    if (!user || !isAdmin) return;
+    await createCountdownDoc(user.uid, payload);
   };
 
   const handleDeleteCountdown = async (id: string) => {
-    const res = await fetch(`/api/countdowns/${id}`, { method: 'DELETE' });
-    if (res.ok) {
-      setCountdowns((prev) => prev.filter((c) => c.id !== id));
-    }
+    if (!isAdmin) return;
+    await deleteCountdownDoc(id);
   };
 
   const handleUpdateDesign = async (next: Partial<DesignSettings>) => {
     const merged: DesignSettings = { ...design, ...next };
     setDesign(merged);
-    await fetch('/api/design', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(merged),
-    });
+    if (user && isAdmin) {
+      try {
+        localStorage.removeItem('md-visitor-design');
+      } catch {
+        // ignore
+      }
+      await saveDesignConfigDoc(user.uid, merged);
+    } else {
+      try {
+        localStorage.setItem(
+          'md-visitor-design',
+          JSON.stringify({
+            theme: merged.theme,
+            surfaceStyle: merged.surfaceStyle,
+          })
+        );
+      } catch {
+        // ignore
+      }
+    }
   };
 
   const openNewComposer = () => {
+    if (!isAdmin) {
+      handleOwnerSignIn();
+      return;
+    }
     setEditingPost(null);
     setComposerOpen(true);
   };
@@ -440,7 +565,44 @@ export default function App() {
     setComposerOpen(true);
   };
 
+  const openPostDetail = (post: Post) => {
+    setSelectedPostId(post.id);
+    setActiveView('timeline');
+    const url = new URL(window.location.href);
+    url.searchParams.set('post', post.id);
+    window.history.pushState({ postId: post.id }, '', url.pathname + url.search);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const closePostDetail = () => {
+    setSelectedPostId(null);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('post')) {
+      url.searchParams.delete('post');
+      window.history.pushState(
+        {},
+        '',
+        url.pathname + (url.search ? url.search : '')
+      );
+    }
+  };
+
+  const handleNavigateView = (view: ActiveView) => {
+    setSelectedPostId(null);
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('post')) {
+      url.searchParams.delete('post');
+      window.history.pushState(
+        {},
+        '',
+        url.pathname + (url.search ? url.search : '')
+      );
+    }
+    setActiveView(view);
+  };
+
   const handleSelectTag = (tag: string | null) => {
+    closePostDetail();
     setActiveTag((prev) =>
       tag && prev?.toLowerCase() === tag.toLowerCase() ? null : tag
     );
@@ -448,9 +610,15 @@ export default function App() {
   };
 
   const handleSelectMonth = (month: string | null) => {
+    closePostDetail();
     setActiveMonth((prev) => (prev === month ? null : month));
     setActiveView('timeline');
   };
+
+  const selectedPost = useMemo(
+    () => (selectedPostId ? posts.find((p) => p.id === selectedPostId) || null : null),
+    [posts, selectedPostId]
+  );
 
   const hasAnyFilter = Boolean(activeTag || activeMonth || searchQuery || dateFrom || dateTo);
 
@@ -458,7 +626,9 @@ export default function App() {
     design.customBackdropUrl || activeCustomTheme?.backdropImageUrl || '';
   const isEffectiveDark = activeCustomTheme
     ? activeCustomTheme.isDark
-    : design.theme === 'twilight-lagoon' || design.theme === 'metro-eclipse-dark';
+    : design.theme === 'twilight-lagoon' ||
+      design.theme === 'metro-eclipse-dark' ||
+      design.theme === 'metro-ipod-electric';
 
   const wrapperStyle: React.CSSProperties | undefined = effectiveBackdropUrl
     ? {
@@ -482,8 +652,13 @@ export default function App() {
     <div style={wrapperStyle} className="min-h-screen pb-20 md:pb-12">
       <Header
         activeView={activeView}
-        onSelectView={setActiveView}
+        onSelectView={handleNavigateView}
         onOpenComposer={openNewComposer}
+        isAdmin={isAdmin}
+        userEmail={user?.email}
+        authReady={authReady}
+        onSignIn={handleOwnerSignIn}
+        onSignOut={handleOwnerSignOut}
       />
 
       {activeView !== 'live' && (
@@ -491,17 +666,73 @@ export default function App() {
           banners={banners}
           now={nowDate}
           onManageBanners={() => {
+            closePostDetail();
             setSettingsTab('banners');
             setActiveView('settings');
           }}
-          onNavigateView={setActiveView}
+          onNavigateView={handleNavigateView}
         />
       )}
 
       <main className="mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
           <div className="lg:col-span-8 space-y-5">
-            {activeView === 'timeline' && (
+            {activeView === 'timeline' && selectedPostId ? (
+              <div className="space-y-4">
+                <section className="aero-glass flex items-center justify-between gap-3 rounded-3xl px-5 py-3.5">
+                  <button
+                    type="button"
+                    onClick={closePostDetail}
+                    className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800 hover:text-sky-700 dark:text-slate-100 dark:hover:text-sky-300 cursor-pointer"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    <span>Post</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closePostDetail}
+                    className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+                  >
+                    Back to Timeline
+                  </button>
+                </section>
+
+                {isLoading ? (
+                  <div className="aero-glass h-64 animate-pulse rounded-3xl p-6" />
+                ) : selectedPost ? (
+                  <TimelineCard
+                    post={selectedPost}
+                    nowMs={nowMs}
+                    activeTag={activeTag}
+                    canEdit={isAdmin}
+                    isDetailView={true}
+                    onSelectTag={handleSelectTag}
+                    onEdit={openEditComposer}
+                    onDelete={handleDeletePost}
+                    onTogglePin={handleTogglePin}
+                    onOpenLightbox={(url, title) =>
+                      setLightbox({ url, title })
+                    }
+                  />
+                ) : (
+                  <div className="aero-glass rounded-3xl p-8 text-center space-y-3">
+                    <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white">
+                      Post not found
+                    </h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      This entry may have been removed or is not currently public.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={closePostDetail}
+                      className="aero-button-primary rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
+                    >
+                      Return to Timeline
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : activeView === 'timeline' && (
               <>
                 {/* Search + Date Range Filter */}
                 <section className="aero-glass rounded-3xl p-4 sm:p-5 space-y-3">
@@ -616,7 +847,10 @@ export default function App() {
                     </p>
                     <button
                       type="button"
-                      onClick={fetchState}
+                      onClick={() => {
+                        setIsLoading(true);
+                        setSubNonce((n) => n + 1);
+                      }}
                       className="mt-3 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white cursor-pointer"
                     >
                       Retry
@@ -630,13 +864,15 @@ export default function App() {
                     <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                       Try clearing your date range or active hashtag, or create a fresh entry.
                     </p>
-                    <button
-                      type="button"
-                      onClick={openNewComposer}
-                      className="aero-button-primary mt-4 rounded-xl px-5 py-2.5 text-sm font-semibold text-white cursor-pointer"
-                    >
-                      Create First Entry
-                    </button>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={openNewComposer}
+                        className="aero-button-primary mt-4 rounded-xl px-5 py-2.5 text-sm font-semibold text-white cursor-pointer"
+                      >
+                        Create First Entry
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <div className="space-y-5">
@@ -646,6 +882,8 @@ export default function App() {
                         post={post}
                         nowMs={nowMs}
                         activeTag={activeTag}
+                        canEdit={isAdmin}
+                        onOpenPost={openPostDetail}
                         onSelectTag={handleSelectTag}
                         onEdit={openEditComposer}
                         onDelete={handleDeletePost}
@@ -698,6 +936,11 @@ export default function App() {
                 onUpdateBanner={handleUpdateBanner}
                 onDeleteBanner={handleDeleteBanner}
                 onUpdateDesign={handleUpdateDesign}
+                isAdmin={isAdmin}
+                userEmail={user?.email}
+                authError={authError}
+                onSignIn={handleOwnerSignIn}
+                onSignOut={handleOwnerSignOut}
               />
             )}
 
@@ -760,7 +1003,7 @@ export default function App() {
             <button
               key={tab.id}
               type="button"
-              onClick={() => setActiveView(tab.id)}
+              onClick={() => handleNavigateView(tab.id)}
               className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium cursor-pointer ${
                 active
                   ? 'text-sky-700 dark:text-sky-300'
@@ -808,13 +1051,8 @@ export default function App() {
               src={lightbox.url}
               alt={lightbox.title || 'Full resolution diary image'}
               referrerPolicy="no-referrer"
-              className="max-h-[84vh] w-auto object-contain"
+              className="max-h-[90vh] w-auto object-contain"
             />
-            {lightbox.title && (
-              <div className="bg-slate-950/90 px-4 py-2.5 text-xs text-slate-200">
-                {lightbox.title}
-              </div>
-            )}
           </div>
         </div>
       )}
