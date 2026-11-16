@@ -22,6 +22,8 @@
     --accent-start: #38bdf8;
     --accent-end: #0284c7;
     --accent-shadow: rgba(2, 132, 199, 0.45);
+    --countdown-ink: #082f49;
+    --theme-link: #0284c7;
   }
 
   html {
@@ -44,6 +46,11 @@
     transition: background-color 200ms ease, color 200ms ease;
   }
 
+  html[data-theme="twilight-lagoon"] {
+    --countdown-ink: #e0f2fe;
+    --theme-link: #38bdf8;
+  }
+
   html[data-theme="twilight-lagoon"] body {
     background-color: #06131c;
     background-image:
@@ -59,6 +66,8 @@
     --accent-start: #34d399;
     --accent-end: #059669;
     --accent-shadow: rgba(5, 150, 105, 0.42);
+    --countdown-ink: #022c22;
+    --theme-link: #059669;
   }
 
   html[data-theme="meadow-mint"] body {
@@ -75,6 +84,8 @@
     --accent-start: #475569;
     --accent-end: #0f172a;
     --accent-shadow: rgba(15, 23, 42, 0.28);
+    --countdown-ink: #0f172a;
+    --theme-link: #0f172a;
   }
 
   html[data-theme="crystal-pearl"] body {
@@ -91,6 +102,8 @@
     --accent-start: #fb923c;
     --accent-end: #e11d48;
     --accent-shadow: rgba(225, 29, 72, 0.35);
+    --countdown-ink: #4c0519;
+    --theme-link: #e11d48;
   }
 
   html[data-theme="sunset-glass"] body {
@@ -107,6 +120,8 @@
     --accent-start: #06b6d4;
     --accent-end: #2563eb;
     --accent-shadow: rgba(37, 99, 235, 0.35);
+    --countdown-ink: #172554;
+    --theme-link: #2563eb;
   }
 
   html[data-theme="metro-prism-light"] body {
@@ -124,6 +139,8 @@
     --accent-start: #22d3ee;
     --accent-end: #0284c7;
     --accent-shadow: rgba(34, 211, 238, 0.35);
+    --countdown-ink: #cffafe;
+    --theme-link: #22d3ee;
   }
 
   html[data-theme="metro-eclipse-dark"] body {
@@ -141,6 +158,8 @@
     --accent-start: #f43f5e;
     --accent-end: #db2777;
     --accent-shadow: rgba(219, 39, 119, 0.38);
+    --countdown-ink: #500724;
+    --theme-link: #db2777;
   }
 
   html[data-theme="metro-ipod-pop"] body {
@@ -158,6 +177,8 @@
     --accent-start: #0891b2;
     --accent-end: #db2777;
     --accent-shadow: rgba(219, 39, 119, 0.42);
+    --countdown-ink: #fce7f3;
+    --theme-link: #f472b6;
   }
 
   html[data-theme="metro-ipod-electric"] body {
@@ -208,6 +229,21 @@ html[data-surface="crisp-2026"].dark .aero-glass {
   -webkit-backdrop-filter: none;
   border: 1px solid #1e293b;
   box-shadow: 0 4px 16px -8px rgba(0, 0, 0, 0.4);
+}
+
+.mobile-drawer-solid {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+.dark .mobile-drawer-solid {
+  background-color: #0c1e2c;
+  color: #f1f5f9;
+}
+
+html[data-surface="crisp-2026"].dark .mobile-drawer-solid {
+  background-color: #0f172a;
+  color: #f1f5f9;
 }
 
 .aero-button-primary {
@@ -299,9 +335,63 @@ html[data-surface="crisp-2026"].dark .aero-glass {
   color: #38bdf8;
 }
 
+@keyframes md-marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.md-marquee-track {
+  display: inline-flex;
+  width: max-content;
+  animation: md-marquee 12s linear infinite;
+}
+
+@keyframes md-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes md-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.md-animate-fade-in {
+  animation: md-fade-in 240ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.md-animate-slide-up {
+  animation: md-slide-up 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
+}
+
+html.reduce-animations *,
+html.reduce-animations *::before,
+html.reduce-animations *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
 }

@@ -287,9 +287,9 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
       role="dialog"
       aria-modal="true"
       aria-labelledby="composer-title"
-      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-4"
+      className="md-animate-fade-in fixed inset-0 z-50 flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-4"
     >
-      <div className="aero-glass flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl sm:rounded-3xl">
+      <div className="md-animate-slide-up aero-glass flex max-h-[94vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl sm:rounded-3xl">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-200/70 px-5 py-4 dark:border-slate-700/60">
           <h2

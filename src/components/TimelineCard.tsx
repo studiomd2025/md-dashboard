@@ -138,7 +138,7 @@ const CarouselSlide: React.FC<{
         <button
           type="button"
           onClick={() => onOpenLightbox(attachment.url, attachment.title)}
-          className={`block w-full text-left cursor-zoom-in ${frameHeightClass}`}
+          className={`block w-full text-left cursor-pointer ${frameHeightClass}`}
         >
           <img
             src={attachment.url}
@@ -146,7 +146,7 @@ const CarouselSlide: React.FC<{
             referrerPolicy="no-referrer"
             className={`${
               isMulti ? 'h-full w-full' : 'max-h-[460px] w-full'
-            } object-cover transition-transform duration-300 hover:scale-[1.01]`}
+            } object-cover`}
           />
         </button>
       </figure>

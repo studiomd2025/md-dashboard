@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Archive,
   CalendarClock,
@@ -24,6 +24,11 @@ import {
 import { PWAInstallButton } from './PWAInstallButton';
 import { THEME_PRESETS } from './BackendConsoleView';
 import { STATIONS, type BroadcastChannel } from './LiveTvView';
+import {
+  getThemeIsDark,
+  mixHex,
+  sampleBackdropTopIsDark,
+} from '../lib/themeColors';
 
 interface SidebarProps {
   activeView: ActiveView;
@@ -41,7 +46,9 @@ interface SidebarProps {
   monthCounts: { month: string; count: number }[];
   activeMonth: string | null;
   onSelectMonth: (month: string | null) => void;
-  onToggleCollapse?: () => void;
+  hideCountdowns?: boolean;
+  isMobileDrawer?: boolean;
+  onOpenCountdown?: (countdownId: string) => void;
 }
 
 const MD_LINKS = [
@@ -53,7 +60,7 @@ const MD_LINKS = [
   },
 ];
 
-function formatCountdownDisplay(cd: EventCountdown, nowMs: number): string {
+export function formatCountdownDisplay(cd: EventCountdown, nowMs: number): string {
   const diff = new Date(cd.targetAt).getTime() - nowMs;
   const format = cd.displayFormat || 'full';
 
@@ -151,7 +158,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   monthCounts,
   activeMonth,
   onSelectMonth,
-  onToggleCollapse,
+  hideCountdowns = false,
+  isMobileDrawer = false,
+  onOpenCountdown,
 }) => {
   const customThemes = design.customThemes || [];
 
@@ -167,19 +176,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const sectionClass = isMobileDrawer
+    ? 'py-5 first:pt-1 last:pb-2'
+    : 'aero-glass rounded-3xl p-5';
+
   return (
-    <aside className="space-y-5">
-      {onToggleCollapse && (
-        <div className="flex justify-end px-1">
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 cursor-pointer"
-          >
-            <span>Minimize Sidebar</span>
-          </button>
-        </div>
-      )}
+    <aside
+      className={
+        isMobileDrawer
+          ? 'divide-y divide-slate-200/80 dark:divide-slate-800/80'
+          : 'space-y-5'
+      }
+    >
       {/* Desktop Remote Control — sits above Theme on LIVE view */}
       {activeView === 'live' && (
         <section className="aero-glass hidden rounded-3xl p-5 lg:block">
@@ -226,7 +234,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {/* Theme Switcher & Mobile Install */}
-      <section className="aero-glass rounded-3xl p-5 space-y-3.5">
+      <section className={`${sectionClass} space-y-3.5`}>
         <div className="flex items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 font-display text-sm font-bold text-slate-900 dark:text-white">
             <Palette className="h-4 w-4 text-sky-600 dark:text-sky-400" />
@@ -271,8 +279,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <PWAInstallButton variant="full" />
       </section>
 
-      {/* Next on MD — Only appears if at least one countdown is set up */}
-      {countdowns.length > 0 && (
+      {/* Next on MD — Only appears if at least one countdown is set up and not hidden */}
+      {!hideCountdowns && countdowns.length > 0 && (
         <section className="aero-glass rounded-3xl p-5">
           <h2 className="flex items-center gap-2 font-display text-sm font-bold text-slate-900 dark:text-white">
             <CalendarClock className="h-4 w-4 text-sky-600 dark:text-sky-400" />
@@ -294,10 +302,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               return (
                 <div key={cd.id} className="py-4 first:pt-0 last:pb-0 text-center">
-                  <div className="text-sm font-semibold text-slate-900 dark:text-white">
-                    {cd.title}
-                  </div>
-                  <div className="mt-1.5 font-display text-3xl sm:text-4xl leading-tight font-extrabold tracking-tight text-sky-800 tabular-nums dark:text-sky-200">
+                  {onOpenCountdown ? (
+                    <button
+                      type="button"
+                      onClick={() => onOpenCountdown(cd.id)}
+                      className="text-sm font-semibold text-slate-900 hover:text-sky-700 dark:text-white dark:hover:text-sky-300 cursor-pointer transition-colors"
+                    >
+                      {cd.title}
+                    </button>
+                  ) : (
+                    <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                      {cd.title}
+                    </div>
+                  )}
+                  <div className="mt-1.5 font-display text-3xl sm:text-4xl leading-tight font-extrabold tracking-tight text-[var(--countdown-ink)] tabular-nums">
                     {formatCountdownDisplay(cd, nowMs)}
                   </div>
 
@@ -366,15 +384,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       {/* Quick External Links right below Next on MD (no header, button style) */}
-      <section className="aero-glass rounded-3xl p-5">
-        <div className="space-y-2">
+      <section className={sectionClass}>
+        <div className={isMobileDrawer ? 'space-y-1' : 'space-y-2'}>
           {MD_LINKS.map((item) => (
             <a
               key={item.url}
               href={item.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200/90 bg-white/85 px-4 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-white hover:text-sky-700 dark:border-slate-700 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-900 dark:hover:text-sky-300"
+              className={
+                isMobileDrawer
+                  ? 'flex w-full items-center justify-between gap-2 rounded-xl px-2 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-100/80 hover:text-sky-700 dark:text-slate-100 dark:hover:bg-slate-800/60 dark:hover:text-sky-300'
+                  : 'flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200/90 bg-white/85 px-4 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-white hover:text-sky-700 dark:border-slate-700 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-900 dark:hover:text-sky-300'
+              }
             >
               <span>{item.label}</span>
               <ExternalLink className="h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-400" />
@@ -384,7 +406,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </section>
 
       {/* Hashtags */}
-      <section className="aero-glass rounded-3xl p-5">
+      <section className={sectionClass}>
         <div className="flex items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 font-display text-sm font-bold text-slate-900 dark:text-white">
             <Hash className="h-4 w-4 text-sky-600 dark:text-sky-400" />
@@ -438,7 +460,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </section>
 
       {/* Archive by Month */}
-      <section className="aero-glass rounded-3xl p-5">
+      <section className={sectionClass}>
         <div className="flex items-center justify-between gap-2">
           <h2 className="flex items-center gap-2 font-display text-sm font-bold text-slate-900 dark:text-white">
             <Archive className="h-4 w-4 text-sky-600 dark:text-sky-400" />
@@ -483,5 +505,158 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
       </section>
     </aside>
+  );
+};
+
+interface MobileCountdownStripProps {
+  countdowns: EventCountdown[];
+  nowMs: number;
+  design: DesignSettings;
+  onOpenCountdown: (countdownId: string) => void;
+}
+
+const TabletMarqueeTitle: React.FC<{
+  title: string;
+}> = ({ title }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      const container = containerRef.current;
+      const measure = measureRef.current;
+      if (!container || !measure) return;
+      setIsOverflowing(measure.scrollWidth > container.clientWidth + 1);
+    };
+
+    checkOverflow();
+    if (typeof document !== 'undefined' && 'fonts' in document) {
+      document.fonts.ready.then(checkOverflow).catch(() => {});
+    }
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', checkOverflow);
+      return () => window.removeEventListener('resize', checkOverflow);
+    }
+
+    const observer = new ResizeObserver(checkOverflow);
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+      if (containerRef.current.parentElement) {
+        observer.observe(containerRef.current.parentElement);
+      }
+    }
+    window.addEventListener('resize', checkOverflow);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', checkOverflow);
+    };
+  }, [title]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative flex-1 min-w-0 overflow-hidden py-1 font-display text-[1.75rem] font-light tracking-tight leading-normal"
+    >
+      {/* Hidden measurement span at natural single-line width */}
+      <span
+        ref={measureRef}
+        aria-hidden="true"
+        className="pointer-events-none invisible absolute whitespace-nowrap"
+      >
+        {title}
+      </span>
+
+      {isOverflowing ? (
+        <div className="md-marquee-track whitespace-nowrap">
+          <span className="pr-12">{title}</span>
+          <span aria-hidden="true" className="pr-12">
+            {title}
+          </span>
+        </div>
+      ) : (
+        <span className="block whitespace-nowrap text-center">{title}</span>
+      )}
+    </div>
+  );
+};
+
+export const MobileCountdownStrip: React.FC<MobileCountdownStripProps> = ({
+  countdowns,
+  nowMs,
+  design,
+  onOpenCountdown,
+}) => {
+  const customMatch = (design.customThemes || []).find((t) => t.id === design.theme);
+  const customBackdrop =
+    design.customBackdropUrl || customMatch?.backdropImageUrl || '';
+  const baseThemeIsDark = getThemeIsDark(design);
+  const [sampledBackdropDark, setSampledBackdropDark] = useState<boolean | null>(
+    null
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!customBackdrop) {
+      setSampledBackdropDark(null);
+      return;
+    }
+    sampleBackdropTopIsDark(customBackdrop, baseThemeIsDark).then((res) => {
+      if (!cancelled) setSampledBackdropDark(res);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [customBackdrop, baseThemeIsDark]);
+
+  if (countdowns.length === 0) return null;
+
+  // If a custom backdrop image overrides brightness vs the active theme, adapt ink color dynamically
+  // while preserving theme tint; otherwise use the theme's own dark/light --countdown-ink variable.
+  let resolvedColor: string = 'var(--countdown-ink)';
+  if (sampledBackdropDark !== null && sampledBackdropDark !== baseThemeIsDark) {
+    if (customMatch) {
+      resolvedColor = sampledBackdropDark
+        ? mixHex(customMatch.accentStart, '#ffffff', 0.85)
+        : mixHex(customMatch.accentEnd, '#0f172a', 0.78);
+    } else {
+      resolvedColor = sampledBackdropDark ? '#f8fafc' : '#0f172a';
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-[1380px] px-3 pt-4 pb-1 sm:px-6 lg:hidden">
+      <div className="flex flex-col items-center gap-3 text-center">
+        {countdowns.map((cd) => (
+          <button
+            key={cd.id}
+            type="button"
+            onClick={() => onOpenCountdown(cd.id)}
+            aria-label={`Open Next on MD details for ${cd.title}`}
+            style={{ color: resolvedColor }}
+            className="w-full bg-transparent py-1 cursor-pointer transition-opacity active:opacity-75"
+          >
+            {/* Phone (< 640px): Almost full phone width centered clock + 1x larger lighter caption below */}
+            <div className="flex w-full flex-col items-center justify-center text-center sm:hidden">
+              <span className="w-full whitespace-nowrap font-display text-[clamp(1.85rem,10.8vw,3.5rem)] font-extrabold tracking-tight tabular-nums leading-none">
+                {formatCountdownDisplay(cd, nowMs)}
+              </span>
+              <span className="mt-1.5 max-w-full truncate py-0.5 text-2xl font-light tracking-wide leading-normal">
+                {cd.title}
+              </span>
+            </div>
+
+            {/* Tablet (640px – 1023px): Full-width single horizontal line (3.5rem clock + similar-size lighter title, auto-marquee if title overflows) */}
+            <div className="hidden sm:flex w-full min-w-0 items-center justify-between gap-5">
+              <span className="shrink-0 whitespace-nowrap font-display text-[3.5rem] font-extrabold tracking-tight tabular-nums leading-none">
+                {formatCountdownDisplay(cd, nowMs)}
+              </span>
+              <TabletMarqueeTitle title={cd.title} />
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 };

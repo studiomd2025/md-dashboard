@@ -4,12 +4,13 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
+  CalendarDays,
+  ChevronDown,
   Home,
   LayoutGrid,
-  PanelRightClose,
-  PanelRightOpen,
   Rows3,
   Search,
   Settings as SettingsIcon,
@@ -31,6 +32,7 @@ import type {
 } from './types';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { getMergedPostTags, getMonthKey, stripHtml } from './lib/mediaUtils';
+import { getCustomThemeColors, getThemeIsDark } from './lib/themeColors';
 import {
   auth,
   isOwnerUser,
@@ -55,7 +57,8 @@ import {
 import { Header } from './components/Header';
 import { ScheduledBanner } from './components/ScheduledBanner';
 import { TimelineCard } from './components/TimelineCard';
-import { Sidebar } from './components/Sidebar';
+import { MobileCountdownStrip, Sidebar } from './components/Sidebar';
+import { NextOnMdView } from './components/NextOnMdView';
 import { RichComposerModal } from './components/RichComposerModal';
 import { BackendConsoleView } from './components/BackendConsoleView';
 import {
@@ -66,8 +69,10 @@ import {
 } from './components/LiveTvView';
 import { MobileWidgetStudioView } from './components/MobileWidgetStudioView';
 import { OfflineIndicator } from './components/PWAInstallButton';
+import { useFlipLayout, useSystemAnimationGuard } from './hooks/useFlipLayout';
 
 export default function App() {
+  useSystemAnimationGuard();
   const [posts, setPosts] = useState<Post[]>([]);
   const [banners, setBanners] = useState<BannerSchedule[]>([]);
   const [countdowns, setCountdowns] = useState<EventCountdown[]>([]);
@@ -88,12 +93,20 @@ export default function App() {
   const [activeView, setActiveView] = useState<ActiveView>(() => {
     if (typeof window === 'undefined') return 'timeline';
     const hash = window.location.hash;
+    const params = new URLSearchParams(window.location.search);
+    if (params.has('countdown') || hash === '#/next') return 'next';
     if (hash === '#/live') return 'live';
     if (hash === '#/settings') return 'settings';
     if (hash === '#/install') return 'install';
     if (hash === '#/timeline') return 'timeline';
     const saved = window.localStorage.getItem('md_active_view');
-    if (saved === 'live' || saved === 'settings' || saved === 'install' || saved === 'timeline') {
+    if (
+      saved === 'live' ||
+      saved === 'settings' ||
+      saved === 'install' ||
+      saved === 'timeline' ||
+      saved === 'next'
+    ) {
       return saved as ActiveView;
     }
     return 'timeline';
@@ -102,9 +115,15 @@ export default function App() {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('md_sidebar_collapsed') === 'true';
   });
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobileDateSearchOpen, setIsMobileDateSearchOpen] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return new URLSearchParams(window.location.search).get('post');
+  });
+  const [selectedCountdownId, setSelectedCountdownId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('countdown');
   });
   const [activeStation, setActiveStation] = useState<BroadcastChannel>(STATIONS[0]);
   const [activeEvent, setActiveEvent] = useState<PlayEventItem | null>(null);
@@ -133,6 +152,9 @@ export default function App() {
 
   const [nowMs, setNowMs] = useState(() => Date.now());
 
+  const { containerRef: timelineFlipRef, captureFlip: captureTimelineFlip } =
+    useFlipLayout(`${timelineLayout}-${isSidebarCollapsed}-${isTwoColViewport}`);
+
   const activeCustomTheme = useMemo(
     () => (design.customThemes || []).find((t) => t.id === design.theme) || null,
     [design.customThemes, design.theme]
@@ -143,23 +165,24 @@ export default function App() {
     root.setAttribute('data-theme', design.theme);
     root.setAttribute('data-surface', design.surfaceStyle);
 
-    const isDark = activeCustomTheme
-      ? activeCustomTheme.isDark
-      : design.theme === 'twilight-lagoon' ||
-        design.theme === 'metro-eclipse-dark' ||
-        design.theme === 'metro-ipod-electric';
+    const isDark = getThemeIsDark(design);
     root.classList.toggle('dark', isDark);
 
     if (activeCustomTheme) {
+      const customColors = getCustomThemeColors(activeCustomTheme);
       root.style.setProperty('--accent-start', activeCustomTheme.accentStart);
       root.style.setProperty('--accent-end', activeCustomTheme.accentEnd);
       root.style.setProperty('--accent-shadow', 'rgba(15, 23, 42, 0.25)');
+      root.style.setProperty('--countdown-ink', customColors.countdownInk);
+      root.style.setProperty('--theme-link', customColors.themeLink);
     } else {
       root.style.removeProperty('--accent-start');
       root.style.removeProperty('--accent-end');
       root.style.removeProperty('--accent-shadow');
+      root.style.removeProperty('--countdown-ink');
+      root.style.removeProperty('--theme-link');
     }
-  }, [design.theme, design.surfaceStyle, activeCustomTheme]);
+  }, [design, activeCustomTheme]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -184,10 +207,15 @@ export default function App() {
 
   useEffect(() => {
     const onPopState = () => {
-      const nextPostId = new URLSearchParams(window.location.search).get('post');
+      const params = new URLSearchParams(window.location.search);
+      const nextPostId = params.get('post');
+      const nextCdId = params.get('countdown');
       setSelectedPostId(nextPostId);
+      setSelectedCountdownId(nextCdId);
       if (nextPostId) {
         setActiveView('timeline');
+      } else if (nextCdId || window.location.hash === '#/next') {
+        setActiveView('next');
       }
     };
     window.addEventListener('popstate', onPopState);
@@ -201,6 +229,7 @@ export default function App() {
       if (hash === '#/live') setActiveView('live');
       else if (hash === '#/settings') setActiveView('settings');
       else if (hash === '#/install') setActiveView('install');
+      else if (hash === '#/next') setActiveView('next');
       else if (hash === '#/timeline') setActiveView('timeline');
     };
     window.addEventListener('hashchange', onHashChange);
@@ -211,6 +240,20 @@ export default function App() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem('md_sidebar_collapsed', String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (!isMobileSidebarOpen) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsMobileSidebarOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isMobileSidebarOpen]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (nextUser) => {
@@ -649,11 +692,45 @@ export default function App() {
     }
   };
 
+  const openCountdownPage = (countdownId?: string) => {
+    const targetId = countdownId || countdowns[0]?.id || null;
+    setSelectedPostId(null);
+    setSelectedCountdownId(targetId);
+    setActiveView('next');
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('post');
+      if (targetId) {
+        url.searchParams.set('countdown', targetId);
+      } else {
+        url.searchParams.delete('countdown');
+      }
+      window.history.pushState(
+        { countdownId: targetId },
+        '',
+        url.pathname + (url.search ? url.search : '') + '#/next'
+      );
+      window.localStorage.setItem('md_active_view', 'next');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
+
   const handleNavigateView = (view: ActiveView) => {
     setSelectedPostId(null);
+    if (view !== 'next') {
+      setSelectedCountdownId(null);
+    }
     const url = new URL(window.location.href);
+    let mutatedSearch = false;
     if (url.searchParams.has('post')) {
       url.searchParams.delete('post');
+      mutatedSearch = true;
+    }
+    if (view !== 'next' && url.searchParams.has('countdown')) {
+      url.searchParams.delete('countdown');
+      mutatedSearch = true;
+    }
+    if (mutatedSearch) {
       window.history.pushState(
         {},
         '',
@@ -669,6 +746,16 @@ export default function App() {
 
   const handleSelectTag = (tag: string | null) => {
     closePostDetail();
+    setSelectedCountdownId(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('countdown')) {
+        url.searchParams.delete('countdown');
+        window.history.pushState({}, '', url.pathname + (url.search ? url.search : ''));
+      }
+      window.location.hash = '#/timeline';
+      window.localStorage.setItem('md_active_view', 'timeline');
+    }
     setActiveTag((prev) =>
       tag && prev?.toLowerCase() === tag.toLowerCase() ? null : tag
     );
@@ -677,6 +764,16 @@ export default function App() {
 
   const handleSelectMonth = (month: string | null) => {
     closePostDetail();
+    setSelectedCountdownId(null);
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('countdown')) {
+        url.searchParams.delete('countdown');
+        window.history.pushState({}, '', url.pathname + (url.search ? url.search : ''));
+      }
+      window.location.hash = '#/timeline';
+      window.localStorage.setItem('md_active_view', 'timeline');
+    }
     setActiveMonth((prev) => (prev === month ? null : month));
     setActiveView('timeline');
   };
@@ -690,11 +787,7 @@ export default function App() {
 
   const effectiveBackdropUrl =
     design.customBackdropUrl || activeCustomTheme?.backdropImageUrl || '';
-  const isEffectiveDark = activeCustomTheme
-    ? activeCustomTheme.isDark
-    : design.theme === 'twilight-lagoon' ||
-      design.theme === 'metro-eclipse-dark' ||
-      design.theme === 'metro-ipod-electric';
+  const isEffectiveDark = getThemeIsDark(design);
 
   const wrapperStyle: React.CSSProperties | undefined = effectiveBackdropUrl
     ? {
@@ -710,12 +803,12 @@ export default function App() {
     ? {
         backgroundColor: activeCustomTheme.canvasBg,
         backgroundImage: 'none',
-        color: activeCustomTheme.isDark ? '#f1f5f9' : '#0f172a',
+        color: isEffectiveDark ? '#f1f5f9' : '#0f172a',
       }
     : undefined;
 
   return (
-    <div style={wrapperStyle} className="min-h-screen pb-20 md:pb-12">
+    <div style={wrapperStyle} className="min-h-screen pb-20 lg:pb-12">
       <Header
         activeView={activeView}
         onSelectView={handleNavigateView}
@@ -725,23 +818,28 @@ export default function App() {
         authReady={authReady}
         onSignIn={handleOwnerSignIn}
         onSignOut={handleOwnerSignOut}
+        isSidebarCollapsed={isSidebarCollapsed}
+        onToggleSidebar={() => {
+          if (activeView === 'timeline' && timelineLayout === 'grid') {
+            captureTimelineFlip();
+          }
+          setIsSidebarCollapsed((prev) => !prev);
+        }}
+        isMobileSidebarOpen={isMobileSidebarOpen}
+        onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
       />
 
-      <button
-        type="button"
-        onClick={() => setIsSidebarCollapsed((prev) => !prev)}
-        title={isSidebarCollapsed ? 'Expand sidebar' : 'Minimize sidebar'}
-        aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Minimize sidebar'}
-        className="fixed right-4 top-20 z-40 inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-slate-200/90 bg-white/90 text-slate-700 shadow-lg backdrop-blur-xl hover:bg-white dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-200 cursor-pointer"
-      >
-        {isSidebarCollapsed ? (
-          <PanelRightOpen className="h-4 w-4" />
-        ) : (
-          <PanelRightClose className="h-4 w-4" />
-        )}
-      </button>
+      {/* Mobile / Tablet Countdown Strip only appears on main Timeline view */}
+      {activeView === 'timeline' && !selectedPostId && (
+        <MobileCountdownStrip
+          countdowns={countdowns}
+          nowMs={nowMs}
+          design={design}
+          onOpenCountdown={openCountdownPage}
+        />
+      )}
 
-      {activeView !== 'live' && (
+      {activeView !== 'live' && activeView !== 'next' && (
         <ScheduledBanner
           banners={banners}
           now={nowDate}
@@ -755,8 +853,8 @@ export default function App() {
       )}
 
       <main className="mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
-          <div className={isSidebarCollapsed ? 'lg:col-span-12 space-y-5' : 'lg:col-span-8 space-y-5'}>
+        <div className="flex flex-col gap-6 lg:flex-row lg:gap-0 lg:items-start">
+          <div className="min-w-0 flex-1 space-y-5 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]">
             {activeView === 'timeline' && selectedPostId ? (
               <div className="space-y-4">
                 <section className="aero-glass flex items-center justify-between gap-3 rounded-3xl px-5 py-3.5">
@@ -815,9 +913,9 @@ export default function App() {
             ) : activeView === 'timeline' && (
               <>
                 {/* Search + Date Range Filter */}
-                <section className="aero-glass rounded-3xl p-4 sm:p-5 space-y-3">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center">
-                    <div className="relative flex-1">
+                <section className="aero-glass rounded-3xl p-3.5 sm:p-5">
+                  <div className="flex items-center gap-2 md:gap-3">
+                    <div className="relative flex-1 min-w-0">
                       <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                       <input
                         type="search"
@@ -828,7 +926,29 @@ export default function App() {
                       />
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                    {/* Mobile Date Search Expand Button (beside search bar) */}
+                    <button
+                      type="button"
+                      onClick={() => setIsMobileDateSearchOpen((prev) => !prev)}
+                      aria-expanded={isMobileDateSearchOpen}
+                      aria-label="Toggle date range search"
+                      title="Date range filter"
+                      className={`inline-flex md:hidden h-10 items-center gap-1 rounded-2xl border px-2.5 text-xs font-semibold transition-colors shrink-0 cursor-pointer ${
+                        isMobileDateSearchOpen || dateFrom || dateTo
+                          ? 'border-sky-500/80 bg-sky-50 text-sky-700 dark:border-sky-500/70 dark:bg-sky-950/60 dark:text-sky-300'
+                          : 'border-slate-200/90 bg-white/85 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/75 dark:text-slate-200'
+                      }`}
+                    >
+                      <CalendarDays className="h-4 w-4" />
+                      <ChevronDown
+                        className={`h-3.5 w-3.5 transition-transform duration-200 ${
+                          isMobileDateSearchOpen ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
+
+                    {/* Tablet/Desktop Inline Date Filter + View Buttons */}
+                    <div className="hidden md:flex items-center gap-2 shrink-0">
                       <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
                         <span className="font-medium">From</span>
                         <input
@@ -849,46 +969,95 @@ export default function App() {
                           className="rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
                         />
                       </label>
+                    </div>
 
-                      <div
-                        role="group"
-                        aria-label="Timeline layout"
-                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200/90 bg-white/75 p-1 dark:border-slate-700 dark:bg-slate-900/70 shrink-0"
+                    {/* Timeline View Buttons (hidden on mobile <640px so only stack applies on mobile; retained on tablet & PC beside search bar) */}
+                    <div
+                      role="group"
+                      aria-label="Timeline layout"
+                      className="hidden sm:inline-flex items-center gap-1 rounded-xl border border-slate-200/90 bg-white/75 p-1 dark:border-slate-700 dark:bg-slate-900/70 shrink-0"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (timelineLayout !== 'stack') {
+                            captureTimelineFlip();
+                            setTimelineLayout('stack');
+                          }
+                        }}
+                        aria-pressed={timelineLayout === 'stack'}
+                        aria-label="Single column stack"
+                        title="Single column stack"
+                        className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
+                          timelineLayout === 'stack'
+                            ? 'bg-sky-600 text-white shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+                        }`}
                       >
-                        <button
-                          type="button"
-                          onClick={() => setTimelineLayout('stack')}
-                          aria-pressed={timelineLayout === 'stack'}
-                          aria-label="Single column stack"
-                          title="Single column stack"
-                          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
-                            timelineLayout === 'stack'
-                              ? 'bg-sky-600 text-white shadow-sm'
-                              : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-                          }`}
-                        >
-                          <Rows3 className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setTimelineLayout('grid')}
-                          aria-pressed={timelineLayout === 'grid'}
-                          aria-label="Pinterest masonry grid"
-                          title="Pinterest masonry grid"
-                          className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
-                            timelineLayout === 'grid'
-                              ? 'bg-sky-600 text-white shadow-sm'
-                              : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
-                          }`}
-                        >
-                          <LayoutGrid className="h-4 w-4" aria-hidden="true" />
-                        </button>
+                        <Rows3 className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (timelineLayout !== 'grid') {
+                            captureTimelineFlip();
+                            setTimelineLayout('grid');
+                          }
+                        }}
+                        aria-pressed={timelineLayout === 'grid'}
+                        aria-label="Pinterest masonry grid"
+                        title="Pinterest masonry grid"
+                        className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
+                          timelineLayout === 'grid'
+                            ? 'bg-sky-600 text-white shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+                        }`}
+                      >
+                        <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Mobile / Small Tablet Expandable Top-to-Bottom Date Range Search */}
+                  <div
+                    className={`md:hidden grid transition-[grid-template-rows,opacity,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                      isMobileDateSearchOpen
+                        ? 'grid-rows-[1fr] opacity-100 mt-3'
+                        : 'grid-rows-[0fr] opacity-0 mt-0 pointer-events-none'
+                    }`}
+                  >
+                    <div className="overflow-hidden">
+                      <div
+                        className={`grid grid-cols-2 gap-2 pt-0.5 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                          isMobileDateSearchOpen ? 'translate-y-0' : '-translate-y-2'
+                        }`}
+                      >
+                        <label className="flex flex-col gap-1 text-[11px] text-slate-600 dark:text-slate-300">
+                          <span className="font-semibold">From</span>
+                          <input
+                            type="date"
+                            value={dateFrom}
+                            onChange={(e) => setDateFrom(e.target.value)}
+                            aria-label="Filter from date"
+                            className="w-full rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-[11px] text-slate-600 dark:text-slate-300">
+                          <span className="font-semibold">To</span>
+                          <input
+                            type="date"
+                            value={dateTo}
+                            onChange={(e) => setDateTo(e.target.value)}
+                            aria-label="Filter to date"
+                            className="w-full rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
+                          />
+                        </label>
                       </div>
                     </div>
                   </div>
 
                   {hasAnyFilter && (
-                    <div className="flex flex-wrap items-center gap-3 border-t border-slate-200/70 pt-2.5 text-xs text-slate-600 dark:border-slate-700/60 dark:text-slate-300">
+                    <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-200/70 pt-2.5 text-xs text-slate-600 dark:border-slate-700/60 dark:text-slate-300">
                       <span>Filtering by:</span>
                       {activeTag && (
                         <button
@@ -989,20 +1158,52 @@ export default function App() {
                       </button>
                     )}
                   </div>
-                ) : timelineLayout === 'grid' && isTwoColViewport ? (
-                  <div className="grid grid-cols-2 items-start gap-5">
-                    {[0, 1].map((colIdx) => (
-                      <div key={colIdx} className="space-y-5 min-w-0">
-                        {filteredTimelinePosts
-                          .filter((_, idx) => idx % 2 === colIdx)
-                          .map((post) => (
+                ) : (
+                  <div ref={timelineFlipRef}>
+                    {timelineLayout === 'grid' && isTwoColViewport ? (
+                      <div
+                        className={`grid items-start gap-5 ${
+                          isSidebarCollapsed
+                            ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3'
+                            : 'grid-cols-1 sm:grid-cols-2'
+                        }`}
+                      >
+                        {Array.from({ length: isSidebarCollapsed ? 3 : 2 }, (_, colIdx) => (
+                          <div key={colIdx} className="space-y-5 min-w-0">
+                            {filteredTimelinePosts
+                              .filter((_, idx) => idx % (isSidebarCollapsed ? 3 : 2) === colIdx)
+                              .map((post) => (
+                                <div key={post.id} data-flip-id={post.id}>
+                                  <TimelineCard
+                                    post={post}
+                                    nowMs={nowMs}
+                                    activeTag={activeTag}
+                                    canEdit={isAdmin}
+                                    layoutMode="grid"
+                                    onOpenPost={openPostDetail}
+                                    onSelectTag={handleSelectTag}
+                                    onEdit={openEditComposer}
+                                    onDelete={handleDeletePost}
+                                    onTogglePin={handleTogglePin}
+                                    onOpenLightbox={(url, title) =>
+                                      setLightbox({ url, title })
+                                    }
+                                  />
+                                </div>
+                              ))}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        {filteredTimelinePosts.map((post) => (
+                          <div key={post.id} data-flip-id={post.id}>
                             <TimelineCard
-                              key={post.id}
                               post={post}
                               nowMs={nowMs}
                               activeTag={activeTag}
                               canEdit={isAdmin}
-                              layoutMode="grid"
+                              layoutMode={timelineLayout}
                               onOpenPost={openPostDetail}
                               onSelectTag={handleSelectTag}
                               onEdit={openEditComposer}
@@ -1012,30 +1213,10 @@ export default function App() {
                                 setLightbox({ url, title })
                               }
                             />
-                          ))}
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-5">
-                    {filteredTimelinePosts.map((post) => (
-                      <TimelineCard
-                        key={post.id}
-                        post={post}
-                        nowMs={nowMs}
-                        activeTag={activeTag}
-                        canEdit={isAdmin}
-                        layoutMode={timelineLayout}
-                        onOpenPost={openPostDetail}
-                        onSelectTag={handleSelectTag}
-                        onEdit={openEditComposer}
-                        onDelete={handleDeletePost}
-                        onTogglePin={handleTogglePin}
-                        onOpenLightbox={(url, title) =>
-                          setLightbox({ url, title })
-                        }
-                      />
-                    ))}
+                    )}
                   </div>
                 )}
               </>
@@ -1094,10 +1275,34 @@ export default function App() {
                 nowMs={nowMs}
               />
             )}
+
+            {activeView === 'next' && (
+              <NextOnMdView
+                countdowns={countdowns}
+                selectedCountdownId={selectedCountdownId}
+                nowMs={nowMs}
+                isAdmin={isAdmin}
+                onSelectCountdown={(id) => openCountdownPage(id)}
+                onBackToTimeline={() => handleNavigateView('timeline')}
+                onSelectTag={(tag) => handleSelectTag(tag)}
+                onManageCountdowns={() => {
+                  setSettingsTab('countdowns');
+                  handleNavigateView('settings');
+                }}
+                onOpenLightbox={(url, title) => setLightbox({ url, title })}
+              />
+            )}
           </div>
 
-          {!isSidebarCollapsed ? (
-            <div className="lg:col-span-4">
+          <div
+            aria-hidden={isSidebarCollapsed}
+            className={`hidden lg:block shrink-0 overflow-hidden transition-[width,margin,opacity,transform,visibility] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              isSidebarCollapsed
+                ? 'lg:w-0 lg:ml-0 opacity-0 translate-x-8 pointer-events-none invisible'
+                : 'lg:w-[320px] xl:w-[416px] lg:ml-6 opacity-100 translate-x-0 visible'
+            }`}
+          >
+            <div className="w-[320px] xl:w-[416px]">
               <Sidebar
                 activeView={activeView}
                 activeStation={activeStation}
@@ -1114,32 +1319,94 @@ export default function App() {
                   setActiveView('settings');
                 }}
                 countdowns={countdowns}
+                onOpenCountdown={openCountdownPage}
                 tagCounts={tagCounts}
                 activeTag={activeTag}
                 onSelectTag={handleSelectTag}
                 monthCounts={monthCounts}
                 activeMonth={activeMonth}
                 onSelectMonth={handleSelectMonth}
-                onToggleCollapse={() => setIsSidebarCollapsed(true)}
               />
             </div>
-          ) : (
-            <div className="flex justify-end lg:col-span-12">
-              <button
-                type="button"
-                onClick={() => setIsSidebarCollapsed(false)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/80 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 cursor-pointer shadow-sm"
-              >
-                <span>Expand Sidebar</span>
-              </button>
-            </div>
-          )}
+          </div>
         </div>
       </main>
 
+      {/* Mobile Hamburger Slide-In Sidebar Drawer (always mounted on lg:hidden for smooth open/close slide) */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            aria-hidden={!isMobileSidebarOpen}
+            className={`fixed inset-0 z-50 flex lg:hidden bg-black/65 backdrop-blur-sm transition-[opacity,visibility] duration-300 ease-out ${
+              isMobileSidebarOpen
+                ? 'opacity-100 visible pointer-events-auto'
+                : 'opacity-0 invisible pointer-events-none'
+            }`}
+            onClick={() => setIsMobileSidebarOpen(false)}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Sidebar Menu"
+              className={`mobile-drawer-solid relative flex h-full w-[86vw] max-w-sm flex-col border-r border-slate-200/90 dark:border-slate-800 shadow-2xl overflow-hidden transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+              }`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-end px-4 pt-4 pb-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsMobileSidebarOpen(false)}
+                  aria-label="Close sidebar menu"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white cursor-pointer transition-colors"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 pb-20">
+                <Sidebar
+                  hideCountdowns={true}
+                  isMobileDrawer={true}
+                  activeView={activeView}
+                  activeStation={activeStation}
+                  isEventActive={Boolean(activeEvent)}
+                  onSelectStation={(station) => {
+                    setActiveEvent(null);
+                    setActiveStation(station);
+                    setIsMobileSidebarOpen(false);
+                  }}
+                  nowMs={nowMs}
+                  design={design}
+                  onUpdateDesign={handleUpdateDesign}
+                  onOpenDesignSettings={() => {
+                    setSettingsTab('design');
+                    setActiveView('settings');
+                    setIsMobileSidebarOpen(false);
+                  }}
+                  countdowns={countdowns}
+                  tagCounts={tagCounts}
+                  activeTag={activeTag}
+                  onSelectTag={(tag) => {
+                    handleSelectTag(tag);
+                    setIsMobileSidebarOpen(false);
+                  }}
+                  monthCounts={monthCounts}
+                  activeMonth={activeMonth}
+                  onSelectMonth={(month) => {
+                    handleSelectMonth(month);
+                    setIsMobileSidebarOpen(false);
+                  }}
+                />
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
       <nav
         aria-label="Mobile Navigation"
-        className="fixed bottom-0 left-0 right-0 z-40 grid h-14 grid-cols-4 border-t border-white/70 bg-white/90 backdrop-blur-xl md:hidden dark:border-slate-800 dark:bg-slate-950/90"
+        className="fixed bottom-0 left-0 right-0 z-40 grid h-14 sm:h-16 grid-cols-4 border-t border-white/70 bg-white/90 backdrop-blur-xl lg:hidden dark:border-slate-800 dark:bg-slate-950/90"
       >
         {(
           [
@@ -1160,13 +1427,14 @@ export default function App() {
               key={tab.id}
               type="button"
               onClick={() => handleNavigateView(tab.id)}
-              className={`flex flex-col items-center justify-center gap-0.5 text-[11px] font-medium cursor-pointer ${
+              style={active ? { color: 'var(--theme-link)' } : undefined}
+              className={`flex flex-col items-center justify-center gap-0.5 text-[11px] sm:text-xs font-medium cursor-pointer ${
                 active
-                  ? 'text-sky-700 dark:text-sky-300'
+                  ? 'font-semibold'
                   : 'text-slate-500 dark:text-slate-400'
               }`}
             >
-              <Icon className="h-4 w-4" />
+              <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
               <span>{tab.label}</span>
             </button>
           );
@@ -1189,11 +1457,11 @@ export default function App() {
           role="dialog"
           aria-modal="true"
           onClick={() => setLightbox(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm"
+          className="md-animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative max-h-[90vh] max-w-5xl overflow-hidden rounded-2xl bg-slate-900 shadow-2xl"
+            className="md-animate-slide-up relative max-h-[90vh] max-w-5xl overflow-hidden rounded-2xl bg-slate-900 shadow-2xl"
           >
             <button
               type="button"

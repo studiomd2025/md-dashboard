@@ -605,7 +605,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <LogIn className="h-4 w-4" />
-                Owner Sign In
+                Sign In
               </button>
             )}
           </div>
@@ -1824,12 +1824,23 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
               </button>
             )}
 
-            {/* Integrated Sub-Panel inside Theme */}
-            {isAdmin && showCustomThemeBuilder && (
-              <form
-                onSubmit={handleSaveCustomTheme}
-                className="space-y-4 rounded-2xl border border-slate-200/90 bg-white/75 p-5 dark:border-slate-700 dark:bg-slate-900/70"
+            {/* Integrated Sub-Panel inside Theme (animated slide expand/collapse) */}
+            {isAdmin && (
+              <div
+                aria-hidden={!showCustomThemeBuilder}
+                className={`grid transition-[grid-template-rows,opacity,visibility] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  showCustomThemeBuilder
+                    ? 'grid-rows-[1fr] opacity-100 visible'
+                    : 'grid-rows-[0fr] opacity-0 invisible pointer-events-none'
+                }`}
               >
+                <div className="overflow-hidden">
+                  <form
+                    onSubmit={handleSaveCustomTheme}
+                    className={`space-y-4 rounded-2xl border border-slate-200/90 bg-white/75 p-5 dark:border-slate-700 dark:bg-slate-900/70 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                      showCustomThemeBuilder ? 'translate-y-0' : '-translate-y-2'
+                    }`}
+                  >
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
@@ -1990,7 +2001,9 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     Save & Apply Theme
                   </button>
                 </div>
-              </form>
+                  </form>
+                </div>
+              </div>
             )}
           </div>
 

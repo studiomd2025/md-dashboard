@@ -797,6 +797,235 @@ async function startServer() {
     res.send(rss);
   });
 
+  const playlistFallbackCache = new Map<string, { data: unknown }>();
+
+  app.get('/api/youtube-playlist', async (req, res) => {
+    const listId = typeof req.query.list === 'string' ? req.query.list.trim() : '';
+    if (!listId) {
+      res.status(400).json({ error: 'Missing list parameter.' });
+      return;
+    }
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+    const items: Array<{
+      videoId: string;
+      title: string;
+      thumbnail: string;
+      published?: string;
+    }> = [];
+    const seen = new Set<string>();
+    let playlistTitle = 'YouTube Playlist';
+
+    try {
+      const pageRes = await fetch(
+        `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`,
+        {
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+          },
+        }
+      );
+
+      if (pageRes.ok) {
+        const html = await pageRes.text();
+        const titleMatch = html.match(/<title>([^<]+)<\/title>/);
+        if (titleMatch) {
+          playlistTitle = titleMatch[1].replace(/\s*-\s*YouTube\s*$/i, '').trim();
+        }
+
+        const match = html.match(/var ytInitialData\s*=\s*({[\s\S]*?});<\/script>/);
+        if (match) {
+          const data = JSON.parse(match[1]);
+          let continuationToken: string | null = null;
+
+          const extractFromObject = (obj: any) => {
+            if (!obj || typeof obj !== 'object') return;
+
+            if (obj.playlistVideoRenderer) {
+              const r = obj.playlistVideoRenderer;
+              const title =
+                r.title?.runs?.map((x: any) => x.text).join('') ||
+                r.title?.simpleText ||
+                '';
+              const videoId = r.videoId;
+              if (videoId && title && !seen.has(videoId)) {
+                seen.add(videoId);
+                items.push({
+                  videoId,
+                  title: title.trim(),
+                  thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+                });
+              }
+            }
+
+            if (obj.lockupViewModel) {
+              const l = obj.lockupViewModel;
+              const title = l.metadata?.lockupMetadataViewModel?.title?.content;
+              const videoId = l.contentId;
+              if (videoId && title && !seen.has(videoId)) {
+                seen.add(videoId);
+                items.push({
+                  videoId,
+                  title: title.trim(),
+                  thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+                });
+              }
+            }
+
+            if (obj.compactVideoRenderer || obj.gridVideoRenderer) {
+              const r = obj.compactVideoRenderer || obj.gridVideoRenderer;
+              const title =
+                r.title?.runs?.map((x: any) => x.text).join('') ||
+                r.title?.simpleText ||
+                '';
+              const videoId = r.videoId;
+              if (videoId && title && !seen.has(videoId)) {
+                seen.add(videoId);
+                items.push({
+                  videoId,
+                  title: title.trim(),
+                  thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+                });
+              }
+            }
+
+            if (!continuationToken) {
+              if (obj.continuationCommand?.token) {
+                continuationToken = obj.continuationCommand.token;
+              } else if (
+                obj.continuationItemRenderer?.continuationEndpoint
+                  ?.continuationCommand?.token
+              ) {
+                continuationToken =
+                  obj.continuationItemRenderer.continuationEndpoint
+                    .continuationCommand.token;
+              }
+            }
+
+            for (const k of Object.keys(obj)) {
+              extractFromObject(obj[k]);
+            }
+          };
+
+          extractFromObject(data);
+
+          // Fetch continuation pages so we get all videos without 15-item limits
+          let pageCount = 0;
+          while (continuationToken && pageCount < 30) {
+            pageCount++;
+            const currentToken: string = continuationToken;
+            continuationToken = null;
+            try {
+              const postRes = await fetch(
+                'https://www.youtube.com/youtubei/v1/browse?prettyPrint=false',
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'User-Agent':
+                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                  },
+                  body: JSON.stringify({
+                    context: {
+                      client: {
+                        clientName: 'WEB',
+                        clientVersion: '2.20240101.00.00',
+                        hl: 'en',
+                        gl: 'US',
+                      },
+                    },
+                    continuation: currentToken,
+                  }),
+                }
+              );
+              if (!postRes.ok) break;
+              const postData = await postRes.json();
+              extractFromObject(postData);
+            } catch {
+              break;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error in initialData playlist scraper:', err);
+    }
+
+    // Fallback to RSS feed if scrapers found 0 items
+    if (items.length === 0) {
+      try {
+        const feedUrl = `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(listId)}`;
+        const feedRes = await fetch(feedUrl, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; MyDiariesBot/1.0)' },
+        });
+        if (feedRes.ok) {
+          const xml = await feedRes.text();
+          const titleMatch = xml.match(/<title>([^<]+)<\/title>/);
+          if (titleMatch && playlistTitle === 'YouTube Playlist') {
+            playlistTitle = titleMatch[1].trim();
+          }
+
+          const entryRegex = /<entry>([\s\S]*?)<\/entry>/g;
+          let match: RegExpExecArray | null;
+          while ((match = entryRegex.exec(xml)) !== null) {
+            const block = match[1];
+            const idMatch = block.match(/<yt:videoId>([^<]+)<\/yt:videoId>/);
+            const videoTitleMatch = block.match(/<title>([^<]+)<\/title>/);
+            const pubMatch = block.match(/<published>([^<]+)<\/published>/);
+            if (idMatch && videoTitleMatch) {
+              const videoId = idMatch[1].trim();
+              if (!seen.has(videoId)) {
+                seen.add(videoId);
+                const cleanTitle = videoTitleMatch[1]
+                  .replace(/&quot;/g, '"')
+                  .replace(/&apos;/g, "'")
+                  .replace(/&#39;/g, "'")
+                  .replace(/&amp;/g, '&')
+                  .replace(/&lt;/g, '<')
+                  .replace(/&gt;/g, '>')
+                  .trim();
+                items.push({
+                  videoId,
+                  title: cleanTitle,
+                  thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+                  published: pubMatch ? pubMatch[1].trim() : '',
+                });
+              }
+            }
+          }
+        }
+      } catch (feedErr) {
+        console.error('Error fetching playlist XML fallback:', feedErr);
+      }
+    }
+
+    if (items.length > 0) {
+      const payload = {
+        playlistId: listId,
+        title: playlistTitle,
+        items,
+      };
+      playlistFallbackCache.set(listId, { data: payload });
+      res.json(payload);
+      return;
+    }
+
+    const fallback = playlistFallbackCache.get(listId);
+    if (fallback) {
+      res.json(fallback.data);
+      return;
+    }
+
+    res.json({
+      playlistId: listId,
+      title: playlistTitle,
+      items: [],
+    });
+  });
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({

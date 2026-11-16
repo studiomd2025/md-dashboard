@@ -118,5 +118,5 @@ export interface IntranetState {
   serverTime: string;
 }
 
-export type ActiveView = 'timeline' | 'live' | 'settings' | 'install';
+export type ActiveView = 'timeline' | 'live' | 'settings' | 'install' | 'next';
 export type BackendTab = 'compose' | 'countdowns' | 'tags' | 'banners' | 'design';

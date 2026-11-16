@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -8,9 +9,23 @@ import {
   FolderOpen,
   LayoutGrid,
   ListVideo,
+  Loader2,
   Play,
+  RefreshCw,
+  RotateCcw,
   Rows3,
+  Search,
+  Tv,
+  X,
 } from 'lucide-react';
+import { normalizeShortsToWatchUrl } from '../lib/mediaUtils';
+
+export interface PlaylistTrackItem {
+  videoId: string;
+  title: string;
+  thumbnail: string;
+  published?: string;
+}
 
 export interface BroadcastChannel {
   number: number;
@@ -398,6 +413,45 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const [showPlaylistDrawer, setShowPlaylistDrawer] = useState(false);
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
+  const [selectedTrack, setSelectedTrack] = useState<{
+    videoId: string;
+    title: string;
+    index: number;
+    total: number;
+  } | null>(null);
+
+  const [playlistTracks, setPlaylistTracks] = useState<PlaylistTrackItem[]>([]);
+  const [playlistLoading, setPlaylistLoading] = useState(false);
+  const [playlistError, setPlaylistError] = useState('');
+  const [playlistFilterQuery, setPlaylistFilterQuery] = useState('');
+  const [activePlaylistTitle, setActivePlaylistTitle] = useState('Playlist');
+  const [playlistSyncNonce, setPlaylistSyncNonce] = useState(0);
+
+  // Reset selected track and close drawer when user changes active event or broadcast station
+  useEffect(() => {
+    setSelectedTrack(null);
+    if (!activeEvent && activeStation.kind === 'twitch') {
+      setShowPlaylistDrawer(false);
+    }
+  }, [activeStation, activeEvent]);
+
+  // Close drawer on Escape key and lock background page scroll while open
+  useEffect(() => {
+    if (!showPlaylistDrawer) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowPlaylistDrawer(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showPlaylistDrawer]);
+
   const handleToggleFullscreen = () => {
     const el = playerContainerRef.current;
     if (!el) return;
@@ -424,7 +478,93 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
 
   const cleanYt = getCleanYoutubeMediaId(activeEvent);
 
-  const playerSrc = activeEvent
+  const activePlaylistId = useMemo(() => {
+    if (activeEvent) {
+      if (activeEvent.kind === 'youtube-playlist') return activeEvent.mediaId;
+      return null;
+    }
+    if (activeStation.kind === 'youtube-playlist') {
+      return activeStation.playlistId || null;
+    }
+    return null;
+  }, [activeEvent, activeStation]);
+
+  const defaultPlaylistTitle = useMemo(() => {
+    if (activeEvent) return activeEvent.title;
+    if (activeStation.kind === 'youtube-playlist') return activeStation.callsign;
+    return activeStation.label;
+  }, [activeEvent, activeStation]);
+
+  // Fetch fresh list of individual videos whenever the Playlist drawer opens or Sync is clicked
+  useEffect(() => {
+    if (!showPlaylistDrawer) return;
+    if (!activePlaylistId) {
+      setPlaylistTracks([]);
+      setPlaylistLoading(false);
+      setPlaylistError('');
+      return;
+    }
+
+    let cancelled = false;
+    setPlaylistLoading(true);
+    setPlaylistError('');
+
+    fetch(
+      `/api/youtube-playlist?list=${encodeURIComponent(activePlaylistId)}&_t=${Date.now()}`,
+      { cache: 'no-store' }
+    )
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+        return res.json();
+      })
+      .then((data: { title?: string; items?: PlaylistTrackItem[]; error?: string }) => {
+        if (cancelled) return;
+        if (data.error && (!data.items || data.items.length === 0)) {
+          setPlaylistError(data.error);
+        } else {
+          setActivePlaylistTitle(data.title || defaultPlaylistTitle);
+          setPlaylistTracks(data.items || []);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPlaylistError('Unable to load video tracklist for this playlist.');
+      })
+      .finally(() => {
+        if (!cancelled) setPlaylistLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showPlaylistDrawer, activePlaylistId, defaultPlaylistTitle, playlistSyncNonce]);
+
+  const filteredPlaylistTracks = useMemo(() => {
+    const q = playlistFilterQuery.trim().toLowerCase();
+    if (!q) return playlistTracks;
+    return playlistTracks.filter((t) => t.title.toLowerCase().includes(q));
+  }, [playlistTracks, playlistFilterQuery]);
+
+  const handleStepTrack = (delta: number) => {
+    if (!selectedTrack || playlistTracks.length === 0) return;
+    const nextIdx =
+      (selectedTrack.index + delta + playlistTracks.length) % playlistTracks.length;
+    const nextTrack = playlistTracks[nextIdx];
+    if (nextTrack) {
+      setSelectedTrack({
+        videoId: nextTrack.videoId,
+        title: nextTrack.title,
+        index: nextIdx,
+        total: playlistTracks.length,
+      });
+    }
+  };
+
+  const playerSrc = selectedTrack
+    ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
+        selectedTrack.videoId
+      )}?autoplay=${ytAutoplay}&rel=0`
+    : activeEvent
     ? cleanYt.isShorts
       ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
           cleanYt.mediaId
@@ -446,8 +586,13 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
         activeStation.playlistId || ''
       )}&autoplay=${ytAutoplay}`;
 
-  const externalUrl = activeEvent ? activeEvent.url : activeStation.url;
-  const externalLabel = activeEvent || !isTwitch ? 'Open on YouTube' : 'Open on Twitch';
+  const rawExternalUrl = selectedTrack
+    ? `https://www.youtube.com/watch?v=${selectedTrack.videoId}`
+    : activeEvent
+    ? activeEvent.url
+    : activeStation.url;
+  const externalUrl = normalizeShortsToWatchUrl(rawExternalUrl);
+  const externalLabel = isTwitch && !selectedTrack && !activeEvent ? 'Open on Twitch' : 'Open on YouTube';
 
   const activeEventIndex = activeEvent
     ? PLAY_EVENTS.findIndex((e) => e.id === activeEvent.id)
@@ -512,22 +657,64 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       {/* Main Broadcast & Event Player */}
       <section className="aero-glass overflow-hidden rounded-3xl p-3 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-slate-600 dark:text-slate-300">
-          <span className="font-mono font-semibold tabular-nums">
-            {activeEvent
-              ? `/${
-                  activeEvent.era === 'Year End Collection'
-                    ? activeEvent.title
-                    : `${activeEvent.era}/${activeEvent.year}/${activeEvent.title}`
-                } (${activeEvent.dateLabel})`
-              : `CH 0${activeStation.number} · ${activeStation.callsign}`}
-          </span>
+          <div className="flex items-center gap-2 min-w-0">
+            {selectedTrack ? (
+              <span className="font-mono font-semibold tabular-nums truncate max-w-[240px] sm:max-w-[420px] text-sky-800 dark:text-sky-200">
+                #{selectedTrack.index + 1}/{selectedTrack.total}: {selectedTrack.title}
+              </span>
+            ) : (
+              <span className="font-mono font-semibold tabular-nums truncate max-w-[240px] sm:max-w-[420px]">
+                {activeEvent
+                  ? `/${
+                      activeEvent.era === 'Year End Collection'
+                        ? activeEvent.title
+                        : `${activeEvent.era}/${activeEvent.year}/${activeEvent.title}`
+                    } (${activeEvent.dateLabel})`
+                  : `CH 0${activeStation.number} · ${activeStation.callsign}`}
+              </span>
+            )}
+            {selectedTrack && (
+              <button
+                type="button"
+                onClick={() => setSelectedTrack(null)}
+                title="Return to continuous playlist playback"
+                className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-300 cursor-pointer shrink-0"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span>Full Playlist</span>
+              </button>
+            )}
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
-            {activeEvent && (
+            {selectedTrack && playlistTracks.length > 0 ? (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleStepTrack(-1)}
+                  aria-label="Previous Video in Playlist"
+                  title="Previous Video in Playlist"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleStepTrack(1)}
+                  aria-label="Next Video in Playlist"
+                  title="Next Video in Playlist"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            ) : activeEvent && (
               <div className="flex items-center gap-1">
                 <button
                   type="button"
                   onClick={() => handleStepEvent(-1)}
                   aria-label="Previous Event"
+                  title="Previous Event"
                   className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
                 >
                   <ChevronLeft className="h-4 w-4" />
@@ -536,6 +723,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                   type="button"
                   onClick={() => handleStepEvent(1)}
                   aria-label="Next Event"
+                  title="Next Event"
                   className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
                 >
                   <ChevronRight className="h-4 w-4" />
@@ -556,14 +744,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               <Play className="h-3.5 w-3.5" />
               <span>Autoplay: {autoplayEnabled ? 'On' : 'Off'}</span>
             </button>
-            <button
-              type="button"
-              onClick={() => setShowPlaylistDrawer(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <ListVideo className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
-              <span>Playlist</span>
-            </button>
+            {!isTwitch && Boolean(activePlaylistId) && (
+              <button
+                type="button"
+                onClick={() => setShowPlaylistDrawer(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <ListVideo className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+                <span>Playlist</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={handleToggleFullscreen}
@@ -587,20 +777,13 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
           ref={playerContainerRef}
           className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950 aspect-video dark:border-slate-800"
         >
-          {isTwitch && (
-            <div
-              className="absolute inset-0 z-10 pointer-events-none"
-              style={{
-                background: 'rgba(5, 13, 23, 0.45)',
-                backdropFilter: 'contrast(1.15) brightness(0.9)',
-              }}
-            />
-          )}
           <iframe
             key={playerSrc}
             src={playerSrc}
             title={
-              activeEvent
+              selectedTrack
+                ? selectedTrack.title
+                : activeEvent
                 ? activeEvent.title
                 : `${activeStation.label} (${activeStation.callsign})`
             }
@@ -610,58 +793,314 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
           />
         </div>
 
-        {/* Playlist Drawer Modal */}
-        {showPlaylistDrawer && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-            <div className="aero-glass w-full max-w-lg rounded-3xl p-6 shadow-2xl space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-display text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <ListVideo className="h-5 w-5 text-sky-600" />
-                  <span>Playlist Directory</span>
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setShowPlaylistDrawer(false)}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer"
-                >
-                  Close
-                </button>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Select any playlist event below to play it instantly:
-              </p>
-              <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-200/70 dark:divide-slate-800/80 pr-1">
-                {PLAY_EVENTS.map((ev) => (
-                  <button
-                    key={ev.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectEvent(ev);
-                      setShowPlaylistDrawer(false);
-                    }}
-                    className={`flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors cursor-pointer rounded-xl my-1 ${
-                      activeEvent?.id === ev.id
-                        ? 'aero-button-primary text-white'
-                        : 'hover:bg-slate-100/80 dark:hover:bg-slate-800/80 text-slate-800 dark:text-slate-200'
-                    }`}
-                  >
+        {/* Playlist Drawer Modal rendered into document.body via Portal so glass/overflow containers never clip and open/close slide smoothly */}
+        {typeof document !== 'undefined' &&
+          createPortal(
+            <div
+              aria-hidden={!showPlaylistDrawer}
+              className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 p-0 sm:p-4 backdrop-blur-md transition-[opacity,visibility] duration-300 ease-out ${
+                showPlaylistDrawer
+                  ? 'opacity-100 visible pointer-events-auto'
+                  : 'opacity-0 invisible pointer-events-none'
+              }`}
+              onClick={() => setShowPlaylistDrawer(false)}
+            >
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="YouTube Playlist Videos"
+                className={`aero-glass relative flex flex-col w-full max-w-2xl h-[82dvh] max-h-[82dvh] sm:h-[85vh] sm:max-h-[85vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-white/60 dark:border-slate-700/80 overflow-hidden transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+                  showPlaylistDrawer
+                    ? 'translate-y-0 sm:scale-100 opacity-100'
+                    : 'translate-y-full sm:translate-y-6 sm:scale-95 opacity-0'
+                }`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Sticky Top Header */}
+                <div className="flex items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6 py-2.5 sm:py-3.5 border-b border-slate-200/80 bg-white/75 backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-900/75 shrink-0">
+                  <div className="min-w-0 flex items-center gap-2.5">
+                    <div className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300">
+                      <ListVideo className="h-4 w-4 sm:h-5 sm:w-5" />
+                    </div>
                     <div className="min-w-0">
-                      <div className="truncate font-display text-sm font-semibold">
-                        {ev.title}
-                      </div>
-                      <div className="font-mono text-[11px] opacity-80">
-                        {ev.era} · {ev.dateLabel}
+                      <h3 className="font-display text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
+                        {activePlaylistTitle || 'Playlist Videos'}
+                      </h3>
+                      <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
+                        {playlistTracks.length > 0
+                          ? `${playlistTracks.length} individual videos`
+                          : playlistLoading
+                          ? 'Syncing latest playlist...'
+                          : 'Video Tracklist'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                    {activePlaylistId && (
+                      <button
+                        type="button"
+                        onClick={() => setPlaylistSyncNonce((n) => n + 1)}
+                        disabled={playlistLoading}
+                        title="Sync latest videos & order from YouTube"
+                        aria-label="Sync playlist"
+                        className="inline-flex h-8 w-8 sm:w-auto sm:px-2.5 items-center justify-center gap-1 rounded-xl border border-slate-200/90 bg-white/85 text-xs font-semibold text-slate-700 hover:bg-white disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-200 cursor-pointer"
+                      >
+                        <RefreshCw
+                          className={`h-3.5 w-3.5 ${playlistLoading ? 'animate-spin' : ''}`}
+                        />
+                        <span className="hidden sm:inline">Sync</span>
+                      </button>
+                    )}
+                    {activePlaylistId && (
+                      <a
+                        href={`https://www.youtube.com/playlist?list=${encodeURIComponent(activePlaylistId)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Open full playlist on YouTube"
+                        className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-200"
+                      >
+                        <span>YouTube</span>
+                        <ExternalLink className="h-3.5 w-3.5" />
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setShowPlaylistDrawer(false)}
+                      aria-label="Close playlist"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer shrink-0 shadow-sm"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      <span>Close</span>
+                    </button>
+                  </div>
+                </div>
+
+                {isTwitch && !activeEvent ? (
+                  <div className="flex-1 overflow-y-auto p-6 text-center space-y-3 flex flex-col justify-center items-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-500/15 text-purple-600 dark:bg-purple-500/25 dark:text-purple-300">
+                      <Tv className="h-6 w-6" />
+                    </div>
+                    <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                      Currently streaming {activeStation.callsign} on Twitch
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                      Twitch channels stream a continuous live feed. To browse and select individual YouTube playlist videos, switch to Channel 4 or a Play Event below:
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const ch4 = STATIONS.find((s) => s.number === 4) || STATIONS[3];
+                          onSelectStation(ch4);
+                          setShowPlaylistDrawer(true);
+                        }}
+                        className="aero-button-primary rounded-xl px-3.5 py-2 text-xs font-semibold text-white cursor-pointer"
+                      >
+                        Switch to Channel 4 (VOD_ch4)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSelectEvent(PLAY_EVENTS[0]);
+                          setShowPlaylistDrawer(true);
+                        }}
+                        className="rounded-xl border border-slate-200 bg-white/90 px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 cursor-pointer"
+                      >
+                        Browse {PLAY_EVENTS[0].title}
+                      </button>
+                    </div>
+                  </div>
+                ) : activeEvent?.kind === 'youtube-video' && !activePlaylistId ? (
+                  <div className="flex-1 overflow-y-auto p-6 text-center space-y-3 flex flex-col justify-center items-center">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/15 text-sky-600 dark:bg-sky-500/25 dark:text-sky-300">
+                      <Play className="h-6 w-6" />
+                    </div>
+                    <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                      {activeEvent.title} is a Single Video
+                    </h4>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                      This item is registered as an individual video rather than a multi-track playlist.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextEvent = PLAY_EVENTS.find((e) => e.kind === 'youtube-playlist') || PLAY_EVENTS[0];
+                        onSelectEvent(nextEvent);
+                        setShowPlaylistDrawer(true);
+                      }}
+                      className="aero-button-primary rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
+                    >
+                      Open Playlist Events
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Sticky Filter Box */}
+                    <div className="px-4 sm:px-6 py-2 bg-white/40 dark:bg-slate-900/40 border-b border-slate-200/50 dark:border-slate-800/50 shrink-0">
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="search"
+                          value={playlistFilterQuery}
+                          onChange={(e) => setPlaylistFilterQuery(e.target.value)}
+                          placeholder={`Search within ${playlistTracks.length > 0 ? `${playlistTracks.length} videos` : 'playlist'}...`}
+                          className="w-full rounded-xl border border-slate-200/90 bg-white/90 py-1.5 sm:py-2 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/80 dark:text-white"
+                        />
+                        {playlistFilterQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setPlaylistFilterQuery('')}
+                            aria-label="Clear search"
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
-                    <Play className="h-3.5 w-3.5 shrink-0" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
 
-        {/* Mobile Compact Remote Control [1] [2] [3] [4] directly under the player */}
+                    {/* Scrollable Videos Container */}
+                    <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-6 py-2 divide-y divide-slate-200/70 dark:divide-slate-800/80">
+                      {playlistLoading ? (
+                        <div className="py-12 text-center space-y-3">
+                          <Loader2 className="mx-auto h-7 w-7 animate-spin text-sky-600 dark:text-sky-400" />
+                          <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                            Syncing all videos from YouTube...
+                          </p>
+                        </div>
+                      ) : playlistError && playlistTracks.length === 0 ? (
+                        <div className="py-12 text-center space-y-3">
+                          <p className="text-xs text-rose-600 dark:text-rose-400 font-medium">
+                            {playlistError}
+                          </p>
+                          {activePlaylistId && (
+                            <a
+                              href={`https://www.youtube.com/playlist?list=${activePlaylistId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="aero-button-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
+                            >
+                              <span>Open Playlist on YouTube</span>
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+                        </div>
+                      ) : filteredPlaylistTracks.length === 0 ? (
+                        <div className="py-12 text-center">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            No videos matching “{playlistFilterQuery}”.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-1 py-1">
+                          {filteredPlaylistTracks.map((item, idx) => {
+                            const originalIdx = playlistTracks.findIndex((t) => t.videoId === item.videoId);
+                            const isCurrentPlaying = selectedTrack?.videoId === item.videoId;
+                            return (
+                              <button
+                                key={item.videoId}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedTrack({
+                                    videoId: item.videoId,
+                                    title: item.title,
+                                    index: originalIdx >= 0 ? originalIdx : idx,
+                                    total: playlistTracks.length,
+                                  });
+                                  setShowPlaylistDrawer(false);
+                                }}
+                                className={`flex w-full items-center justify-between gap-2.5 sm:gap-3 p-2 sm:p-2.5 text-left transition-colors cursor-pointer rounded-2xl ${
+                                  isCurrentPlaying
+                                    ? 'aero-button-primary text-white shadow-sm'
+                                    : 'hover:bg-slate-100/80 dark:hover:bg-slate-800/80 text-slate-800 dark:text-slate-200'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                                  <span
+                                    className={`font-mono text-xs font-bold w-6 sm:w-7 shrink-0 text-center ${
+                                      isCurrentPlaying ? 'text-sky-100' : 'text-slate-400'
+                                    }`}
+                                  >
+                                    {originalIdx >= 0 ? originalIdx + 1 : idx + 1}
+                                  </span>
+                                  <div className="relative h-11 w-18 sm:h-12 sm:w-20 shrink-0 overflow-hidden rounded-xl bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
+                                    <img
+                                      src={item.thumbnail}
+                                      alt={item.title}
+                                      loading="lazy"
+                                      className="h-full w-full object-cover"
+                                    />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="line-clamp-2 font-display text-xs sm:text-sm font-semibold">
+                                      {item.title}
+                                    </div>
+                                    <div
+                                      className={`font-mono text-[10px] mt-0.5 truncate ${
+                                        isCurrentPlaying ? 'text-sky-100' : 'text-slate-400'
+                                      }`}
+                                    >
+                                      ID: {item.videoId}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="shrink-0 pl-1 sm:pl-2">
+                                  {isCurrentPlaying ? (
+                                    <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white whitespace-nowrap">
+                                      Playing
+                                    </span>
+                                  ) : (
+                                    <div className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 dark:bg-sky-400/20 dark:text-sky-300">
+                                      <Play className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current" />
+                                    </div>
+                                  )}
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Sticky Bottom Action Footer */}
+                    <div className="flex items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6 py-2.5 sm:py-3 border-t border-slate-200/80 bg-white/80 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80 shrink-0 text-xs pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                      <span className="truncate text-slate-600 dark:text-slate-300 font-medium text-[11px] sm:text-xs">
+                        {selectedTrack
+                          ? `#${selectedTrack.index + 1}: ${selectedTrack.title}`
+                          : `${playlistTracks.length} videos in playlist`}
+                      </span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {selectedTrack && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedTrack(null);
+                              setShowPlaylistDrawer(false);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer shadow-sm whitespace-nowrap"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            <span>Full Playlist</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setShowPlaylistDrawer(false)}
+                          className="aero-button-primary rounded-xl px-4 py-1.5 text-xs font-semibold text-white cursor-pointer shadow-sm whitespace-nowrap"
+                        >
+                          Done
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>,
+            document.body
+          )}
+
+        {/* Remote Control Buttons # / callsign for Mobile & Tablet */}
         <div
           role="tablist"
           aria-label="Mobile Remote Control"
@@ -677,13 +1116,22 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 aria-selected={isSelected}
                 aria-label={`${station.label} — ${station.callsign}`}
                 onClick={() => onSelectStation(station)}
-                className={`flex h-11 items-center justify-center rounded-xl border font-display text-base font-bold tabular-nums transition-colors cursor-pointer ${
+                className={`flex flex-col items-center justify-center gap-2 rounded-xl border px-1.5 py-2.5 text-center transition-colors cursor-pointer min-w-0 ${
                   isSelected
                     ? 'aero-button-primary border-transparent text-white'
                     : 'border-slate-200/90 bg-white/80 text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100'
                 }`}
               >
-                {station.number}
+                <span className="font-display text-lg sm:text-xl font-bold leading-none tabular-nums">
+                  {station.number}
+                </span>
+                <span
+                  className={`max-w-full truncate font-mono text-[10px] sm:text-xs font-semibold leading-tight ${
+                    isSelected ? 'text-sky-100' : 'text-slate-600 dark:text-slate-300'
+                  }`}
+                >
+                  {station.callsign}
+                </span>
               </button>
             );
           })}
@@ -807,13 +1255,47 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             </nav>
           </div>
 
-          {/* Scrollable Folder & Item List */}
-          <div className="max-h-[300px] overflow-y-auto divide-y divide-slate-200/70 dark:divide-slate-800/80">
+          {/* Scrollable Folder & Item List (List or Tiles Grid) */}
+          <div
+            className={
+              eventViewMode === 'tiles'
+                ? 'max-h-[340px] overflow-y-auto p-3 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3'
+                : 'max-h-[300px] overflow-y-auto divide-y divide-slate-200/70 dark:divide-slate-800/80'
+            }
+          >
             {/* Level 1: Root Directory (/Interim Era, /Caratime Era, /Daliatime Era, Year End Playlist) */}
             {!currentEra && (
               <>
                 {eraSummaries.map((folder) => {
                   const hasActiveInside = activeEvent?.era === folder.era;
+                  if (eventViewMode === 'tiles') {
+                    return (
+                      <button
+                        key={folder.era}
+                        type="button"
+                        onClick={() => {
+                          setCurrentEra(folder.era);
+                          setCurrentYear(null);
+                        }}
+                        className={`group flex flex-col items-center justify-center rounded-2xl border p-4 text-center transition-all cursor-pointer ${
+                          hasActiveInside
+                            ? 'border-sky-500/80 bg-sky-500/10 shadow-sm ring-2 ring-sky-500/30 dark:bg-sky-500/15'
+                            : 'border-slate-200/80 bg-white/70 hover:bg-white hover:shadow-md dark:border-slate-700/70 dark:bg-slate-900/60 dark:hover:bg-slate-800/80'
+                        }`}
+                      >
+                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-500 group-hover:scale-105 transition-transform dark:bg-amber-400/20 dark:text-amber-300">
+                          <Folder className="h-6 w-6 fill-amber-500/20" />
+                        </div>
+                        <div className="mt-2.5 truncate font-display text-xs sm:text-sm font-bold text-slate-900 dark:text-white max-w-full">
+                          {folder.era}
+                        </div>
+                        <div className="mt-0.5 font-mono text-[10px] sm:text-[11px] text-slate-500 tabular-nums dark:text-slate-400">
+                          {folder.yearLabel} · {folder.count} items
+                        </div>
+                      </button>
+                    );
+                  }
+
                   return (
                     <button
                       key={folder.era}
@@ -846,46 +1328,84 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 })}
 
                 {yearEndItem && (
-                  <button
-                    type="button"
-                    onClick={() => onSelectEvent(yearEndItem)}
-                    className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors cursor-pointer ${
-                      activeEvent?.id === yearEndItem.id
-                        ? 'aero-button-primary text-white'
-                        : 'hover:bg-slate-50/90 dark:hover:bg-slate-800/60'
-                    }`}
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <ListVideo
-                        className={`h-4 w-4 shrink-0 ${
+                  eventViewMode === 'tiles' ? (
+                    <button
+                      key={yearEndItem.id}
+                      type="button"
+                      onClick={() => onSelectEvent(yearEndItem)}
+                      className={`group flex flex-col items-center justify-center rounded-2xl border p-4 text-center transition-all cursor-pointer ${
+                        activeEvent?.id === yearEndItem.id
+                          ? 'aero-button-primary border-transparent text-white shadow-md'
+                          : 'border-slate-200/80 bg-white/70 hover:bg-white hover:shadow-md dark:border-slate-700/70 dark:bg-slate-900/60 dark:hover:bg-slate-800/80'
+                      }`}
+                    >
+                      <div
+                        className={`flex h-12 w-12 items-center justify-center rounded-2xl transition-transform group-hover:scale-105 ${
+                          activeEvent?.id === yearEndItem.id
+                            ? 'bg-white/20 text-white'
+                            : 'bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300'
+                        }`}
+                      >
+                        <ListVideo className="h-6 w-6" />
+                      </div>
+                      <div
+                        className={`mt-2.5 truncate font-display text-xs sm:text-sm font-bold max-w-full ${
+                          activeEvent?.id === yearEndItem.id ? 'text-white' : 'text-slate-900 dark:text-white'
+                        }`}
+                      >
+                        {yearEndItem.title}
+                      </div>
+                      <div
+                        className={`mt-0.5 font-mono text-[10px] sm:text-[11px] tabular-nums ${
+                          activeEvent?.id === yearEndItem.id ? 'text-sky-100' : 'text-slate-500 dark:text-slate-400'
+                        }`}
+                      >
+                        Archive Playlist
+                      </div>
+                    </button>
+                  ) : (
+                    <button
+                      key={yearEndItem.id}
+                      type="button"
+                      onClick={() => onSelectEvent(yearEndItem)}
+                      className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors cursor-pointer ${
+                        activeEvent?.id === yearEndItem.id
+                          ? 'aero-button-primary text-white'
+                          : 'hover:bg-slate-50/90 dark:hover:bg-slate-800/60'
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <ListVideo
+                          className={`h-4 w-4 shrink-0 ${
+                            activeEvent?.id === yearEndItem.id
+                              ? 'text-white'
+                              : 'text-sky-600 dark:text-sky-400'
+                          }`}
+                        />
+                        <div className="min-w-0">
+                          <div className="truncate font-display text-sm font-bold">
+                            {yearEndItem.title}
+                          </div>
+                          <div
+                            className={`font-mono text-[11px] ${
+                              activeEvent?.id === yearEndItem.id
+                                ? 'text-sky-100'
+                                : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            Archive Playlist
+                          </div>
+                        </div>
+                      </div>
+                      <Play
+                        className={`h-3.5 w-3.5 shrink-0 ${
                           activeEvent?.id === yearEndItem.id
                             ? 'text-white'
                             : 'text-sky-600 dark:text-sky-400'
                         }`}
                       />
-                      <div className="min-w-0">
-                        <div className="truncate font-display text-sm font-bold">
-                          {yearEndItem.title}
-                        </div>
-                        <div
-                          className={`font-mono text-[11px] ${
-                            activeEvent?.id === yearEndItem.id
-                              ? 'text-sky-100'
-                              : 'text-slate-500 dark:text-slate-400'
-                          }`}
-                        >
-                          Archive Playlist
-                        </div>
-                      </div>
-                    </div>
-                    <Play
-                      className={`h-3.5 w-3.5 shrink-0 ${
-                        activeEvent?.id === yearEndItem.id
-                          ? 'text-white'
-                          : 'text-sky-600 dark:text-sky-400'
-                      }`}
-                    />
-                  </button>
+                    </button>
+                  )
                 )}
               </>
             )}
@@ -896,6 +1416,32 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 const hasActiveInside =
                   activeEvent?.era === currentEra &&
                   activeEvent?.year === yrGroup.year;
+
+                if (eventViewMode === 'tiles') {
+                  return (
+                    <button
+                      key={yrGroup.year}
+                      type="button"
+                      onClick={() => setCurrentYear(yrGroup.year)}
+                      className={`group flex flex-col items-center justify-center rounded-2xl border p-4 text-center transition-all cursor-pointer ${
+                        hasActiveInside
+                          ? 'border-sky-500/80 bg-sky-500/10 shadow-sm ring-2 ring-sky-500/30 dark:bg-sky-500/15'
+                          : 'border-slate-200/80 bg-white/70 hover:bg-white hover:shadow-md dark:border-slate-700/70 dark:bg-slate-900/60 dark:hover:bg-slate-800/80'
+                      }`}
+                    >
+                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-500 group-hover:scale-105 transition-transform dark:bg-amber-400/20 dark:text-amber-300">
+                        <FolderOpen className="h-6 w-6 fill-amber-500/20" />
+                      </div>
+                      <div className="mt-2.5 font-mono text-base font-extrabold text-slate-900 tabular-nums dark:text-white">
+                        {yrGroup.year}
+                      </div>
+                      <div className="mt-0.5 text-[10px] sm:text-[11px] text-slate-500 tabular-nums dark:text-slate-400">
+                        {yrGroup.items.length} {yrGroup.items.length === 1 ? 'event' : 'events'}
+                      </div>
+                    </button>
+                  );
+                }
+
                 return (
                   <button
                     key={yrGroup.year}
@@ -928,6 +1474,60 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             {currentEra && currentYear &&
               eventsInCurrentYear.map((ev) => {
                 const isSelected = activeEvent?.id === ev.id;
+
+                if (eventViewMode === 'tiles') {
+                  return (
+                    <button
+                      key={ev.id}
+                      type="button"
+                      onClick={() => onSelectEvent(ev)}
+                      className={`group flex flex-col items-center justify-between rounded-2xl border p-3.5 text-center transition-all cursor-pointer ${
+                        isSelected
+                          ? 'aero-button-primary border-transparent text-white shadow-md'
+                          : 'border-slate-200/80 bg-white/70 hover:bg-white hover:shadow-md dark:border-slate-700/70 dark:bg-slate-900/60 dark:hover:bg-slate-800/80'
+                      }`}
+                    >
+                      <div
+                        className={`flex h-11 w-11 items-center justify-center rounded-2xl transition-transform group-hover:scale-105 ${
+                          isSelected
+                            ? 'bg-white/20 text-white'
+                            : 'bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300'
+                        }`}
+                      >
+                        <ListVideo className="h-5 w-5" />
+                      </div>
+                      <div className="mt-2 w-full">
+                        <div
+                          className={`truncate font-display text-xs sm:text-sm font-bold ${
+                            isSelected ? 'text-white' : 'text-slate-900 dark:text-white'
+                          }`}
+                          title={ev.title}
+                        >
+                          {ev.title}
+                        </div>
+                        <div
+                          className={`mt-0.5 font-mono text-[10px] tabular-nums ${
+                            isSelected ? 'text-sky-100' : 'text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {ev.dateLabel}
+                        </div>
+                      </div>
+                      <div className="mt-2 flex items-center justify-center gap-1">
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            isSelected
+                              ? 'bg-white/20 text-white'
+                              : 'bg-slate-200/80 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                          }`}
+                        >
+                          {ev.kind === 'youtube-video' ? 'Video' : 'Playlist'}
+                        </span>
+                      </div>
+                    </button>
+                  );
+                }
+
                 return (
                   <button
                     key={ev.id}

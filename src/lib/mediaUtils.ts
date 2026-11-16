@@ -13,6 +13,20 @@ export function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+export function normalizeShortsToWatchUrl(url: string): string {
+  if (!url) return '';
+  if (url.includes('/shorts/')) {
+    const parts = url.split('/shorts/');
+    const rest = parts[1] || '';
+    const videoId = rest.split('?')[0].split('/')[0];
+    const search = rest.includes('?') ? '?' + rest.split('?')[1] : '';
+    if (videoId) {
+      return `https://www.youtube.com/watch?v=${videoId}${search ? '&' + search.replace(/^\?/, '') : ''}`;
+    }
+  }
+  return url;
+}
+
 export function extractInlineHashtags(title: string, bodyHtml: string): string[] {
   const plainBody = stripHtml(bodyHtml);
   const combined = `${title}\n${plainBody}`;
