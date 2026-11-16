@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -6,8 +6,10 @@ import {
   ExternalLink,
   Folder,
   FolderOpen,
+  LayoutGrid,
   ListVideo,
   Play,
+  Rows3,
 } from 'lucide-react';
 
 export interface BroadcastChannel {
@@ -392,13 +394,42 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   }, [activeEvent]);
 
   const [autoplayEnabled, setAutoplayEnabled] = useState(false);
+  const [eventViewMode, setEventViewMode] = useState<'list' | 'tiles'>('list');
+  const [showPlaylistDrawer, setShowPlaylistDrawer] = useState(false);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleToggleFullscreen = () => {
+    const el = playerContainerRef.current;
+    if (!el) return;
+    if (!document.fullscreenElement) {
+      el.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
 
   const isTwitch = !activeEvent && activeStation.kind === 'twitch';
   const ytAutoplay = autoplayEnabled ? '1' : '0';
 
-  // Unified autoplay rule: all YouTube playlists/videos (VOD_ch4 + Play Event) & viewer channels follow autoplayEnabled (default: false)
+  // Normalize YouTube Shorts URLs so they play as normal videos and don't loop endlessly
+  const getCleanYoutubeMediaId = (item: PlayEventItem | null): { mediaId: string; isShorts: boolean } => {
+    if (!item) return { mediaId: '', isShorts: false };
+    if (item.url && item.url.includes('/shorts/')) {
+      const parts = item.url.split('/shorts/');
+      const sub = parts[1] ? parts[1].split('?')[0].split('/')[0] : item.mediaId;
+      return { mediaId: sub, isShorts: true };
+    }
+    return { mediaId: item.mediaId, isShorts: item.kind === 'youtube-video' && item.url.includes('shorts') };
+  };
+
+  const cleanYt = getCleanYoutubeMediaId(activeEvent);
+
   const playerSrc = activeEvent
-    ? activeEvent.kind === 'youtube-video'
+    ? cleanYt.isShorts
+      ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
+          cleanYt.mediaId
+        )}?autoplay=${ytAutoplay}&loop=0&rel=0`
+      : activeEvent.kind === 'youtube-video'
       ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
           activeEvent.mediaId
         )}?autoplay=${ytAutoplay}&rel=0`
@@ -525,6 +556,21 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               <Play className="h-3.5 w-3.5" />
               <span>Autoplay: {autoplayEnabled ? 'On' : 'Off'}</span>
             </button>
+            <button
+              type="button"
+              onClick={() => setShowPlaylistDrawer(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <ListVideo className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+              <span>Playlist</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleFullscreen}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <span>Fullscreen</span>
+            </button>
             <a
               href={externalUrl}
               target="_blank"
@@ -537,7 +583,19 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950 aspect-video dark:border-slate-800">
+        <div
+          ref={playerContainerRef}
+          className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950 aspect-video dark:border-slate-800"
+        >
+          {isTwitch && (
+            <div
+              className="absolute inset-0 z-10 pointer-events-none"
+              style={{
+                background: 'rgba(5, 13, 23, 0.45)',
+                backdropFilter: 'contrast(1.15) brightness(0.9)',
+              }}
+            />
+          )}
           <iframe
             key={playerSrc}
             src={playerSrc}
@@ -548,9 +606,60 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             }
             allowFullScreen
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-            className="h-full w-full border-0"
+            className="h-full w-full border-0 relative z-0"
           />
         </div>
+
+        {/* Playlist Drawer Modal */}
+        {showPlaylistDrawer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+            <div className="aero-glass w-full max-w-lg rounded-3xl p-6 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <ListVideo className="h-5 w-5 text-sky-600" />
+                  <span>Playlist Directory</span>
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowPlaylistDrawer(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Select any playlist event below to play it instantly:
+              </p>
+              <div className="max-h-[360px] overflow-y-auto divide-y divide-slate-200/70 dark:divide-slate-800/80 pr-1">
+                {PLAY_EVENTS.map((ev) => (
+                  <button
+                    key={ev.id}
+                    type="button"
+                    onClick={() => {
+                      onSelectEvent(ev);
+                      setShowPlaylistDrawer(false);
+                    }}
+                    className={`flex w-full items-center justify-between gap-3 px-3.5 py-3 text-left transition-colors cursor-pointer rounded-xl my-1 ${
+                      activeEvent?.id === ev.id
+                        ? 'aero-button-primary text-white'
+                        : 'hover:bg-slate-100/80 dark:hover:bg-slate-800/80 text-slate-800 dark:text-slate-200'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-display text-sm font-semibold">
+                        {ev.title}
+                      </div>
+                      <div className="font-mono text-[11px] opacity-80">
+                        {ev.era} · {ev.dateLabel}
+                      </div>
+                    </div>
+                    <Play className="h-3.5 w-3.5 shrink-0" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Mobile Compact Remote Control [1] [2] [3] [4] directly under the player */}
         <div
@@ -584,9 +693,45 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       {/* Play Event Folder Directory inside a Scrollable Container */}
       <section className="aero-glass rounded-3xl p-5 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
-            Play Event
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              Play Event
+            </h2>
+            <div
+              role="group"
+              aria-label="Play Event view mode"
+              className="inline-flex items-center gap-1 rounded-xl border border-slate-200/90 bg-white/75 p-1 dark:border-slate-700 dark:bg-slate-900/70"
+            >
+              <button
+                type="button"
+                onClick={() => setEventViewMode('list')}
+                aria-pressed={eventViewMode === 'list'}
+                title="List view"
+                aria-label="List view"
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                  eventViewMode === 'list'
+                    ? 'bg-sky-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+                }`}
+              >
+                <Rows3 className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setEventViewMode('tiles')}
+                aria-pressed={eventViewMode === 'tiles'}
+                title="Tiles horizontal view"
+                aria-label="Tiles view"
+                className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                  eventViewMode === 'tiles'
+                    ? 'bg-sky-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
+                }`}
+              >
+                <LayoutGrid className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+          </div>
 
           <button
             type="button"

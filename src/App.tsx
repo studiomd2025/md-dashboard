@@ -8,6 +8,8 @@ import {
   ArrowLeft,
   Home,
   LayoutGrid,
+  PanelRightClose,
+  PanelRightOpen,
   Rows3,
   Search,
   Settings as SettingsIcon,
@@ -83,7 +85,23 @@ export default function App() {
   const [subNonce, setSubNonce] = useState(0);
   const isAdmin = useMemo(() => isOwnerUser(user), [user]);
 
-  const [activeView, setActiveView] = useState<ActiveView>('timeline');
+  const [activeView, setActiveView] = useState<ActiveView>(() => {
+    if (typeof window === 'undefined') return 'timeline';
+    const hash = window.location.hash;
+    if (hash === '#/live') return 'live';
+    if (hash === '#/settings') return 'settings';
+    if (hash === '#/install') return 'install';
+    if (hash === '#/timeline') return 'timeline';
+    const saved = window.localStorage.getItem('md_active_view');
+    if (saved === 'live' || saved === 'settings' || saved === 'install' || saved === 'timeline') {
+      return saved as ActiveView;
+    }
+    return 'timeline';
+  });
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('md_sidebar_collapsed') === 'true';
+  });
   const [selectedPostId, setSelectedPostId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return new URLSearchParams(window.location.search).get('post');
@@ -175,6 +193,24 @@ export default function App() {
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onHashChange = () => {
+      const hash = window.location.hash;
+      if (hash === '#/live') setActiveView('live');
+      else if (hash === '#/settings') setActiveView('settings');
+      else if (hash === '#/install') setActiveView('install');
+      else if (hash === '#/timeline') setActiveView('timeline');
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('md_sidebar_collapsed', String(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (nextUser) => {
@@ -625,6 +661,10 @@ export default function App() {
       );
     }
     setActiveView(view);
+    if (typeof window !== 'undefined') {
+      window.location.hash = view === 'timeline' ? '#/timeline' : `#/${view}`;
+      window.localStorage.setItem('md_active_view', view);
+    }
   };
 
   const handleSelectTag = (tag: string | null) => {
@@ -687,6 +727,20 @@ export default function App() {
         onSignOut={handleOwnerSignOut}
       />
 
+      <button
+        type="button"
+        onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+        title={isSidebarCollapsed ? 'Expand sidebar' : 'Minimize sidebar'}
+        aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Minimize sidebar'}
+        className="fixed right-4 top-20 z-40 inline-flex h-9 w-9 items-center justify-center rounded-2xl border border-slate-200/90 bg-white/90 text-slate-700 shadow-lg backdrop-blur-xl hover:bg-white dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-200 cursor-pointer"
+      >
+        {isSidebarCollapsed ? (
+          <PanelRightOpen className="h-4 w-4" />
+        ) : (
+          <PanelRightClose className="h-4 w-4" />
+        )}
+      </button>
+
       {activeView !== 'live' && (
         <ScheduledBanner
           banners={banners}
@@ -702,7 +756,7 @@ export default function App() {
 
       <main className="mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
-          <div className="lg:col-span-8 space-y-5">
+          <div className={isSidebarCollapsed ? 'lg:col-span-12 space-y-5' : 'lg:col-span-8 space-y-5'}>
             {activeView === 'timeline' && selectedPostId ? (
               <div className="space-y-4">
                 <section className="aero-glass flex items-center justify-between gap-3 rounded-3xl px-5 py-3.5">
@@ -1042,31 +1096,44 @@ export default function App() {
             )}
           </div>
 
-          <div className="lg:col-span-4">
-            <Sidebar
-              activeView={activeView}
-              activeStation={activeStation}
-              isEventActive={Boolean(activeEvent)}
-              onSelectStation={(station) => {
-                setActiveEvent(null);
-                setActiveStation(station);
-              }}
-              nowMs={nowMs}
-              design={design}
-              onUpdateDesign={handleUpdateDesign}
-              onOpenDesignSettings={() => {
-                setSettingsTab('design');
-                setActiveView('settings');
-              }}
-              countdowns={countdowns}
-              tagCounts={tagCounts}
-              activeTag={activeTag}
-              onSelectTag={handleSelectTag}
-              monthCounts={monthCounts}
-              activeMonth={activeMonth}
-              onSelectMonth={handleSelectMonth}
-            />
-          </div>
+          {!isSidebarCollapsed ? (
+            <div className="lg:col-span-4">
+              <Sidebar
+                activeView={activeView}
+                activeStation={activeStation}
+                isEventActive={Boolean(activeEvent)}
+                onSelectStation={(station) => {
+                  setActiveEvent(null);
+                  setActiveStation(station);
+                }}
+                nowMs={nowMs}
+                design={design}
+                onUpdateDesign={handleUpdateDesign}
+                onOpenDesignSettings={() => {
+                  setSettingsTab('design');
+                  setActiveView('settings');
+                }}
+                countdowns={countdowns}
+                tagCounts={tagCounts}
+                activeTag={activeTag}
+                onSelectTag={handleSelectTag}
+                monthCounts={monthCounts}
+                activeMonth={activeMonth}
+                onSelectMonth={handleSelectMonth}
+                onToggleCollapse={() => setIsSidebarCollapsed(true)}
+              />
+            </div>
+          ) : (
+            <div className="flex justify-end lg:col-span-12">
+              <button
+                type="button"
+                onClick={() => setIsSidebarCollapsed(false)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/80 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 cursor-pointer shadow-sm"
+              >
+                <span>Expand Sidebar</span>
+              </button>
+            </div>
+          )}
         </div>
       </main>
 

@@ -41,6 +41,7 @@ interface SidebarProps {
   monthCounts: { month: string; count: number }[];
   activeMonth: string | null;
   onSelectMonth: (month: string | null) => void;
+  onToggleCollapse?: () => void;
 }
 
 const MD_LINKS = [
@@ -150,6 +151,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   monthCounts,
   activeMonth,
   onSelectMonth,
+  onToggleCollapse,
 }) => {
   const customThemes = design.customThemes || [];
 
@@ -167,6 +169,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside className="space-y-5">
+      {onToggleCollapse && (
+        <div className="flex justify-end px-1">
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/80 bg-white/80 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 cursor-pointer"
+          >
+            <span>Minimize Sidebar</span>
+          </button>
+        </div>
+      )}
       {/* Desktop Remote Control — sits above Theme on LIVE view */}
       {activeView === 'live' && (
         <section className="aero-glass hidden rounded-3xl p-5 lg:block">
@@ -280,16 +293,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   (cd.milestoneAttachments?.length ?? 0) > 0);
 
               return (
-                <div key={cd.id} className="py-3.5 first:pt-0 last:pb-0">
+                <div key={cd.id} className="py-4 first:pt-0 last:pb-0 text-center">
                   <div className="text-sm font-semibold text-slate-900 dark:text-white">
                     {cd.title}
                   </div>
-                  <div className="mt-1 font-display text-2xl sm:text-[28px] leading-tight font-bold tracking-tight text-sky-800 tabular-nums dark:text-sky-200">
+                  <div className="mt-1.5 font-display text-3xl sm:text-4xl leading-tight font-extrabold tracking-tight text-sky-800 tabular-nums dark:text-sky-200">
                     {formatCountdownDisplay(cd, nowMs)}
                   </div>
 
                   {hasMilestoneContent ? (
-                    <div className="mt-2.5 space-y-2 border-t border-slate-200/70 pt-2.5 dark:border-slate-700/60">
+                    <div className="mt-2.5 space-y-2 border-t border-slate-200/75 pt-2.5 dark:border-slate-700/60 text-center">
                       {safeMilestoneHtml && (
                         <div
                           className={`diary-prose text-xs text-slate-700 dark:text-slate-200 ${getFontClass(
@@ -300,7 +313,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       )}
                       {cd.milestoneAttachments &&
                         cd.milestoneAttachments.length > 0 && (
-                          <div className="space-y-2">
+                          <div className="space-y-2 flex flex-col items-center">
                             {cd.milestoneAttachments.map((att) => (
                               <CountdownMediaPreview
                                 key={att.id}
@@ -322,7 +335,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       )}
 
                       {cd.attachments && cd.attachments.length > 0 && (
-                        <div className="mt-2 space-y-2">
+                        <div className="mt-2 space-y-2 flex flex-col items-center">
                           {cd.attachments.map((att) => (
                             <CountdownMediaPreview
                               key={att.id}
@@ -335,13 +348,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   )}
 
                   {cd.tag && (
-                    <button
-                      type="button"
-                      onClick={() => onSelectTag(cd.tag || null)}
-                      className="mt-2 inline-block text-xs font-medium text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
-                    >
-                      #{cd.tag}
-                    </button>
+                    <div className="mt-2.5 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => onSelectTag(cd.tag || null)}
+                        className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+                      >
+                        #{cd.tag}
+                      </button>
+                    </div>
                   )}
                 </div>
               );
