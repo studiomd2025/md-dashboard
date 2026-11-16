@@ -127,6 +127,13 @@ export default function App() {
   });
   const [activeStation, setActiveStation] = useState<BroadcastChannel>(STATIONS[0]);
   const [activeEvent, setActiveEvent] = useState<PlayEventItem | null>(null);
+  const [floatingPlayerEnabled, setFloatingPlayerEnabled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('md_floating_player') === 'true';
+  });
+  const [hasVisitedLive, setHasVisitedLive] = useState<boolean>(
+    () => activeView === 'live'
+  );
   const [settingsTab, setSettingsTab] = useState<BackendTab>('compose');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -240,6 +247,17 @@ export default function App() {
     if (typeof window === 'undefined') return;
     window.localStorage.setItem('md_sidebar_collapsed', String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (activeView === 'live') {
+      setHasVisitedLive(true);
+    }
+  }, [activeView]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('md_floating_player', String(floatingPlayerEnabled));
+  }, [floatingPlayerEnabled]);
 
   useEffect(() => {
     if (!isMobileSidebarOpen) return;
@@ -1222,18 +1240,6 @@ export default function App() {
               </>
             )}
 
-            {activeView === 'live' && (
-              <LiveTvView
-                activeStation={activeStation}
-                activeEvent={activeEvent}
-                onSelectStation={(station) => {
-                  setActiveEvent(null);
-                  setActiveStation(station);
-                }}
-                onSelectEvent={(ev) => setActiveEvent(ev)}
-              />
-            )}
-
             {activeView === 'settings' && (
               <BackendConsoleView
                 activeTab={settingsTab}
@@ -1290,6 +1296,25 @@ export default function App() {
                   handleNavigateView('settings');
                 }}
                 onOpenLightbox={(url, title) => setLightbox({ url, title })}
+              />
+            )}
+
+            {(activeView === 'live' || floatingPlayerEnabled) && (
+              <LiveTvView
+                activeStation={activeStation}
+                activeEvent={activeEvent}
+                onSelectStation={(station) => {
+                  setActiveEvent(null);
+                  setActiveStation(station);
+                }}
+                onSelectEvent={(ev) => setActiveEvent(ev)}
+                isActiveTab={activeView === 'live'}
+                floatingEnabled={floatingPlayerEnabled}
+                onToggleFloating={() =>
+                  setFloatingPlayerEnabled((prev) => !prev)
+                }
+                onReturnToLiveTab={() => handleNavigateView('live')}
+                isSidebarCollapsed={isSidebarCollapsed}
               />
             )}
           </div>

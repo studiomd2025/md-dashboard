@@ -392,6 +392,7 @@ async function startServer() {
         const ext =
           path.extname(fileNameParam).replace(/[^a-zA-Z0-9.]/g, '') || '.bin';
         const safeName = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}${ext}`;
+        fs.mkdirSync(UPLOADS_DIR, { recursive: true });
         const targetPath = path.join(UPLOADS_DIR, safeName);
         fs.writeFileSync(targetPath, rawBuf);
 
@@ -1024,6 +1025,105 @@ async function startServer() {
       title: playlistTitle,
       items: [],
     });
+  });
+
+  const twitchStatusCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      data: {
+        channel: string;
+        isLive: boolean;
+        bannerImageUrl: string | null;
+        offlineImageUrl: string | null;
+        streamTitle: string | null;
+        viewersCount: number | null;
+      };
+    }
+  >();
+
+  app.get('/api/twitch-status', async (req, res) => {
+    const rawChannel =
+      typeof req.query.channel === 'string' ? req.query.channel.trim() : '';
+    if (!/^[a-zA-Z0-9_]{2,30}$/.test(rawChannel)) {
+      res.status(400).json({ error: 'Invalid Twitch channel.' });
+      return;
+    }
+
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    const login = rawChannel.toLowerCase();
+    const force = req.query.force === '1';
+    const cached = twitchStatusCache.get(login);
+    if (!force && cached && cached.expiresAt > Date.now()) {
+      res.json(cached.data);
+      return;
+    }
+
+    try {
+      const gqlRes = await fetch('https://gql.twitch.tv/gql', {
+        method: 'POST',
+        headers: {
+          'Client-ID': 'kimne78kx3ncx6brgo4mv6wki5h1ko',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: `query { user(login: "${login}") { displayName bannerImageURL offlineImageURL stream { id title viewersCount } } }`,
+        }),
+      });
+
+      if (!gqlRes.ok) {
+        throw new Error(`Twitch GQL HTTP ${gqlRes.status}`);
+      }
+
+      const json = (await gqlRes.json()) as {
+        data?: {
+          user?: {
+            displayName?: string;
+            bannerImageURL?: string | null;
+            offlineImageURL?: string | null;
+            stream?: {
+              id?: string;
+              title?: string;
+              viewersCount?: number;
+            } | null;
+          } | null;
+        };
+      };
+
+      const user = json.data?.user;
+      const isLive = Boolean(user?.stream?.id);
+      const payload = {
+        channel: user?.displayName || rawChannel,
+        isLive,
+        bannerImageUrl: user?.bannerImageURL || null,
+        offlineImageUrl: user?.offlineImageURL || null,
+        streamTitle: user?.stream?.title || null,
+        viewersCount:
+          typeof user?.stream?.viewersCount === 'number'
+            ? user.stream.viewersCount
+            : null,
+      };
+
+      twitchStatusCache.set(login, {
+        expiresAt: Date.now() + 15_000,
+        data: payload,
+      });
+      res.json(payload);
+    } catch (err) {
+      console.error('Error checking Twitch status:', err);
+      if (cached) {
+        res.json(cached.data);
+        return;
+      }
+      res.json({
+        channel: rawChannel,
+        isLive: true,
+        bannerImageUrl: null,
+        offlineImageUrl: null,
+        streamTitle: null,
+        viewersCount: null,
+      });
+    }
   });
 
   if (process.env.NODE_ENV !== 'production') {

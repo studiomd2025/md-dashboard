@@ -10,6 +10,8 @@ import {
   LayoutGrid,
   ListVideo,
   Loader2,
+  Maximize2,
+  PictureInPicture2,
   Play,
   RefreshCw,
   RotateCcw,
@@ -19,6 +21,19 @@ import {
   X,
 } from 'lucide-react';
 import { normalizeShortsToWatchUrl } from '../lib/mediaUtils';
+
+interface TwitchStatusInfo {
+  isLive: boolean;
+  bannerImageUrl: string | null;
+  offlineImageUrl: string | null;
+  streamTitle: string | null;
+  viewersCount: number | null;
+}
+
+const twitchStatusCache = new Map<
+  string,
+  { fetchedAt: number; data: TwitchStatusInfo }
+>();
 
 export interface PlaylistTrackItem {
   videoId: string;
@@ -370,6 +385,11 @@ interface LiveTvViewProps {
   activeEvent: PlayEventItem | null;
   onSelectStation: (station: BroadcastChannel) => void;
   onSelectEvent: (event: PlayEventItem) => void;
+  isActiveTab?: boolean;
+  floatingEnabled?: boolean;
+  onToggleFloating?: () => void;
+  onReturnToLiveTab?: () => void;
+  isSidebarCollapsed?: boolean;
 }
 
 export const LiveTvView: React.FC<LiveTvViewProps> = ({
@@ -377,6 +397,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   activeEvent,
   onSelectStation,
   onSelectEvent,
+  isActiveTab = true,
+  floatingEnabled = false,
+  onToggleFloating,
+  onReturnToLiveTab,
+  isSidebarCollapsed = false,
 }) => {
   const parentHost = useMemo(() => {
     if (typeof window === 'undefined') return 'localhost';
@@ -396,7 +421,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       : null
   );
 
-  // Keep folder browser synchronized when stepping through events or starting from 2018
   useEffect(() => {
     if (!activeEvent) return;
     if (activeEvent.era === 'Year End Collection') {
@@ -411,7 +435,132 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const [autoplayEnabled, setAutoplayEnabled] = useState(false);
   const [eventViewMode, setEventViewMode] = useState<'list' | 'tiles'>('list');
   const [showPlaylistDrawer, setShowPlaylistDrawer] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [floatPos, setFloatPos] = useState<{ x: number; y: number } | null>(null);
+  const [floatSize, setFloatSize] = useState<{ width: number; height: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [resizeCorner, setResizeCorner] = useState<'nw' | 'ne' | 'sw' | 'se' | null>(null);
+  const dragStartRef = useRef<{ startX: number; startY: number; posX: number; posY: number }>({
+    startX: 0,
+    startY: 0,
+    posX: 0,
+    posY: 0,
+  });
+  const resizeStartRef = useRef<{
+    startX: number;
+    startY: number;
+    startW: number;
+    startH: number;
+    startXPos: number;
+    startYPos: number;
+  }>({
+    startX: 0,
+    startY: 0,
+    startW: 380,
+    startH: 236,
+    startXPos: 0,
+    startYPos: 0,
+  });
   const playerContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!floatingEnabled) return;
+    setIsDragging(true);
+    const rect = (e.currentTarget as HTMLElement).closest('.fixed')?.getBoundingClientRect();
+    const posX = rect ? rect.left : window.innerWidth - 380;
+    const posY = rect ? rect.top : window.innerHeight - 260;
+    dragStartRef.current = { startX: e.clientX, startY: e.clientY, posX, posY };
+  };
+
+  const handleResizeStart = (corner: 'nw' | 'ne' | 'sw' | 'se', e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setResizeCorner(corner);
+    const rect = (e.currentTarget as HTMLElement).closest('.fixed')?.getBoundingClientRect();
+    const startW = rect ? rect.width : 380;
+    const startH = rect ? rect.height : 236;
+    const startXPos = rect ? rect.left : window.innerWidth - 400;
+    const startYPos = rect ? rect.top : window.innerHeight - 260;
+    resizeStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startW,
+      startH,
+      startXPos,
+      startYPos,
+    };
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+    const onMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - dragStartRef.current.startX;
+      const dy = e.clientY - dragStartRef.current.startY;
+      setFloatPos({
+        x: Math.max(10, Math.min(window.innerWidth - 200, dragStartRef.current.posX + dx)),
+        y: Math.max(10, Math.min(window.innerHeight - 120, dragStartRef.current.posY + dy)),
+      });
+    };
+    const onMouseUp = () => setIsDragging(false);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [isDragging]);
+
+  useEffect(() => {
+    if (!resizeCorner) return;
+    const onMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - resizeStartRef.current.startX;
+      let newW = resizeStartRef.current.startW;
+      let newX = resizeStartRef.current.startXPos;
+      let newY = resizeStartRef.current.startYPos;
+
+      if (resizeCorner === 'se' || resizeCorner === 'ne') {
+        newW = Math.max(260, Math.min(window.innerWidth - 40, resizeStartRef.current.startW + dx));
+      } else {
+        newW = Math.max(260, Math.min(window.innerWidth - 40, resizeStartRef.current.startW - dx));
+        newX = resizeStartRef.current.startXPos + (resizeStartRef.current.startW - newW);
+      }
+
+      // Strictly preserve 16:9 ratio
+      const newH = Math.round(newW * (9 / 16));
+
+      if (resizeCorner === 'nw' || resizeCorner === 'ne') {
+        newY = resizeStartRef.current.startYPos + (resizeStartRef.current.startH - newH);
+      }
+
+      setFloatSize({ width: newW, height: newH });
+      setFloatPos({ x: newX, y: newY });
+    };
+
+    const onMouseUp = () => setResizeCorner(null);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [resizeCorner]);
+
+  const handlePopOutPiP = async () => {
+    if (typeof window !== 'undefined' && 'documentPictureInPicture' in (window as any)) {
+      try {
+        const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
+          width: 420,
+          height: 240,
+        });
+        const container = playerContainerRef.current;
+        if (container) {
+          pipWindow.document.body.append(container);
+        }
+      } catch (err) {
+        console.warn('Document PiP error:', err);
+      }
+    }
+  };
 
   const [selectedTrack, setSelectedTrack] = useState<{
     videoId: string;
@@ -427,7 +576,14 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const [activePlaylistTitle, setActivePlaylistTitle] = useState('Playlist');
   const [playlistSyncNonce, setPlaylistSyncNonce] = useState(0);
 
-  // Reset selected track and close drawer when user changes active event or broadcast station
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(document.fullscreenElement === playerContainerRef.current);
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
   useEffect(() => {
     setSelectedTrack(null);
     if (!activeEvent && activeStation.kind === 'twitch') {
@@ -435,7 +591,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     }
   }, [activeStation, activeEvent]);
 
-  // Close drawer on Escape key and lock background page scroll while open
   useEffect(() => {
     if (!showPlaylistDrawer) return;
     const prevOverflow = document.body.style.overflow;
@@ -465,7 +620,105 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const isTwitch = !activeEvent && activeStation.kind === 'twitch';
   const ytAutoplay = autoplayEnabled ? '1' : '0';
 
-  // Normalize YouTube Shorts URLs so they play as normal videos and don't loop endlessly
+  const [twitchState, setTwitchState] = useState<{
+    channelKey: string;
+    loading: boolean;
+    info: TwitchStatusInfo | null;
+  }>(() => {
+    const key = activeStation.callsign.toLowerCase();
+    const cached = twitchStatusCache.get(key);
+    return {
+      channelKey: key,
+      loading: !cached,
+      info: cached ? cached.data : null,
+    };
+  });
+
+  useEffect(() => {
+    if (!isTwitch) return;
+    const channel = activeStation.callsign;
+    const key = channel.toLowerCase();
+    let cancelled = false;
+
+    const loadStatus = async (forceRefresh = false) => {
+      const cached = twitchStatusCache.get(key);
+      const isFresh = cached && Date.now() - cached.fetchedAt < 20_000;
+      if (!forceRefresh && isFresh) {
+        if (!cancelled) {
+          setTwitchState({ channelKey: key, loading: false, info: cached.data });
+        }
+        return;
+      }
+
+      if (!cached && !cancelled) {
+        setTwitchState({ channelKey: key, loading: true, info: null });
+      } else if (cached && !cancelled) {
+        setTwitchState({ channelKey: key, loading: false, info: cached.data });
+      }
+
+      try {
+        const res = await fetch(
+          `/api/twitch-status?channel=${encodeURIComponent(channel)}${
+            forceRefresh ? '&force=1' : ''
+          }`,
+          { cache: 'no-store' }
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as TwitchStatusInfo;
+        twitchStatusCache.set(key, { fetchedAt: Date.now(), data });
+        if (!cancelled) {
+          setTwitchState({ channelKey: key, loading: false, info: data });
+        }
+      } catch {
+        if (!cancelled) {
+          setTwitchState((prev) =>
+            prev.channelKey === key && prev.info
+              ? { ...prev, loading: false }
+              : {
+                  channelKey: key,
+                  loading: false,
+                  info: {
+                    isLive: true,
+                    bannerImageUrl: null,
+                    offlineImageUrl: null,
+                    streamTitle: null,
+                    viewersCount: null,
+                  },
+                }
+          );
+        }
+      }
+    };
+
+    loadStatus(false);
+    const pollId = window.setInterval(() => loadStatus(true), 30_000);
+    const onVisChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadStatus(true);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisChange);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollId);
+      document.removeEventListener('visibilitychange', onVisChange);
+    };
+  }, [isTwitch, activeStation.callsign]);
+
+  const activeTwitchKey = activeStation.callsign.toLowerCase();
+  const currentTwitchInfo =
+    twitchState.channelKey === activeTwitchKey ? twitchState.info : null;
+  const isCheckingTwitch =
+    isTwitch && !selectedTrack && (twitchState.channelKey !== activeTwitchKey || twitchState.loading);
+  const showTwitchOfflineBanner =
+    isTwitch &&
+    !selectedTrack &&
+    !isCheckingTwitch &&
+    currentTwitchInfo !== null &&
+    !currentTwitchInfo.isLive &&
+    Boolean(currentTwitchInfo.bannerImageUrl);
+
   const getCleanYoutubeMediaId = (item: PlayEventItem | null): { mediaId: string; isShorts: boolean } => {
     if (!item) return { mediaId: '', isShorts: false };
     if (item.url && item.url.includes('/shorts/')) {
@@ -495,7 +748,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     return activeStation.label;
   }, [activeEvent, activeStation]);
 
-  // Fetch fresh list of individual videos whenever the Playlist drawer opens or Sync is clicked
   useEffect(() => {
     if (!showPlaylistDrawer) return;
     if (!activePlaylistId) {
@@ -592,7 +844,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     ? activeEvent.url
     : activeStation.url;
   const externalUrl = normalizeShortsToWatchUrl(rawExternalUrl);
-  const externalLabel = isTwitch && !selectedTrack && !activeEvent ? 'Open on Twitch' : 'Open on YouTube';
+  const externalLabel = isTwitch && !selectedTrack && !activeEvent ? 'twitch' : 'youtube';
 
   const activeEventIndex = activeEvent
     ? PLAY_EVENTS.findIndex((e) => e.id === activeEvent.id)
@@ -652,131 +904,281 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     }
   };
 
-  return (
-    <div className="space-y-5">
-      {/* Main Broadcast & Event Player */}
-      <section className="aero-glass overflow-hidden rounded-3xl p-3 sm:p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-slate-600 dark:text-slate-300">
-          <div className="flex items-center gap-2 min-w-0">
-            {selectedTrack ? (
-              <span className="font-mono font-semibold tabular-nums truncate max-w-[240px] sm:max-w-[420px] text-sky-800 dark:text-sky-200">
-                #{selectedTrack.index + 1}/{selectedTrack.total}: {selectedTrack.title}
-              </span>
-            ) : (
-              <span className="font-mono font-semibold tabular-nums truncate max-w-[240px] sm:max-w-[420px]">
-                {activeEvent
-                  ? `/${
-                      activeEvent.era === 'Year End Collection'
-                        ? activeEvent.title
-                        : `${activeEvent.era}/${activeEvent.year}/${activeEvent.title}`
-                    } (${activeEvent.dateLabel})`
-                  : `CH 0${activeStation.number} · ${activeStation.callsign}`}
-              </span>
-            )}
-            {selectedTrack && (
+  // If we are NOT on the live tab, but floating player is enabled, render just the floating player overlay!
+  if (!isActiveTab) {
+    if (!floatingEnabled) return null;
+  }
+
+  const renderPlayerInner = (isFloatingMini: boolean) => (
+    <section
+      style={
+        isFloatingMini
+          ? {
+              ...(floatPos
+                ? { left: `${floatPos.x}px`, top: `${floatPos.y}px`, bottom: 'auto', right: 'auto' }
+                : {}),
+              ...(floatSize
+                ? { width: `${floatSize.width}px`, height: `${floatSize.height}px` }
+                : {}),
+              overflow: 'hidden',
+              minWidth: '260px',
+              minHeight: '160px',
+              maxWidth: '90vw',
+              maxHeight: '90vh',
+            }
+          : undefined
+      }
+      className={
+        isFloatingMini
+          ? `fixed z-40 w-[320px] sm:w-[380px] h-[210px] sm:h-[236px] rounded-2xl border border-slate-700/80 bg-slate-950/95 text-white shadow-2xl backdrop-blur-xl flex flex-col ${
+              !floatPos ? 'bottom-5 right-5' : ''
+            }`
+          : 'aero-glass overflow-hidden rounded-3xl p-3 sm:p-4'
+      }
+    >
+      {/* 4 Corner Resize Handles preserving 16:9 (invisible) */}
+      {isFloatingMini && (
+        <>
+          <div onMouseDown={(e) => handleResizeStart('nw', e)} className="absolute -top-2 -left-2 w-5 h-5 cursor-nwse-resize z-50 bg-transparent" />
+          <div onMouseDown={(e) => handleResizeStart('ne', e)} className="absolute -top-2 -right-2 w-5 h-5 cursor-nesw-resize z-50 bg-transparent" />
+          <div onMouseDown={(e) => handleResizeStart('sw', e)} className="absolute -bottom-2 -left-2 w-5 h-5 cursor-nesw-resize z-50 bg-transparent" />
+          <div onMouseDown={(e) => handleResizeStart('se', e)} className="absolute -bottom-2 -right-2 w-5 h-5 cursor-nwse-resize z-50 bg-transparent" />
+        </>
+      )}
+
+      {/* Compact Floating Mini-Player Bar (Draggable) */}
+      <div
+        onMouseDown={handleMouseDown}
+        className={
+          isFloatingMini
+            ? 'flex items-center justify-between gap-2 px-3 py-2 text-[11px] bg-slate-900/95 border-b border-white/10 cursor-move select-none shrink-0'
+            : 'hidden'
+        }
+      >
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span
+            className={`h-2 w-2 rounded-full shrink-0 ${
+              showTwitchOfflineBanner ? 'bg-slate-400' : 'bg-rose-500 animate-pulse'
+            }`}
+            aria-hidden="true"
+          />
+          <span className="font-mono font-semibold truncate text-slate-100">
+            {selectedTrack
+              ? selectedTrack.title
+              : activeEvent
+              ? activeEvent.title
+              : `CH 0${activeStation.number} · ${activeStation.callsign}`}
+          </span>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {'documentPictureInPicture' in (typeof window !== 'undefined' ? window : {}) && (
+            <button
+              type="button"
+              onClick={handlePopOutPiP}
+              title="Pop out into floating window outside browser tab"
+              aria-label="Pop out floating window"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {onReturnToLiveTab && (
+            <button
+              type="button"
+              onClick={onReturnToLiveTab}
+              title="Return to Live tab"
+              aria-label="Return to Live tab"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+          {onToggleFloating && (
+            <button
+              type="button"
+              onClick={onToggleFloating}
+              title="Close floating player"
+              aria-label="Close floating player"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Full Player Toolbar (shown on Live tab) */}
+      <div
+        className={
+          isFloatingMini
+            ? 'hidden'
+            : 'mb-3 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-slate-600 dark:text-slate-300'
+        }
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          {selectedTrack ? (
+            <span className="font-mono font-semibold tabular-nums truncate max-w-[240px] sm:max-w-[420px] text-sky-800 dark:text-sky-200">
+              #{selectedTrack.index + 1}/{selectedTrack.total}: {selectedTrack.title}
+            </span>
+          ) : (
+            <span className="font-mono font-semibold tabular-nums truncate max-w-[240px] sm:max-w-[420px]">
+              {activeEvent
+                ? `/${
+                    activeEvent.era === 'Year End Collection'
+                      ? activeEvent.title
+                      : `${activeEvent.era}/${activeEvent.year}/${activeEvent.title}`
+                  } (${activeEvent.dateLabel})`
+                : `CH 0${activeStation.number} · ${activeStation.callsign}`}
+            </span>
+          )}
+          {selectedTrack && (
+            <button
+              type="button"
+              onClick={() => setSelectedTrack(null)}
+              title="Return to continuous playlist playback"
+              className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-300 cursor-pointer shrink-0"
+            >
+              <RotateCcw className="h-3 w-3" />
+              <span>Full Playlist</span>
+            </button>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {selectedTrack && playlistTracks.length > 0 ? (
+            <div className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => setSelectedTrack(null)}
-                title="Return to continuous playlist playback"
-                className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/60 dark:text-sky-300 cursor-pointer shrink-0"
+                onClick={() => handleStepTrack(-1)}
+                aria-label="Previous Video in Playlist"
+                title="Previous Video in Playlist"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
               >
-                <RotateCcw className="h-3 w-3" />
-                <span>Full Playlist</span>
+                <ChevronLeft className="h-4 w-4" />
               </button>
-            )}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {selectedTrack && playlistTracks.length > 0 ? (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => handleStepTrack(-1)}
-                  aria-label="Previous Video in Playlist"
-                  title="Previous Video in Playlist"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleStepTrack(1)}
-                  aria-label="Next Video in Playlist"
-                  title="Next Video in Playlist"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            ) : activeEvent && (
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => handleStepEvent(-1)}
-                  aria-label="Previous Event"
-                  title="Previous Event"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleStepEvent(1)}
-                  aria-label="Next Event"
-                  title="Next Event"
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            )}
+              <button
+                type="button"
+                onClick={() => handleStepTrack(1)}
+                aria-label="Next Video in Playlist"
+                title="Next Video in Playlist"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          ) : activeEvent && (
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => handleStepEvent(-1)}
+                aria-label="Previous Event"
+                title="Previous Event"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleStepEvent(1)}
+                aria-label="Next Event"
+                title="Next Event"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            role="switch"
+            aria-checked={autoplayEnabled}
+            onClick={() => setAutoplayEnabled((prev) => !prev)}
+            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              autoplayEnabled
+                ? 'aero-button-primary border-transparent text-white'
+                : 'border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
+            }`}
+          >
+            <Play className="h-3.5 w-3.5" />
+            <span>Autoplay: {autoplayEnabled ? 'On' : 'Off'}</span>
+          </button>
+          {onToggleFloating && (
             <button
               type="button"
               role="switch"
-              aria-checked={autoplayEnabled}
-              onClick={() => setAutoplayEnabled((prev) => !prev)}
+              aria-checked={floatingEnabled}
+              onClick={onToggleFloating}
+              title="Keep playing in a floating mini-player when switching tabs"
               className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                autoplayEnabled
+                floatingEnabled
                   ? 'aero-button-primary border-transparent text-white'
                   : 'border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
               }`}
             >
-              <Play className="h-3.5 w-3.5" />
-              <span>Autoplay: {autoplayEnabled ? 'On' : 'Off'}</span>
+              <PictureInPicture2 className="h-3.5 w-3.5" />
+              <span>Floating: {floatingEnabled ? 'On' : 'Off'}</span>
             </button>
-            {!isTwitch && Boolean(activePlaylistId) && (
-              <button
-                type="button"
-                onClick={() => setShowPlaylistDrawer(true)}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                <ListVideo className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
-                <span>Playlist</span>
-              </button>
-            )}
+          )}
+          {!isTwitch && Boolean(activePlaylistId) && (
             <button
               type="button"
-              onClick={handleToggleFullscreen}
+              onClick={() => setShowPlaylistDrawer(true)}
               className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
             >
-              <span>Fullscreen</span>
+              <ListVideo className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+              <span>Playlist</span>
             </button>
-            <a
-              href={externalUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0"
-            >
-              <span>{externalLabel}</span>
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          </div>
+          )}
+          <button
+            type="button"
+            onClick={handleToggleFullscreen}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+          >
+            <span>Fullscreen</span>
+          </button>
+          <a
+            href={externalUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 capitalize"
+          >
+            <span>{externalLabel}</span>
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
         </div>
+      </div>
 
-        <div
-          ref={playerContainerRef}
-          className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950 aspect-video dark:border-slate-800"
-        >
+      {/* Player Surface */}
+      <div
+        ref={playerContainerRef}
+        className={`relative overflow-hidden bg-slate-950 flex items-center justify-center ${
+          isFloatingMini
+            ? 'aspect-video w-full'
+            : isFullscreen
+            ? 'h-full w-full'
+            : 'w-full rounded-2xl border border-slate-200/80 dark:border-slate-800 aspect-video lg:aspect-auto lg:h-[calc((100vw_-_442px)_*_9_/_16)] xl:h-[calc((min(100vw,1380px)_-_538px)_*_9_/_16)]'
+        }`}
+      >
+        {showTwitchOfflineBanner && (
+          <div className="absolute top-3 right-3 z-20 pointer-events-none rounded bg-black/85 px-2.5 py-1 text-right font-mono text-[11px] font-extrabold uppercase tracking-widest text-amber-400 border border-amber-500/50 shadow-xl backdrop-blur-md">
+            <div className="text-white">{activeStation.callsign}</div>
+            <div className="text-[10px] text-rose-500 animate-pulse tracking-wider">OFFLINE</div>
+          </div>
+        )}
+        {isCheckingTwitch ? (
+          <div className="flex h-full w-full items-center justify-center bg-slate-950">
+            <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+          </div>
+        ) : showTwitchOfflineBanner && currentTwitchInfo?.bannerImageUrl ? (
+          <div className="h-full max-w-full aspect-video overflow-hidden">
+            <img
+              src={currentTwitchInfo.bannerImageUrl}
+              alt={`${activeStation.callsign} profile banner`}
+              referrerPolicy="no-referrer"
+              className="h-full w-full object-cover object-center"
+            />
+          </div>
+        ) : (
           <iframe
             key={playerSrc}
             src={playerSrc}
@@ -791,352 +1193,387 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
             className="h-full w-full border-0 relative z-0"
           />
-        </div>
+        )}
+      </div>
 
-        {/* Playlist Drawer Modal rendered into document.body via Portal so glass/overflow containers never clip and open/close slide smoothly */}
-        {typeof document !== 'undefined' &&
-          createPortal(
+      {/* Playlist Drawer Modal */}
+      {typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            aria-hidden={!showPlaylistDrawer}
+            className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 p-0 sm:p-4 backdrop-blur-md transition-[opacity,visibility] duration-300 ease-out ${
+              showPlaylistDrawer
+                ? 'opacity-100 visible pointer-events-auto'
+                : 'opacity-0 invisible pointer-events-none'
+            }`}
+            onClick={() => setShowPlaylistDrawer(false)}
+          >
             <div
-              aria-hidden={!showPlaylistDrawer}
-              className={`fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 p-0 sm:p-4 backdrop-blur-md transition-[opacity,visibility] duration-300 ease-out ${
+              role="dialog"
+              aria-modal="true"
+              aria-label="YouTube Playlist Videos"
+              className={`aero-glass relative flex flex-col w-full max-w-2xl h-[82dvh] max-h-[82dvh] sm:h-[85vh] sm:max-h-[85vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-white/60 dark:border-slate-700/80 overflow-hidden transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                 showPlaylistDrawer
-                  ? 'opacity-100 visible pointer-events-auto'
-                  : 'opacity-0 invisible pointer-events-none'
+                  ? 'translate-y-0 sm:scale-100 opacity-100'
+                  : 'translate-y-full sm:translate-y-6 sm:scale-95 opacity-0'
               }`}
-              onClick={() => setShowPlaylistDrawer(false)}
+              onClick={(e) => e.stopPropagation()}
             >
-              <div
-                role="dialog"
-                aria-modal="true"
-                aria-label="YouTube Playlist Videos"
-                className={`aero-glass relative flex flex-col w-full max-w-2xl h-[82dvh] max-h-[82dvh] sm:h-[85vh] sm:max-h-[85vh] rounded-t-3xl sm:rounded-3xl shadow-2xl border border-white/60 dark:border-slate-700/80 overflow-hidden transition-[transform,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-                  showPlaylistDrawer
-                    ? 'translate-y-0 sm:scale-100 opacity-100'
-                    : 'translate-y-full sm:translate-y-6 sm:scale-95 opacity-0'
-                }`}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Sticky Top Header */}
-                <div className="flex items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6 py-2.5 sm:py-3.5 border-b border-slate-200/80 bg-white/75 backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-900/75 shrink-0">
-                  <div className="min-w-0 flex items-center gap-2.5">
-                    <div className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300">
-                      <ListVideo className="h-4 w-4 sm:h-5 sm:w-5" />
-                    </div>
-                    <div className="min-w-0">
-                      <h3 className="font-display text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
-                        {activePlaylistTitle || 'Playlist Videos'}
-                      </h3>
-                      <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
-                        {playlistTracks.length > 0
-                          ? `${playlistTracks.length} individual videos`
-                          : playlistLoading
-                          ? 'Syncing latest playlist...'
-                          : 'Video Tracklist'}
-                      </p>
-                    </div>
+              <div className="flex items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6 py-2.5 sm:py-3.5 border-b border-slate-200/80 bg-white/75 backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-900/75 shrink-0">
+                <div className="min-w-0 flex items-center gap-2.5">
+                  <div className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300">
+                    <ListVideo className="h-4 w-4 sm:h-5 sm:w-5" />
                   </div>
-
-                  <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                    {activePlaylistId && (
-                      <button
-                        type="button"
-                        onClick={() => setPlaylistSyncNonce((n) => n + 1)}
-                        disabled={playlistLoading}
-                        title="Sync latest videos & order from YouTube"
-                        aria-label="Sync playlist"
-                        className="inline-flex h-8 w-8 sm:w-auto sm:px-2.5 items-center justify-center gap-1 rounded-xl border border-slate-200/90 bg-white/85 text-xs font-semibold text-slate-700 hover:bg-white disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-200 cursor-pointer"
-                      >
-                        <RefreshCw
-                          className={`h-3.5 w-3.5 ${playlistLoading ? 'animate-spin' : ''}`}
-                        />
-                        <span className="hidden sm:inline">Sync</span>
-                      </button>
-                    )}
-                    {activePlaylistId && (
-                      <a
-                        href={`https://www.youtube.com/playlist?list=${encodeURIComponent(activePlaylistId)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        title="Open full playlist on YouTube"
-                        className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-200"
-                      >
-                        <span>YouTube</span>
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setShowPlaylistDrawer(false)}
-                      aria-label="Close playlist"
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer shrink-0 shadow-sm"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                      <span>Close</span>
-                    </button>
+                  <div className="min-w-0">
+                    <h3 className="font-display text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
+                      {activePlaylistTitle || 'Playlist Videos'}
+                    </h3>
+                    <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
+                      {playlistTracks.length > 0
+                        ? `${playlistTracks.length} individual videos`
+                        : playlistLoading
+                        ? 'Syncing latest playlist...'
+                        : 'Video Tracklist'}
+                    </p>
                   </div>
                 </div>
 
-                {isTwitch && !activeEvent ? (
-                  <div className="flex-1 overflow-y-auto p-6 text-center space-y-3 flex flex-col justify-center items-center">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-500/15 text-purple-600 dark:bg-purple-500/25 dark:text-purple-300">
-                      <Tv className="h-6 w-6" />
-                    </div>
-                    <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white">
-                      Currently streaming {activeStation.callsign} on Twitch
-                    </h4>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                      Twitch channels stream a continuous live feed. To browse and select individual YouTube playlist videos, switch to Channel 4 or a Play Event below:
-                    </p>
-                    <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const ch4 = STATIONS.find((s) => s.number === 4) || STATIONS[3];
-                          onSelectStation(ch4);
-                          setShowPlaylistDrawer(true);
-                        }}
-                        className="aero-button-primary rounded-xl px-3.5 py-2 text-xs font-semibold text-white cursor-pointer"
-                      >
-                        Switch to Channel 4 (VOD_ch4)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onSelectEvent(PLAY_EVENTS[0]);
-                          setShowPlaylistDrawer(true);
-                        }}
-                        className="rounded-xl border border-slate-200 bg-white/90 px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 cursor-pointer"
-                      >
-                        Browse {PLAY_EVENTS[0].title}
-                      </button>
-                    </div>
+                <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                  {activePlaylistId && (
+                    <button
+                      type="button"
+                      onClick={() => setPlaylistSyncNonce((n) => n + 1)}
+                      disabled={playlistLoading}
+                      title="Sync latest videos & order from YouTube"
+                      aria-label="Sync playlist"
+                      className="inline-flex h-8 w-8 sm:w-auto sm:px-2.5 items-center justify-center gap-1 rounded-xl border border-slate-200/90 bg-white/85 text-xs font-semibold text-slate-700 hover:bg-white disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-200 cursor-pointer"
+                    >
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 ${playlistLoading ? 'animate-spin' : ''}`}
+                      />
+                      <span className="hidden sm:inline">Sync</span>
+                    </button>
+                  )}
+                  {activePlaylistId && (
+                    <a
+                      href={`https://www.youtube.com/playlist?list=${encodeURIComponent(activePlaylistId)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open full playlist on YouTube"
+                      className="hidden sm:inline-flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-200"
+                    >
+                      <span>YouTube</span>
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowPlaylistDrawer(false)}
+                    aria-label="Close playlist"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer shrink-0 shadow-sm"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    <span>Close</span>
+                  </button>
+                </div>
+              </div>
+
+              {isTwitch && !activeEvent ? (
+                <div className="flex-1 overflow-y-auto p-6 text-center space-y-3 flex flex-col justify-center items-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-purple-500/15 text-purple-600 dark:bg-purple-500/25 dark:text-purple-300">
+                    <Tv className="h-6 w-6" />
                   </div>
-                ) : activeEvent?.kind === 'youtube-video' && !activePlaylistId ? (
-                  <div className="flex-1 overflow-y-auto p-6 text-center space-y-3 flex flex-col justify-center items-center">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/15 text-sky-600 dark:bg-sky-500/25 dark:text-sky-300">
-                      <Play className="h-6 w-6" />
-                    </div>
-                    <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white">
-                      {activeEvent.title} is a Single Video
-                    </h4>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                      This item is registered as an individual video rather than a multi-track playlist.
-                    </p>
+                  <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                    Currently streaming {activeStation.callsign} on Twitch
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                    Twitch channels stream a continuous live feed. To browse and select individual YouTube playlist videos, switch to Channel 4 or a Play Event below:
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-2 pt-2">
                     <button
                       type="button"
                       onClick={() => {
-                        const nextEvent = PLAY_EVENTS.find((e) => e.kind === 'youtube-playlist') || PLAY_EVENTS[0];
-                        onSelectEvent(nextEvent);
+                        const ch4 = STATIONS.find((s) => s.number === 4) || STATIONS[3];
+                        onSelectStation(ch4);
                         setShowPlaylistDrawer(true);
                       }}
-                      className="aero-button-primary rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
+                      className="aero-button-primary rounded-xl px-3.5 py-2 text-xs font-semibold text-white cursor-pointer"
                     >
-                      Open Playlist Events
+                      Switch to Channel 4 (VOD_ch4)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onSelectEvent(PLAY_EVENTS[0]);
+                        setShowPlaylistDrawer(true);
+                      }}
+                      className="rounded-xl border border-slate-200 bg-white/90 px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 cursor-pointer"
+                    >
+                      Browse {PLAY_EVENTS[0].title}
                     </button>
                   </div>
-                ) : (
-                  <>
-                    {/* Sticky Filter Box */}
-                    <div className="px-4 sm:px-6 py-2 bg-white/40 dark:bg-slate-900/40 border-b border-slate-200/50 dark:border-slate-800/50 shrink-0">
-                      <div className="relative">
-                        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                        <input
-                          type="search"
-                          value={playlistFilterQuery}
-                          onChange={(e) => setPlaylistFilterQuery(e.target.value)}
-                          placeholder={`Search within ${playlistTracks.length > 0 ? `${playlistTracks.length} videos` : 'playlist'}...`}
-                          className="w-full rounded-xl border border-slate-200/90 bg-white/90 py-1.5 sm:py-2 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/80 dark:text-white"
-                        />
-                        {playlistFilterQuery && (
-                          <button
-                            type="button"
-                            onClick={() => setPlaylistFilterQuery('')}
-                            aria-label="Clear search"
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                </div>
+              ) : activeEvent?.kind === 'youtube-video' && !activePlaylistId ? (
+                <div className="flex-1 overflow-y-auto p-6 text-center space-y-3 flex flex-col justify-center items-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/15 text-sky-600 dark:bg-sky-500/25 dark:text-sky-300">
+                    <Play className="h-6 w-6" />
+                  </div>
+                  <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                    {activeEvent.title} is a Single Video
+                  </h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                    This item is registered as an individual video rather than a multi-track playlist.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextEvent = PLAY_EVENTS.find((e) => e.kind === 'youtube-playlist') || PLAY_EVENTS[0];
+                      onSelectEvent(nextEvent);
+                      setShowPlaylistDrawer(true);
+                    }}
+                    className="aero-button-primary rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
+                  >
+                    Open Playlist Events
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="px-4 sm:px-6 py-2 bg-white/40 dark:bg-slate-900/40 border-b border-slate-200/50 dark:border-slate-800/50 shrink-0">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="search"
+                        value={playlistFilterQuery}
+                        onChange={(e) => setPlaylistFilterQuery(e.target.value)}
+                        placeholder={`Search within ${playlistTracks.length > 0 ? `${playlistTracks.length} videos` : 'playlist'}...`}
+                        className="w-full rounded-xl border border-slate-200/90 bg-white/90 py-1.5 sm:py-2 pl-9 pr-9 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/80 dark:text-white"
+                      />
+                      {playlistFilterQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setPlaylistFilterQuery('')}
+                          aria-label="Clear search"
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-6 py-2 divide-y divide-slate-200/70 dark:divide-slate-800/80">
+                    {playlistLoading ? (
+                      <div className="py-12 text-center space-y-3">
+                        <Loader2 className="mx-auto h-7 w-7 animate-spin text-sky-600 dark:text-sky-400" />
+                        <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                          Syncing all videos from YouTube...
+                        </p>
+                      </div>
+                    ) : playlistError && playlistTracks.length === 0 ? (
+                      <div className="py-12 text-center space-y-3">
+                        <p className="text-xs text-rose-600 dark:text-rose-400 font-medium">
+                          {playlistError}
+                        </p>
+                        {activePlaylistId && (
+                          <a
+                            href={`https://www.youtube.com/playlist?list=${activePlaylistId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="aero-button-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
                           >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
+                            <span>Open Playlist on YouTube</span>
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
                         )}
                       </div>
-                    </div>
-
-                    {/* Scrollable Videos Container */}
-                    <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-6 py-2 divide-y divide-slate-200/70 dark:divide-slate-800/80">
-                      {playlistLoading ? (
-                        <div className="py-12 text-center space-y-3">
-                          <Loader2 className="mx-auto h-7 w-7 animate-spin text-sky-600 dark:text-sky-400" />
-                          <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                            Syncing all videos from YouTube...
-                          </p>
-                        </div>
-                      ) : playlistError && playlistTracks.length === 0 ? (
-                        <div className="py-12 text-center space-y-3">
-                          <p className="text-xs text-rose-600 dark:text-rose-400 font-medium">
-                            {playlistError}
-                          </p>
-                          {activePlaylistId && (
-                            <a
-                              href={`https://www.youtube.com/playlist?list=${activePlaylistId}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="aero-button-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
+                    ) : filteredPlaylistTracks.length === 0 ? (
+                      <div className="py-12 text-center">
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                          No videos matching “{playlistFilterQuery}”.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1 py-1">
+                        {filteredPlaylistTracks.map((item, idx) => {
+                          const originalIdx = playlistTracks.findIndex((t) => t.videoId === item.videoId);
+                          const isCurrentPlaying = selectedTrack?.videoId === item.videoId;
+                          return (
+                            <button
+                              key={item.videoId}
+                              type="button"
+                              onClick={() => {
+                                setSelectedTrack({
+                                  videoId: item.videoId,
+                                  title: item.title,
+                                  index: originalIdx >= 0 ? originalIdx : idx,
+                                  total: playlistTracks.length,
+                                });
+                                setShowPlaylistDrawer(false);
+                              }}
+                              className={`flex w-full items-center justify-between gap-2.5 sm:gap-3 p-2 sm:p-2.5 text-left transition-colors cursor-pointer rounded-2xl ${
+                                isCurrentPlaying
+                                  ? 'aero-button-primary text-white shadow-sm'
+                                  : 'hover:bg-slate-100/80 dark:hover:bg-slate-800/80 text-slate-800 dark:text-slate-200'
+                              }`}
                             >
-                              <span>Open Playlist on YouTube</span>
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </a>
-                          )}
-                        </div>
-                      ) : filteredPlaylistTracks.length === 0 ? (
-                        <div className="py-12 text-center">
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            No videos matching “{playlistFilterQuery}”.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-1 py-1">
-                          {filteredPlaylistTracks.map((item, idx) => {
-                            const originalIdx = playlistTracks.findIndex((t) => t.videoId === item.videoId);
-                            const isCurrentPlaying = selectedTrack?.videoId === item.videoId;
-                            return (
-                              <button
-                                key={item.videoId}
-                                type="button"
-                                onClick={() => {
-                                  setSelectedTrack({
-                                    videoId: item.videoId,
-                                    title: item.title,
-                                    index: originalIdx >= 0 ? originalIdx : idx,
-                                    total: playlistTracks.length,
-                                  });
-                                  setShowPlaylistDrawer(false);
-                                }}
-                                className={`flex w-full items-center justify-between gap-2.5 sm:gap-3 p-2 sm:p-2.5 text-left transition-colors cursor-pointer rounded-2xl ${
-                                  isCurrentPlaying
-                                    ? 'aero-button-primary text-white shadow-sm'
-                                    : 'hover:bg-slate-100/80 dark:hover:bg-slate-800/80 text-slate-800 dark:text-slate-200'
-                                }`}
-                              >
-                                <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-                                  <span
-                                    className={`font-mono text-xs font-bold w-6 sm:w-7 shrink-0 text-center ${
+                              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                                <span
+                                  className={`font-mono text-xs font-bold w-6 sm:w-7 shrink-0 text-center ${
+                                    isCurrentPlaying ? 'text-sky-100' : 'text-slate-400'
+                                  }`}
+                                >
+                                  {originalIdx >= 0 ? originalIdx + 1 : idx + 1}
+                                </span>
+                                <div className="relative h-11 w-18 sm:h-12 sm:w-20 shrink-0 overflow-hidden rounded-xl bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
+                                  <img
+                                    src={item.thumbnail}
+                                    alt={item.title}
+                                    loading="lazy"
+                                    className="h-full w-full object-cover"
+                                  />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="line-clamp-2 font-display text-xs sm:text-sm font-semibold">
+                                    {item.title}
+                                  </div>
+                                  <div
+                                    className={`font-mono text-[10px] mt-0.5 truncate ${
                                       isCurrentPlaying ? 'text-sky-100' : 'text-slate-400'
                                     }`}
                                   >
-                                    {originalIdx >= 0 ? originalIdx + 1 : idx + 1}
+                                    ID: {item.videoId}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="shrink-0 pl-1 sm:pl-2">
+                                {isCurrentPlaying ? (
+                                  <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white whitespace-nowrap">
+                                    Playing
                                   </span>
-                                  <div className="relative h-11 w-18 sm:h-12 sm:w-20 shrink-0 overflow-hidden rounded-xl bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
-                                    <img
-                                      src={item.thumbnail}
-                                      alt={item.title}
-                                      loading="lazy"
-                                      className="h-full w-full object-cover"
-                                    />
+                                ) : (
+                                  <div className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 dark:bg-sky-400/20 dark:text-sky-300">
+                                    <Play className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current" />
                                   </div>
-                                  <div className="min-w-0">
-                                    <div className="line-clamp-2 font-display text-xs sm:text-sm font-semibold">
-                                      {item.title}
-                                    </div>
-                                    <div
-                                      className={`font-mono text-[10px] mt-0.5 truncate ${
-                                        isCurrentPlaying ? 'text-sky-100' : 'text-slate-400'
-                                      }`}
-                                    >
-                                      ID: {item.videoId}
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="shrink-0 pl-1 sm:pl-2">
-                                  {isCurrentPlaying ? (
-                                    <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white whitespace-nowrap">
-                                      Playing
-                                    </span>
-                                  ) : (
-                                    <div className="flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-xl bg-sky-500/10 text-sky-600 hover:bg-sky-500/20 dark:bg-sky-400/20 dark:text-sky-300">
-                                      <Play className="h-3 w-3 sm:h-3.5 sm:w-3.5 fill-current" />
-                                    </div>
-                                  )}
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                                )}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
 
-                    {/* Sticky Bottom Action Footer */}
-                    <div className="flex items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6 py-2.5 sm:py-3 border-t border-slate-200/80 bg-white/80 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80 shrink-0 text-xs pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-                      <span className="truncate text-slate-600 dark:text-slate-300 font-medium text-[11px] sm:text-xs">
-                        {selectedTrack
-                          ? `#${selectedTrack.index + 1}: ${selectedTrack.title}`
-                          : `${playlistTracks.length} videos in playlist`}
-                      </span>
-                      <div className="flex items-center gap-2 shrink-0">
-                        {selectedTrack && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedTrack(null);
-                              setShowPlaylistDrawer(false);
-                            }}
-                            className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer shadow-sm whitespace-nowrap"
-                          >
-                            <RotateCcw className="h-3 w-3" />
-                            <span>Full Playlist</span>
-                          </button>
-                        )}
+                  <div className="flex items-center justify-between gap-2 sm:gap-3 px-4 sm:px-6 py-2.5 sm:py-3 border-t border-slate-200/80 bg-white/80 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80 shrink-0 text-xs pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+                    <span className="truncate text-slate-600 dark:text-slate-300 font-medium text-[11px] sm:text-xs">
+                      {selectedTrack
+                        ? `#${selectedTrack.index + 1}: ${selectedTrack.title}`
+                        : `${playlistTracks.length} videos in playlist`}
+                    </span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {selectedTrack && (
                         <button
                           type="button"
-                          onClick={() => setShowPlaylistDrawer(false)}
-                          className="aero-button-primary rounded-xl px-4 py-1.5 text-xs font-semibold text-white cursor-pointer shadow-sm whitespace-nowrap"
+                          onClick={() => {
+                            setSelectedTrack(null);
+                            setShowPlaylistDrawer(false);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer shadow-sm whitespace-nowrap"
                         >
-                          Done
+                          <RotateCcw className="h-3 w-3" />
+                          <span>Full Playlist</span>
                         </button>
-                      </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowPlaylistDrawer(false)}
+                        className="aero-button-primary rounded-xl px-4 py-1.5 text-xs font-semibold text-white cursor-pointer shadow-sm whitespace-nowrap"
+                      >
+                        Done
+                      </button>
                     </div>
-                  </>
-                )}
-              </div>
-            </div>,
-            document.body
-          )}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
 
-        {/* Remote Control Buttons # / callsign for Mobile & Tablet */}
-        <div
-          role="tablist"
-          aria-label="Mobile Remote Control"
-          className="mt-3 grid grid-cols-4 gap-2 lg:hidden"
-        >
-          {STATIONS.map((station) => {
-            const isSelected = !activeEvent && activeStation.callsign === station.callsign;
-            return (
-              <button
-                key={station.callsign}
-                type="button"
-                role="tab"
-                aria-selected={isSelected}
-                aria-label={`${station.label} — ${station.callsign}`}
-                onClick={() => onSelectStation(station)}
-                className={`flex flex-col items-center justify-center gap-2 rounded-xl border px-1.5 py-2.5 text-center transition-colors cursor-pointer min-w-0 ${
-                  isSelected
-                    ? 'aero-button-primary border-transparent text-white'
-                    : 'border-slate-200/90 bg-white/80 text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100'
+      {/* Remote Control Buttons */}
+      <div
+        role="tablist"
+        aria-label="Remote Control"
+        className={
+          isFloatingMini
+            ? 'hidden'
+            : isSidebarCollapsed
+            ? 'mt-3 grid grid-cols-4 gap-2'
+            : 'mt-3 grid grid-cols-4 gap-2 lg:hidden'
+        }
+      >
+        {STATIONS.map((station) => {
+          const isSelected = !activeEvent && activeStation.callsign === station.callsign;
+          return (
+            <button
+              key={station.callsign}
+              type="button"
+              role="tab"
+              aria-selected={isSelected}
+              aria-label={`${station.label} — ${station.callsign}`}
+              onClick={() => onSelectStation(station)}
+              className={`flex flex-col items-center justify-center gap-2 rounded-xl border px-1.5 py-2.5 text-center transition-colors cursor-pointer min-w-0 ${
+                isSelected
+                  ? 'aero-button-primary border-transparent text-white'
+                  : 'border-slate-200/90 bg-white/80 text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100'
+              }`}
+            >
+              <span className="font-display text-lg sm:text-xl font-bold leading-none tabular-nums">
+                {station.number}
+              </span>
+              <span
+                className={`max-w-full truncate font-mono text-[10px] sm:text-xs font-semibold leading-tight ${
+                  isSelected ? 'text-sky-100' : 'text-slate-600 dark:text-slate-300'
                 }`}
               >
-                <span className="font-display text-lg sm:text-xl font-bold leading-none tabular-nums">
-                  {station.number}
-                </span>
-                <span
-                  className={`max-w-full truncate font-mono text-[10px] sm:text-xs font-semibold leading-tight ${
-                    isSelected ? 'text-sky-100' : 'text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  {station.callsign}
-                </span>
+                {station.callsign}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* If floating enabled on the Live tab, render the floating player + placeholder void card in original position */}
+      {floatingEnabled ? (
+        <>
+          {renderPlayerInner(true)}
+          <section className="aero-glass overflow-hidden rounded-3xl p-3 sm:p-4 flex flex-col justify-center items-center text-center space-y-3 border border-dashed border-sky-400/40 bg-sky-500/5">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300 animate-pulse">
+              <PictureInPicture2 className="h-6 w-6" />
+            </div>
+            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+              Video currently playing in floating player
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+              You can drag or resize the floating player anywhere on screen. It will keep playing even when you navigate other tabs.
+            </p>
+            {onToggleFloating && (
+              <button
+                type="button"
+                onClick={onToggleFloating}
+                className="aero-button-primary rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer shadow-sm"
+              >
+                Restore
               </button>
-            );
-          })}
-        </div>
-      </section>
+            )}
+          </section>
+        </>
+      ) : (
+        renderPlayerInner(false)
+      )}
 
       {/* Play Event Folder Directory inside a Scrollable Container */}
       <section className="aero-glass rounded-3xl p-5 sm:p-6 space-y-4">
@@ -1255,7 +1692,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             </nav>
           </div>
 
-          {/* Scrollable Folder & Item List (List or Tiles Grid) */}
+          {/* Scrollable Folder & Item List */}
           <div
             className={
               eventViewMode === 'tiles'
@@ -1263,7 +1700,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 : 'max-h-[300px] overflow-y-auto divide-y divide-slate-200/70 dark:divide-slate-800/80'
             }
           >
-            {/* Level 1: Root Directory (/Interim Era, /Caratime Era, /Daliatime Era, Year End Playlist) */}
             {!currentEra && (
               <>
                 {eraSummaries.map((folder) => {
@@ -1410,7 +1846,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               </>
             )}
 
-            {/* Level 2: Year Folders inside selected Era (/Caratime Era/2019, ...) */}
             {currentEra && !currentYear &&
               yearsInCurrentEra.map((yrGroup) => {
                 const hasActiveInside =
@@ -1470,7 +1905,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 );
               })}
 
-            {/* Level 3: Event items inside /Era/Year (/Caratime Era/2019/Identity) */}
             {currentEra && currentYear &&
               eventsInCurrentYear.map((ev) => {
                 const isSelected = activeEvent?.id === ev.id;
