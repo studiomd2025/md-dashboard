@@ -71,6 +71,26 @@ function decodeFirestoreDoc(docName: string, fields: Record<string, FsValue> = {
   return out;
 }
 
+function normalizeShortsInUrl(rawUrl: unknown): string {
+  if (typeof rawUrl !== 'string') return '';
+  const trimmed = rawUrl.trim();
+  const match = trimmed.match(
+    /^https?:\/\/(?:[\w-]+\.)?youtube\.com\/shorts\/([a-zA-Z0-9_-]+)(?:\/)?(?:\?([^#]*))?(?:#.*)?$/i
+  );
+  if (match && match[1]) {
+    return `https://www.youtube.com/watch?v=${match[1]}${match[2] ? `&${match[2]}` : ''}`;
+  }
+  return trimmed;
+}
+
+function normalizeAttachmentList(list: unknown): Post['attachments'] {
+  if (!Array.isArray(list)) return [];
+  return (list as Post['attachments']).map((att) => ({
+    ...att,
+    url: att.url ? normalizeShortsInUrl(att.url) : att.url,
+  }));
+}
+
 async function fetchPublicFirestoreState(): Promise<{
   posts: Post[];
   countdowns: EventCountdown[];
@@ -120,7 +140,7 @@ async function fetchPublicFirestoreState(): Promise<{
           font: (d.font as Post['font']) || 'sans',
           manualTags: Array.isArray(d.manualTags) ? (d.manualTags as string[]) : [],
           inlineTags: Array.isArray(d.inlineTags) ? (d.inlineTags as string[]) : [],
-          attachments: Array.isArray(d.attachments) ? (d.attachments as Post['attachments']) : [],
+          attachments: normalizeAttachmentList(d.attachments),
           createdAt: String(d.createdAt || new Date().toISOString()),
           publishedAt: String(d.publishedAt || new Date().toISOString()),
           scheduledFor: (d.scheduledFor as string | null) ?? null,
@@ -145,14 +165,10 @@ async function fetchPublicFirestoreState(): Promise<{
           bodyHtml: (d.bodyHtml as string | undefined) ?? undefined,
           font: (d.font as EventCountdown['font']) ?? undefined,
           displayFormat: (d.displayFormat as EventCountdown['displayFormat']) ?? undefined,
-          attachments: Array.isArray(d.attachments)
-            ? (d.attachments as EventCountdown['attachments'])
-            : [],
+          attachments: normalizeAttachmentList(d.attachments),
           milestoneBodyHtml: (d.milestoneBodyHtml as string | undefined) ?? undefined,
           milestoneFont: (d.milestoneFont as EventCountdown['milestoneFont']) ?? undefined,
-          milestoneAttachments: Array.isArray(d.milestoneAttachments)
-            ? (d.milestoneAttachments as EventCountdown['milestoneAttachments'])
-            : [],
+          milestoneAttachments: normalizeAttachmentList(d.milestoneAttachments),
         };
       });
     }
@@ -469,7 +485,9 @@ async function startServer() {
       createdAt: nowIso,
       publishedAt: body.scheduledFor || nowIso,
       scheduledFor: body.scheduledFor || null,
+      scheduledTimeZone: body.scheduledTimeZone || null,
       pinnedUntil: body.pinnedUntil || null,
+      pinnedTimeZone: body.pinnedTimeZone || null,
       isDraft,
     };
     store.posts.unshift(newPost);
@@ -495,6 +513,10 @@ async function startServer() {
       inlineTags: patch.inlineTags !== undefined ? patch.inlineTags : existing.inlineTags,
       attachments: patch.attachments !== undefined ? patch.attachments : existing.attachments,
       scheduledFor: patch.scheduledFor !== undefined ? patch.scheduledFor : existing.scheduledFor,
+      scheduledTimeZone:
+        patch.scheduledTimeZone !== undefined
+          ? patch.scheduledTimeZone
+          : existing.scheduledTimeZone,
       publishedAt:
         patch.publishedAt !== undefined
           ? patch.publishedAt
@@ -502,6 +524,10 @@ async function startServer() {
           ? patch.scheduledFor
           : existing.publishedAt,
       pinnedUntil: patch.pinnedUntil !== undefined ? patch.pinnedUntil : existing.pinnedUntil,
+      pinnedTimeZone:
+        patch.pinnedTimeZone !== undefined
+          ? patch.pinnedTimeZone
+          : existing.pinnedTimeZone,
       isDraft: patch.isDraft !== undefined ? Boolean(patch.isDraft) : existing.isDraft,
     };
     store.posts[idx] = updated;
@@ -591,17 +617,22 @@ async function startServer() {
   app.post('/api/banners', (req, res) => {
     const store = readStore();
     const b = req.body as Partial<BannerSchedule>;
+    if (!b.imageUrl || !String(b.imageUrl).trim()) {
+      res.status(400).json({ error: 'Banner image URL is required.' });
+      return;
+    }
     const created: BannerSchedule = {
       id: `banner-${crypto.randomUUID()}`,
       title: typeof b.title === 'string' ? b.title : '',
       subtitle: b.subtitle || '',
       subtitleHtml: typeof b.subtitleHtml === 'string' ? b.subtitleHtml : undefined,
-      imageUrl: b.imageUrl || '/samples/banner-aero-horizon.jpg',
+      imageUrl: String(b.imageUrl).trim(),
       mode: b.mode || 'slideshow',
       startAt: b.startAt,
       endAt: b.endAt,
       dailyStartHour: b.dailyStartHour,
       dailyEndHour: b.dailyEndHour,
+      timeZone: b.timeZone,
       priority: typeof b.priority === 'number' ? b.priority : 20,
     };
     store.banners.unshift(created);
@@ -637,6 +668,7 @@ async function startServer() {
       id: `cd-${crypto.randomUUID()}`,
       title: c.title || 'Upcoming Event',
       targetAt: c.targetAt || new Date(Date.now() + 7 * 86400 * 1000).toISOString(),
+      timeZone: c.timeZone || undefined,
       tag: c.tag || undefined,
       location: c.location || undefined,
       bodyHtml: typeof c.bodyHtml === 'string' ? c.bodyHtml : '',
@@ -813,6 +845,7 @@ async function startServer() {
       videoId: string;
       title: string;
       thumbnail: string;
+      url: string;
       published?: string;
     }> = [];
     const seen = new Set<string>();
@@ -842,6 +875,20 @@ async function startServer() {
           const data = JSON.parse(match[1]);
           let continuationToken: string | null = null;
 
+          const pushPlaylistItem = (rawId: unknown, rawTitle: unknown) => {
+            const videoId = typeof rawId === 'string' ? rawId.trim() : '';
+            const title = typeof rawTitle === 'string' ? rawTitle.trim() : '';
+            if (videoId && title && !seen.has(videoId)) {
+              seen.add(videoId);
+              items.push({
+                videoId,
+                title,
+                thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+                url: `https://www.youtube.com/watch?v=${videoId}`,
+              });
+            }
+          };
+
           const extractFromObject = (obj: any) => {
             if (!obj || typeof obj !== 'object') return;
 
@@ -851,29 +898,40 @@ async function startServer() {
                 r.title?.runs?.map((x: any) => x.text).join('') ||
                 r.title?.simpleText ||
                 '';
-              const videoId = r.videoId;
-              if (videoId && title && !seen.has(videoId)) {
-                seen.add(videoId);
-                items.push({
-                  videoId,
-                  title: title.trim(),
-                  thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-                });
-              }
+              pushPlaylistItem(r.videoId, title);
             }
 
             if (obj.lockupViewModel) {
               const l = obj.lockupViewModel;
               const title = l.metadata?.lockupMetadataViewModel?.title?.content;
-              const videoId = l.contentId;
-              if (videoId && title && !seen.has(videoId)) {
-                seen.add(videoId);
-                items.push({
-                  videoId,
-                  title: title.trim(),
-                  thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-                });
-              }
+              pushPlaylistItem(l.contentId, title);
+            }
+
+            if (obj.shortsLockupViewModel) {
+              const s = obj.shortsLockupViewModel;
+              const navUrl: string =
+                s.onTap?.innertubeCommand?.commandMetadata?.webCommandMetadata?.url ||
+                s.onTap?.innertubeCommand?.reelWatchEndpoint?.videoId ||
+                '';
+              const shortsIdMatch = navUrl.match(/\/shorts\/([a-zA-Z0-9_-]+)/);
+              const videoId =
+                s.onTap?.innertubeCommand?.reelWatchEndpoint?.videoId ||
+                (shortsIdMatch ? shortsIdMatch[1] : '') ||
+                s.entityId?.replace(/^shorts-shelf-item-/, '');
+              const title =
+                s.overlayMetadata?.primaryText?.content ||
+                s.accessibilityText ||
+                '';
+              pushPlaylistItem(videoId, title);
+            }
+
+            if (obj.reelItemRenderer) {
+              const r = obj.reelItemRenderer;
+              const title =
+                r.headline?.simpleText ||
+                r.headline?.runs?.map((x: any) => x.text).join('') ||
+                '';
+              pushPlaylistItem(r.videoId, title);
             }
 
             if (obj.compactVideoRenderer || obj.gridVideoRenderer) {
@@ -882,15 +940,7 @@ async function startServer() {
                 r.title?.runs?.map((x: any) => x.text).join('') ||
                 r.title?.simpleText ||
                 '';
-              const videoId = r.videoId;
-              if (videoId && title && !seen.has(videoId)) {
-                seen.add(videoId);
-                items.push({
-                  videoId,
-                  title: title.trim(),
-                  thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-                });
-              }
+              pushPlaylistItem(r.videoId, title);
             }
 
             if (!continuationToken) {
@@ -992,6 +1042,7 @@ async function startServer() {
                   videoId,
                   title: cleanTitle,
                   thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+                  url: `https://www.youtube.com/watch?v=${videoId}`,
                   published: pubMatch ? pubMatch[1].trim() : '',
                 });
               }

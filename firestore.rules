@@ -22,18 +22,44 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isValidEmailId(id) {
+      return id is string &&
+        id.size() >= 3 &&
+        id.size() <= 254 &&
+        id.matches('^[a-z0-9._%+\\-]+@[a-z0-9.\\-]+\\.[a-z]{2,}$');
+    }
+
     function isAdmin() {
-      return isSignedIn() && (
-        (
-          request.auth.token.email == 'officialmdworkspace@gmail.com' &&
-          request.auth.token.email_verified == true
-        ) ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
-      );
+      return isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        'email' in request.auth.token &&
+        request.auth.token.email is string;
     }
 
     function isOptionalStr(data, key, maxLen) {
       return !(key in data) || data[key] == null || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isValidCollaborator(data) {
+      return data.keys().hasAll(['email', 'addedByUid', 'addedAt']) &&
+        data.keys().hasOnly(['email', 'displayName', 'note', 'addedByUid', 'addedByEmail', 'addedAt']) &&
+        isValidEmailId(data.email) &&
+        isOptionalStr(data, 'displayName', 160) &&
+        isOptionalStr(data, 'note', 500) &&
+        data.addedByUid is string && data.addedByUid.size() <= 128 &&
+        isOptionalStr(data, 'addedByEmail', 254) &&
+        data.addedAt == request.time;
+    }
+
+    function isValidAccessRequest(data) {
+      return data.keys().hasAll(['uid', 'email', 'status', 'requestedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'displayName', 'note', 'status', 'requestedAt']) &&
+        isValidId(data.uid) &&
+        isValidEmailId(data.email) &&
+        isOptionalStr(data, 'displayName', 160) &&
+        isOptionalStr(data, 'note', 500) &&
+        data.status == 'pending' &&
+        data.requestedAt == request.time;
     }
 
     function isBoundedStrList(listVal, maxItems) {
@@ -69,7 +95,9 @@ service cloud.firestore {
           'createdAt',
           'publishedAt',
           'scheduledFor',
+          'scheduledTimeZone',
           'pinnedUntil',
+          'pinnedTimeZone',
           'isDraft',
           'authorId',
           'serverCreatedAt',
@@ -84,7 +112,9 @@ service cloud.firestore {
         data.createdAt is string && data.createdAt.size() <= 64 &&
         data.publishedAt is string && data.publishedAt.size() <= 64 &&
         isOptionalStr(data, 'scheduledFor', 64) &&
+        isOptionalStr(data, 'scheduledTimeZone', 64) &&
         isOptionalStr(data, 'pinnedUntil', 64) &&
+        isOptionalStr(data, 'pinnedTimeZone', 64) &&
         data.isDraft is bool &&
         data.authorId is string && data.authorId.size() <= 128 &&
         data.serverCreatedAt is timestamp &&
@@ -111,6 +141,7 @@ service cloud.firestore {
           'endAt',
           'dailyStartHour',
           'dailyEndHour',
+          'timeZone',
           'priority',
           'authorId',
           'serverUpdatedAt'
@@ -124,6 +155,7 @@ service cloud.firestore {
         isOptionalStr(data, 'endAt', 64) &&
         (!('dailyStartHour' in data) || data.dailyStartHour == null || (data.dailyStartHour is number && data.dailyStartHour >= 0 && data.dailyStartHour <= 23)) &&
         (!('dailyEndHour' in data) || data.dailyEndHour == null || (data.dailyEndHour is number && data.dailyEndHour >= 0 && data.dailyEndHour <= 23)) &&
+        isOptionalStr(data, 'timeZone', 64) &&
         data.priority is number && data.priority >= 0 && data.priority <= 10000 &&
         data.authorId is string && data.authorId.size() <= 128 &&
         data.serverUpdatedAt == request.time;
@@ -139,6 +171,7 @@ service cloud.firestore {
         data.keys().hasOnly([
           'title',
           'targetAt',
+          'timeZone',
           'tag',
           'location',
           'bodyHtml',
@@ -153,6 +186,7 @@ service cloud.firestore {
         ]) &&
         data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
         data.targetAt is string && data.targetAt.size() <= 64 &&
+        isOptionalStr(data, 'timeZone', 64) &&
         isOptionalStr(data, 'tag', 80) &&
         isOptionalStr(data, 'location', 200) &&
         isOptionalStr(data, 'bodyHtml', 100000) &&
@@ -209,11 +243,11 @@ service cloud.firestore {
         incoming().authorId == existing().authorId &&
         incoming().serverCreatedAt == existing().serverCreatedAt &&
         incoming().createdAt == existing().createdAt && (
-          incoming().diff(existing()).affectedKeys().hasOnly(['pinnedUntil', 'serverUpdatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['pinnedUntil', 'pinnedTimeZone', 'serverUpdatedAt']) ||
           incoming().diff(existing()).affectedKeys().hasOnly([
             'title', 'bodyHtml', 'font', 'manualTags', 'inlineTags',
-            'attachments', 'publishedAt', 'scheduledFor', 'pinnedUntil',
-            'isDraft', 'serverUpdatedAt'
+            'attachments', 'publishedAt', 'scheduledFor', 'scheduledTimeZone',
+            'pinnedUntil', 'pinnedTimeZone', 'isDraft', 'serverUpdatedAt'
           ])
         );
       allow delete: if isAdmin() && isValidId(postId);
@@ -232,7 +266,7 @@ service cloud.firestore {
         incoming().authorId == existing().authorId &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'title', 'subtitle', 'subtitleHtml', 'imageUrl', 'mode',
-          'startAt', 'endAt', 'dailyStartHour', 'dailyEndHour',
+          'startAt', 'endAt', 'dailyStartHour', 'dailyEndHour', 'timeZone',
           'priority', 'serverUpdatedAt'
         ]);
       allow delete: if isAdmin() && isValidId(bannerId);
@@ -250,7 +284,7 @@ service cloud.firestore {
         isValidCountdown(incoming()) &&
         incoming().authorId == existing().authorId &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'title', 'targetAt', 'tag', 'location', 'bodyHtml', 'font',
+          'title', 'targetAt', 'timeZone', 'tag', 'location', 'bodyHtml', 'font',
           'displayFormat', 'attachments', 'milestoneBodyHtml',
           'milestoneFont', 'milestoneAttachments', 'serverUpdatedAt'
         ]);
@@ -275,6 +309,52 @@ service cloud.firestore {
     match /admins/{userId} {
       allow get: if isSignedIn() && request.auth.uid == userId;
       allow list, write: if false;
+    }
+
+    match /collaborators/{emailId} {
+      allow get: if isValidEmailId(emailId) && (
+        isAdmin() ||
+        (
+          isSignedIn() &&
+          request.auth.token.email_verified == true &&
+          request.auth.token.email.lower() == emailId
+        )
+      );
+      allow list: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidEmailId(emailId) &&
+        isValidCollaborator(incoming()) &&
+        incoming().email == emailId &&
+        incoming().addedByUid == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidEmailId(emailId);
+    }
+
+    match /access_requests/{uid} {
+      allow get: if isValidId(uid) && (
+        isAdmin() ||
+        (isSignedIn() && request.auth.uid == uid)
+      );
+      allow list: if isAdmin();
+      allow create: if isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        isValidId(uid) &&
+        uid == request.auth.uid &&
+        isValidAccessRequest(incoming()) &&
+        incoming().uid == request.auth.uid &&
+        incoming().email == request.auth.token.email.lower();
+      allow update: if isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        isValidId(uid) &&
+        uid == request.auth.uid &&
+        isValidAccessRequest(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().email == existing().email &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'note', 'requestedAt']);
+      allow delete: if isValidId(uid) && (
+        isAdmin() ||
+        (isSignedIn() && request.auth.uid == uid)
+      );
     }
   }
 }

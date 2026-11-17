@@ -14,7 +14,9 @@ import {
   type Unsubscribe,
 } from 'firebase/firestore';
 import type {
+  AccessRequestRecord,
   BannerSchedule,
+  CollaboratorRecord,
   CustomThemePreset,
   DesignSettings,
   EventCountdown,
@@ -23,14 +25,21 @@ import type {
   Post,
 } from '../types';
 import { db, handleFirestoreError, OperationType } from './firebase';
+import { normalizeShortsToWatchUrl } from './mediaUtils';
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
 
 function stripUndefinedDeep<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => stripUndefinedDeep(item)) as unknown as T;
   }
-  if (value !== null && typeof value === 'object') {
+  if (isPlainObject(value)) {
     const out: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    for (const [k, v] of Object.entries(value)) {
       if (v !== undefined) {
         out[k] = stripUndefinedDeep(v);
       }
@@ -49,7 +58,7 @@ function sanitizeAttachments(
     stripUndefinedDeep({
       id: String(att.id || `att-${Date.now()}`),
       type: att.type,
-      url: String(att.url || ''),
+      url: normalizeShortsToWatchUrl(String(att.url || '')),
       title: att.title ? String(att.title).slice(0, 300) : undefined,
       subtitle: att.subtitle ? String(att.subtitle).slice(0, 500) : undefined,
       mimeType: att.mimeType ? String(att.mimeType).slice(0, 120) : undefined,
@@ -125,11 +134,18 @@ export function subscribeDashboardData({
             font: raw.font || 'sans',
             manualTags: Array.isArray(raw.manualTags) ? raw.manualTags : [],
             inlineTags: Array.isArray(raw.inlineTags) ? raw.inlineTags : [],
-            attachments: Array.isArray(raw.attachments) ? raw.attachments : [],
+            attachments: Array.isArray(raw.attachments)
+              ? (raw.attachments as MediaAttachment[]).map((att) => ({
+                  ...att,
+                  url: att.url ? normalizeShortsToWatchUrl(String(att.url)) : att.url,
+                }))
+              : [],
             createdAt: String(raw.createdAt || new Date().toISOString()),
             publishedAt: String(raw.publishedAt || new Date().toISOString()),
             scheduledFor: raw.scheduledFor ?? null,
+            scheduledTimeZone: raw.scheduledTimeZone ?? null,
             pinnedUntil: raw.pinnedUntil ?? null,
+            pinnedTimeZone: raw.pinnedTimeZone ?? null,
             isDraft: Boolean(raw.isDraft),
           };
         });
@@ -156,7 +172,7 @@ export function subscribeDashboardData({
             title: String(raw.title || ''),
             subtitle: String(raw.subtitle || ''),
             subtitleHtml: raw.subtitleHtml ?? undefined,
-            imageUrl: String(raw.imageUrl || '/samples/banner-aero-horizon.jpg'),
+            imageUrl: String(raw.imageUrl || ''),
             mode: raw.mode || 'slideshow',
             startAt: raw.startAt ?? undefined,
             endAt: raw.endAt ?? undefined,
@@ -164,6 +180,7 @@ export function subscribeDashboardData({
               typeof raw.dailyStartHour === 'number' ? raw.dailyStartHour : undefined,
             dailyEndHour:
               typeof raw.dailyEndHour === 'number' ? raw.dailyEndHour : undefined,
+            timeZone: raw.timeZone ?? undefined,
             priority: typeof raw.priority === 'number' ? raw.priority : 20,
           };
         });
@@ -190,6 +207,7 @@ export function subscribeDashboardData({
             id: d.id,
             title: String(raw.title || ''),
             targetAt: String(raw.targetAt || ''),
+            timeZone: raw.timeZone ?? undefined,
             tag: raw.tag ?? undefined,
             location: raw.location ?? undefined,
             bodyHtml: raw.bodyHtml ?? undefined,
@@ -293,7 +311,13 @@ export async function seedFirestoreIfEmpty(authorId: string): Promise<void> {
             64
           ),
           scheduledFor: post.scheduledFor ? String(post.scheduledFor).slice(0, 64) : null,
+          scheduledTimeZone: post.scheduledTimeZone
+            ? String(post.scheduledTimeZone).slice(0, 64)
+            : null,
           pinnedUntil: post.pinnedUntil ? String(post.pinnedUntil).slice(0, 64) : null,
+          pinnedTimeZone: post.pinnedTimeZone
+            ? String(post.pinnedTimeZone).slice(0, 64)
+            : null,
           isDraft: Boolean(post.isDraft),
           authorId,
           serverCreatedAt: serverTimestamp(),
@@ -312,7 +336,7 @@ export async function seedFirestoreIfEmpty(authorId: string): Promise<void> {
           subtitleHtml: b.subtitleHtml
             ? String(b.subtitleHtml).slice(0, 4000)
             : null,
-          imageUrl: String(b.imageUrl || '/samples/banner-aero-horizon.jpg').slice(
+          imageUrl: String(b.imageUrl || '').slice(
             0,
             2000
           ),
@@ -323,6 +347,7 @@ export async function seedFirestoreIfEmpty(authorId: string): Promise<void> {
             typeof b.dailyStartHour === 'number' ? b.dailyStartHour : null,
           dailyEndHour:
             typeof b.dailyEndHour === 'number' ? b.dailyEndHour : null,
+          timeZone: b.timeZone ? String(b.timeZone).slice(0, 64) : null,
           priority: typeof b.priority === 'number' ? b.priority : 20,
           authorId,
           serverUpdatedAt: serverTimestamp(),
@@ -337,6 +362,7 @@ export async function seedFirestoreIfEmpty(authorId: string): Promise<void> {
         stripUndefinedDeep({
           title: String(cd.title || 'Upcoming Event').slice(0, 200),
           targetAt: String(cd.targetAt || new Date().toISOString()).slice(0, 64),
+          timeZone: cd.timeZone ? String(cd.timeZone).slice(0, 64) : null,
           tag: cd.tag ? String(cd.tag).slice(0, 80) : null,
           location: cd.location ? String(cd.location).slice(0, 200) : null,
           bodyHtml: cd.bodyHtml ? String(cd.bodyHtml).slice(0, 100000) : '',
@@ -394,7 +420,9 @@ export async function createPostDoc(
     inlineTags: string[];
     attachments: MediaAttachment[];
     scheduledFor: string | null;
+    scheduledTimeZone?: string | null;
     pinnedUntil: string | null;
+    pinnedTimeZone?: string | null;
     isDraft?: boolean;
   }
 ): Promise<void> {
@@ -414,7 +442,13 @@ export async function createPostDoc(
         createdAt: nowIso,
         publishedAt: payload.scheduledFor || nowIso,
         scheduledFor: payload.scheduledFor ?? null,
+        scheduledTimeZone: payload.scheduledTimeZone
+          ? String(payload.scheduledTimeZone).slice(0, 64)
+          : null,
         pinnedUntil: payload.pinnedUntil ?? null,
+        pinnedTimeZone: payload.pinnedTimeZone
+          ? String(payload.pinnedTimeZone).slice(0, 64)
+          : null,
         isDraft: Boolean(payload.isDraft),
         authorId,
         serverCreatedAt: serverTimestamp(),
@@ -437,7 +471,9 @@ export async function updatePostDoc(
     attachments: MediaAttachment[];
     publishedAt: string;
     scheduledFor: string | null;
+    scheduledTimeZone: string | null;
     pinnedUntil: string | null;
+    pinnedTimeZone: string | null;
     isDraft: boolean;
   }>
 ): Promise<void> {
@@ -461,8 +497,16 @@ export async function updatePostDoc(
     updatePayload.publishedAt = String(patch.publishedAt).slice(0, 64);
   if (patch.scheduledFor !== undefined)
     updatePayload.scheduledFor = patch.scheduledFor ?? null;
+  if (patch.scheduledTimeZone !== undefined)
+    updatePayload.scheduledTimeZone = patch.scheduledTimeZone
+      ? String(patch.scheduledTimeZone).slice(0, 64)
+      : null;
   if (patch.pinnedUntil !== undefined)
     updatePayload.pinnedUntil = patch.pinnedUntil ?? null;
+  if (patch.pinnedTimeZone !== undefined)
+    updatePayload.pinnedTimeZone = patch.pinnedTimeZone
+      ? String(patch.pinnedTimeZone).slice(0, 64)
+      : null;
   if (patch.isDraft !== undefined)
     updatePayload.isDraft = Boolean(patch.isDraft);
 
@@ -633,9 +677,7 @@ export async function createBannerDoc(
         subtitleHtml: payload.subtitleHtml
           ? String(payload.subtitleHtml).slice(0, 4000)
           : null,
-        imageUrl: String(
-          payload.imageUrl || '/samples/banner-aero-horizon.jpg'
-        ).slice(0, 2000),
+        imageUrl: String(payload.imageUrl || '').slice(0, 2000),
         mode: payload.mode || 'slideshow',
         startAt: payload.startAt ? String(payload.startAt).slice(0, 64) : null,
         endAt: payload.endAt ? String(payload.endAt).slice(0, 64) : null,
@@ -645,6 +687,9 @@ export async function createBannerDoc(
             : null,
         dailyEndHour:
           typeof payload.dailyEndHour === 'number' ? payload.dailyEndHour : null,
+        timeZone: payload.timeZone
+          ? String(payload.timeZone).slice(0, 64)
+          : null,
         priority: typeof payload.priority === 'number' ? payload.priority : 20,
         authorId,
         serverUpdatedAt: serverTimestamp(),
@@ -678,6 +723,8 @@ export async function updateBannerDoc(
     clean.dailyStartHour = patch.dailyStartHour ?? null;
   if (patch.dailyEndHour !== undefined)
     clean.dailyEndHour = patch.dailyEndHour ?? null;
+  if (patch.timeZone !== undefined)
+    clean.timeZone = patch.timeZone ? String(patch.timeZone).slice(0, 64) : null;
   if (patch.priority !== undefined) clean.priority = patch.priority;
 
   try {
@@ -710,6 +757,9 @@ export async function createCountdownDoc(
         targetAt: String(
           payload.targetAt || new Date(Date.now() + 7 * 86400 * 1000).toISOString()
         ).slice(0, 64),
+        timeZone: payload.timeZone
+          ? String(payload.timeZone).slice(0, 64)
+          : null,
         tag: payload.tag ? String(payload.tag).slice(0, 80) : null,
         location: payload.location
           ? String(payload.location).slice(0, 200)
@@ -773,5 +823,291 @@ export async function saveDesignConfigDoc(
     }
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+const EMAIL_ID_REGEX = /^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}$/;
+
+export function normalizeEmailId(raw: string): string {
+  return raw.trim().toLowerCase().slice(0, 254);
+}
+
+export function isValidEmailAddress(raw: string): boolean {
+  const email = normalizeEmailId(raw);
+  return email.length >= 3 && email.length <= 254 && EMAIL_ID_REGEX.test(email);
+}
+
+function toIsoStringSafe(value: unknown): string {
+  if (!value) return new Date().toISOString();
+  if (typeof value === 'string') return value;
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'toDate' in value &&
+    typeof (value as { toDate: () => Date }).toDate === 'function'
+  ) {
+    return (value as { toDate: () => Date }).toDate().toISOString();
+  }
+  return new Date().toISOString();
+}
+
+export function subscribeOwnCollaboratorStatus(
+  email: string,
+  onChange: (hasAccess: boolean) => void
+): () => void {
+  const clean = normalizeEmailId(email);
+  if (!isValidEmailAddress(clean)) {
+    onChange(false);
+    return () => {};
+  }
+  return onSnapshot(
+    doc(db, 'collaborators', clean),
+    (snap) => onChange(snap.exists()),
+    () => onChange(false)
+  );
+}
+
+export function subscribeOwnAccessRequest(
+  uid: string,
+  onChange: (req: AccessRequestRecord | null) => void
+): () => void {
+  if (!uid) {
+    onChange(null);
+    return () => {};
+  }
+  return onSnapshot(
+    doc(db, 'access_requests', uid),
+    (snap) => {
+      if (!snap.exists()) {
+        onChange(null);
+        return;
+      }
+      const raw = snap.data();
+      onChange({
+        uid: snap.id,
+        email: String(raw.email || ''),
+        displayName: raw.displayName ? String(raw.displayName) : undefined,
+        note: raw.note ? String(raw.note) : undefined,
+        status: 'pending',
+        requestedAt: toIsoStringSafe(raw.requestedAt),
+      });
+    },
+    () => onChange(null)
+  );
+}
+
+export function subscribeTeamManagement({
+  onCollaborators,
+  onRequests,
+  onError,
+}: {
+  onCollaborators: (items: CollaboratorRecord[]) => void;
+  onRequests: (items: AccessRequestRecord[]) => void;
+  onError: (err: Error) => void;
+}): () => void {
+  const unsubs: Unsubscribe[] = [];
+
+  unsubs.push(
+    onSnapshot(
+      collection(db, 'collaborators'),
+      (snap) => {
+        const rows: CollaboratorRecord[] = snap.docs.map((d) => {
+          const raw = d.data();
+          return {
+            email: String(raw.email || d.id),
+            displayName: raw.displayName ? String(raw.displayName) : undefined,
+            note: raw.note ? String(raw.note) : undefined,
+            addedByUid: String(raw.addedByUid || ''),
+            addedByEmail: raw.addedByEmail ? String(raw.addedByEmail) : undefined,
+            addedAt: toIsoStringSafe(raw.addedAt),
+          };
+        });
+        rows.sort((a, b) => a.email.localeCompare(b.email));
+        onCollaborators(rows);
+      },
+      (err) => {
+        try {
+          handleFirestoreError(err, OperationType.LIST, 'collaborators');
+        } catch (wrapped) {
+          onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
+      }
+    )
+  );
+
+  unsubs.push(
+    onSnapshot(
+      collection(db, 'access_requests'),
+      (snap) => {
+        const rows: AccessRequestRecord[] = snap.docs.map((d) => {
+          const raw = d.data();
+          return {
+            uid: d.id,
+            email: String(raw.email || ''),
+            displayName: raw.displayName ? String(raw.displayName) : undefined,
+            note: raw.note ? String(raw.note) : undefined,
+            status: 'pending',
+            requestedAt: toIsoStringSafe(raw.requestedAt),
+          };
+        });
+        rows.sort(
+          (a, b) =>
+            new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime()
+        );
+        onRequests(rows);
+      },
+      (err) => {
+        try {
+          handleFirestoreError(err, OperationType.LIST, 'access_requests');
+        } catch (wrapped) {
+          onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+        }
+      }
+    )
+  );
+
+  return () => {
+    for (const unsub of unsubs) unsub();
+  };
+}
+
+export async function addCollaboratorDoc(
+  adminUid: string,
+  adminEmail: string,
+  targetEmail: string,
+  options?: { displayName?: string; note?: string }
+): Promise<void> {
+  const cleanEmail = normalizeEmailId(targetEmail);
+  if (!isValidEmailAddress(cleanEmail)) {
+    throw new Error('Please enter a valid Google email address.');
+  }
+  const path = `collaborators/${cleanEmail}`;
+  try {
+    await setDoc(
+      doc(db, 'collaborators', cleanEmail),
+      stripUndefinedDeep({
+        email: cleanEmail,
+        displayName: options?.displayName?.trim().slice(0, 160) || undefined,
+        note: options?.note?.trim().slice(0, 500) || undefined,
+        addedByUid: adminUid,
+        addedByEmail: normalizeEmailId(adminEmail) || undefined,
+        addedAt: serverTimestamp(),
+      })
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function ensureSelfCollaboratorDoc(
+  uid: string,
+  email: string,
+  displayName?: string
+): Promise<void> {
+  const cleanEmail = normalizeEmailId(email);
+  if (!uid || !isValidEmailAddress(cleanEmail)) return;
+  const ref = doc(db, 'collaborators', cleanEmail);
+  try {
+    const existingSnap = await getDoc(ref);
+    if (existingSnap.exists()) return;
+    await setDoc(
+      ref,
+      stripUndefinedDeep({
+        email: cleanEmail,
+        displayName: displayName?.trim().slice(0, 160) || undefined,
+        note: 'Joined via Google Sign-In',
+        addedByUid: uid,
+        addedByEmail: cleanEmail,
+        addedAt: serverTimestamp(),
+      })
+    );
+  } catch (err) {
+    console.warn('Could not auto-register collaborator record:', err);
+  }
+}
+
+export async function removeCollaboratorDoc(email: string): Promise<void> {
+  const cleanEmail = normalizeEmailId(email);
+  const path = `collaborators/${cleanEmail}`;
+  try {
+    await deleteDoc(doc(db, 'collaborators', cleanEmail));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+export async function submitAccessRequestDoc(params: {
+  uid: string;
+  email: string;
+  displayName?: string;
+  note?: string;
+}): Promise<void> {
+  const cleanEmail = normalizeEmailId(params.email);
+  if (!isValidEmailAddress(cleanEmail)) {
+    throw new Error('Verified Google email address is required.');
+  }
+  const path = `access_requests/${params.uid}`;
+  try {
+    await setDoc(
+      doc(db, 'access_requests', params.uid),
+      stripUndefinedDeep({
+        uid: params.uid,
+        email: cleanEmail,
+        displayName: params.displayName?.trim().slice(0, 160) || undefined,
+        note: params.note?.trim().slice(0, 500) || undefined,
+        status: 'pending',
+        requestedAt: serverTimestamp(),
+      })
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function withdrawAccessRequestDoc(uid: string): Promise<void> {
+  const path = `access_requests/${uid}`;
+  try {
+    await deleteDoc(doc(db, 'access_requests', uid));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+export async function approveAccessRequestDoc(
+  adminUid: string,
+  adminEmail: string,
+  req: AccessRequestRecord
+): Promise<void> {
+  const cleanEmail = normalizeEmailId(req.email);
+  if (!isValidEmailAddress(cleanEmail)) {
+    throw new Error('Invalid email on access request.');
+  }
+  const path = `collaborators/${cleanEmail}`;
+  try {
+    const batch = writeBatch(db);
+    batch.set(
+      doc(db, 'collaborators', cleanEmail),
+      stripUndefinedDeep({
+        email: cleanEmail,
+        displayName: req.displayName?.trim().slice(0, 160) || undefined,
+        note: req.note?.trim().slice(0, 500) || undefined,
+        addedByUid: adminUid,
+        addedByEmail: normalizeEmailId(adminEmail) || undefined,
+        addedAt: serverTimestamp(),
+      })
+    );
+    batch.delete(doc(db, 'access_requests', req.uid));
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function declineAccessRequestDoc(uid: string): Promise<void> {
+  const path = `access_requests/${uid}`;
+  try {
+    await deleteDoc(doc(db, 'access_requests', uid));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
   }
 }

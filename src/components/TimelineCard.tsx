@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -16,6 +16,7 @@ import {
   formatPostTimestamp,
   getFontClass,
   getMergedPostTags,
+  normalizeShortsToWatchUrl,
   sanitizeRichHtml,
 } from '../lib/mediaUtils';
 
@@ -32,6 +33,22 @@ interface TimelineCardProps {
   isDetailView?: boolean;
   canEdit?: boolean;
   layoutMode?: 'stack' | 'grid';
+}
+
+interface MediaDimension {
+  w: number;
+  h: number;
+}
+
+function getDefaultMediaDim(att: MediaAttachment): MediaDimension {
+  if (att.type === 'embed') {
+    const isShorts = (att.url || '').includes('/shorts/');
+    return isShorts ? { w: 9, h: 16 } : { w: 16, h: 9 };
+  }
+  if (att.type === 'video') {
+    return { w: 16, h: 9 };
+  }
+  return { w: 4, h: 3 };
 }
 
 function renderTextWithClickableHashtags(
@@ -116,77 +133,180 @@ function isCarouselAttachment(att: MediaAttachment): boolean {
   return false;
 }
 
-const CarouselSlide: React.FC<{
+const MediaSlide: React.FC<{
   attachment: MediaAttachment;
-  isMulti: boolean;
-  isCompactGrid?: boolean;
+  mode: 'single' | 'carousel';
+  sharedHeight?: number;
+  maxWidth?: number;
+  measuredDim?: MediaDimension;
+  onMeasure?: (id: string, w: number, h: number) => void;
   onOpenLightbox: (url: string, title?: string) => void;
-}> = ({ attachment, isMulti, isCompactGrid = false, onOpenLightbox }) => {
-  const frameHeightClass = isMulti
-    ? isCompactGrid
-      ? 'h-[190px] sm:h-[220px]'
-      : 'h-[240px] sm:h-[310px]'
-    : '';
+}> = ({
+  attachment,
+  mode,
+  sharedHeight,
+  maxWidth,
+  measuredDim,
+  onMeasure,
+  onOpenLightbox,
+}) => {
+  const dim = measuredDim || getDefaultMediaDim(attachment);
+  const ratio = dim.w > 0 && dim.h > 0 ? dim.w / dim.h : 4 / 3;
+  const isShorts = attachment.type === 'embed' && (attachment.url || '').includes('/shorts/');
+
+  // For equal-height carousel slides: height matches the tallest media item in the post,
+  // while width adjusts proportionally to preserve exact aspect ratio without cropping.
+  const slideStyle: React.CSSProperties | undefined =
+    mode === 'carousel' && sharedHeight
+      ? {
+          height: `${sharedHeight}px`,
+          width: `${Math.min(
+            maxWidth || 640,
+            Math.max(140, Math.round(sharedHeight * ratio))
+          )}px`,
+          maxWidth: '100%',
+        }
+      : undefined;
 
   if (attachment.type === 'image' || attachment.type === 'gif') {
+    if (mode === 'carousel') {
+      return (
+        <figure
+          style={slideStyle}
+          className="relative shrink-0 snap-start overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950/[0.04] dark:border-slate-700/70 dark:bg-slate-950/70"
+        >
+          <button
+            type="button"
+            onClick={() => onOpenLightbox(attachment.url, attachment.title)}
+            className="block h-full w-full cursor-pointer"
+          >
+            <img
+              src={attachment.url}
+              alt={attachment.title || 'Post media'}
+              referrerPolicy="no-referrer"
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                if (img.naturalWidth && img.naturalHeight) {
+                  onMeasure?.(attachment.id, img.naturalWidth, img.naturalHeight);
+                }
+              }}
+              className="block h-full w-full object-contain"
+            />
+          </button>
+          {attachment.type === 'gif' && (
+            <span className="pointer-events-none absolute bottom-2 left-2 rounded-md bg-slate-950/75 px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-wide text-white backdrop-blur-sm">
+              GIF
+            </span>
+          )}
+        </figure>
+      );
+    }
+
+    // Single image or detail view: uncropped natural aspect ratio inside X-style rounded border
     return (
-      <figure
-        className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-100/80 dark:border-slate-700/60 dark:bg-slate-900/60 ${
-          isMulti ? 'w-[86%] sm:w-[78%] shrink-0 snap-start' : 'w-full'
-        }`}
-      >
+      <figure className="relative overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950/[0.03] dark:border-slate-700/70 dark:bg-slate-950/70">
         <button
           type="button"
           onClick={() => onOpenLightbox(attachment.url, attachment.title)}
-          className={`block w-full text-left cursor-pointer ${frameHeightClass}`}
+          className="block w-full cursor-pointer"
         >
           <img
             src={attachment.url}
             alt={attachment.title || 'Post media'}
             referrerPolicy="no-referrer"
-            className={`${
-              isMulti ? 'h-full w-full' : 'max-h-[460px] w-full'
-            } object-cover`}
+            className="mx-auto block w-full max-h-[520px] h-auto object-contain"
           />
         </button>
+        {attachment.type === 'gif' && (
+          <span className="pointer-events-none absolute bottom-2.5 left-2.5 rounded-md bg-slate-950/75 px-1.5 py-0.5 font-mono text-[10px] font-bold tracking-wide text-white backdrop-blur-sm">
+            GIF
+          </span>
+        )}
       </figure>
     );
   }
 
   if (attachment.type === 'video') {
-    return (
-      <div
-        className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950 dark:border-slate-700/60 ${
-          isMulti ? 'w-[86%] sm:w-[78%] shrink-0 snap-start flex flex-col' : 'w-full'
-        }`}
-      >
-        <div className={isMulti ? 'h-[240px] sm:h-[310px] w-full bg-black' : 'w-full bg-black'}>
+    if (mode === 'carousel') {
+      return (
+        <div
+          style={slideStyle}
+          className="shrink-0 snap-start overflow-hidden rounded-2xl border border-slate-200/80 bg-black dark:border-slate-700/70"
+        >
           <video
             controls
             preload="metadata"
-            className={isMulti ? 'h-full w-full object-contain' : 'max-h-[440px] w-full'}
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget;
+              if (v.videoWidth && v.videoHeight) {
+                onMeasure?.(attachment.id, v.videoWidth, v.videoHeight);
+              }
+            }}
+            className="block h-full w-full object-contain bg-black"
             src={attachment.url}
           />
         </div>
+      );
+    }
+
+    return (
+      <div className="rounded-2xl overflow-hidden border border-slate-200/80 bg-black dark:border-slate-700/70">
+        <video
+          controls
+          preload="metadata"
+          className="block w-full bg-black object-contain max-h-[520px]"
+          src={attachment.url}
+        />
       </div>
     );
   }
 
-  // Video / YouTube embed inside carousel
-  return (
-    <div
-      className={`overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950/5 dark:border-slate-700/60 dark:bg-slate-900/70 ${
-        isMulti ? 'w-[86%] sm:w-[78%] shrink-0 snap-start flex flex-col' : 'w-full'
-      }`}
-    >
-      <div className={isMulti ? 'h-[240px] sm:h-[310px] w-full' : 'aspect-video w-full'}>
+  // Video / YouTube embed
+  if (mode === 'carousel') {
+    return (
+      <div
+        style={{ ...slideStyle, containerType: 'size' }}
+        className="shrink-0 snap-start overflow-hidden rounded-2xl border border-slate-200/80 bg-black flex items-center justify-center dark:border-slate-700/70"
+      >
         <iframe
           src={attachment.embedUrl}
           title={attachment.title || 'YouTube video'}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
           allowFullScreen
           loading="lazy"
-          className="h-full w-full border-0"
+          style={
+            isShorts
+              ? {
+                  width: 'min(100cqw, calc(100cqh * 9 / 16))',
+                  height: 'min(100cqh, calc(100cqw * 16 / 9))',
+                }
+              : {
+                  width: 'min(100cqw, calc(100cqh * 16 / 9))',
+                  height: 'min(100cqh, calc(100cqw * 9 / 16))',
+                }
+          }
+          className="block border-0"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl overflow-hidden border border-slate-200/80 bg-black dark:border-slate-700/70">
+      <div
+        className={
+          isShorts
+            ? 'mx-auto aspect-[9/16] max-h-[520px] w-full max-w-[310px]'
+            : 'aspect-video w-full'
+        }
+      >
+        <iframe
+          src={attachment.embedUrl}
+          title={attachment.title || 'YouTube video'}
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+          allowFullScreen
+          loading="lazy"
+          className="block h-full w-full border-0"
         />
       </div>
     </div>
@@ -258,19 +378,23 @@ const StackedCardRenderer: React.FC<{ attachment: MediaAttachment }> = ({
   }
 
   // Web link preview card
+  const safeHref = normalizeShortsToWatchUrl(attachment.url);
+  const safeSubtitle = attachment.subtitle
+    ? normalizeShortsToWatchUrl(attachment.subtitle)
+    : safeHref;
   return (
     <a
-      href={attachment.url}
+      href={safeHref}
       target="_blank"
       rel="noopener noreferrer"
       className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3 text-sm transition-colors hover:bg-white dark:border-slate-700/60 dark:bg-slate-900/70 dark:hover:bg-slate-800/80"
     >
       <div className="min-w-0">
         <div className="truncate font-medium text-slate-900 dark:text-white">
-          {attachment.title || attachment.url}
+          {attachment.title || safeHref}
         </div>
         <div className="truncate text-xs text-slate-500 dark:text-slate-400">
-          {attachment.subtitle || attachment.url}
+          {safeSubtitle}
         </div>
       </div>
       <ExternalLink className="h-4 w-4 text-sky-600 dark:text-sky-400 shrink-0" />
@@ -297,6 +421,8 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
   const bodyRef = useRef<HTMLDivElement>(null);
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
   const [isBodyTruncated, setIsBodyTruncated] = useState(false);
+  const [mediaDims, setMediaDims] = useState<Record<string, MediaDimension>>({});
+  const [trackWidth, setTrackWidth] = useState<number>(isGridMode ? 320 : 560);
 
   const isPinned =
     !!post.pinnedUntil && new Date(post.pinnedUntil).getTime() > nowMs;
@@ -304,19 +430,61 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
     !!post.scheduledFor && new Date(post.scheduledFor).getTime() > nowMs;
 
   const mergedTags = getMergedPostTags(post);
-  const processedHtml = React.useMemo(
+  const processedHtml = useMemo(
     () => enhanceBodyHtmlWithTagLinks(post.bodyHtml),
     [post.bodyHtml]
   );
 
-  const carouselItems = React.useMemo(
+  const carouselItems = useMemo(
     () => (post.attachments || []).filter(isCarouselAttachment),
     [post.attachments]
   );
-  const stackedCardItems = React.useMemo(
+  const stackedCardItems = useMemo(
     () => (post.attachments || []).filter((att) => !isCarouselAttachment(att)),
     [post.attachments]
   );
+
+  useEffect(() => {
+    const el = carouselTrackRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const updateWidth = () => {
+      if (el.clientWidth > 0) setTrackWidth(el.clientWidth);
+    };
+    updateWidth();
+    const obs = new ResizeObserver(updateWidth);
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [carouselItems.length, layoutMode]);
+
+  const handleMeasure = (id: string, w: number, h: number) => {
+    if (!w || !h) return;
+    setMediaDims((prev) => {
+      const cur = prev[id];
+      if (cur && cur.w === w && cur.h === h) return prev;
+      return { ...prev, [id]: { w, h } };
+    });
+  };
+
+  // Equal height across all slides in this post's carousel, matched to the tallest item
+  const sharedCarouselHeight = useMemo(() => {
+    if (carouselItems.length <= 1) return undefined;
+    const refW = Math.min(
+      Math.round(trackWidth * 0.86),
+      isGridMode ? 310 : 500
+    );
+    const minCap = isGridMode ? 190 : 230;
+    const maxCap = isGridMode ? 360 : 480;
+    let tallest = isGridMode ? 220 : 280;
+    for (const item of carouselItems) {
+      const dim = mediaDims[item.id] || getDefaultMediaDim(item);
+      if (dim.w > 0 && dim.h > 0) {
+        const naturalH = Math.round((refW * dim.h) / dim.w);
+        const clamped = Math.max(minCap, Math.min(maxCap, naturalH));
+        if (clamped > tallest) tallest = clamped;
+      }
+    }
+    return tallest;
+  }, [carouselItems, mediaDims, trackWidth, isGridMode]);
 
   useEffect(() => {
     if (isDetailView) {
@@ -362,17 +530,18 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
   const scrollCarouselBy = (direction: -1 | 1) => {
     const track = carouselTrackRef.current;
     if (!track) return;
-    const stepWidth = Math.max(260, track.clientWidth * 0.78);
+    const stepWidth = Math.max(220, Math.round(track.clientWidth * 0.78));
     track.scrollBy({ left: direction * stepWidth, behavior: 'smooth' });
   };
 
   const handleCarouselScroll = () => {
     const track = carouselTrackRef.current;
     if (!track || carouselItems.length <= 1) return;
-    const stepWidth = Math.max(200, track.clientWidth * 0.78);
+    const maxScroll = Math.max(1, track.scrollWidth - track.clientWidth);
+    const progress = track.scrollLeft / maxScroll;
     const idx = Math.min(
       carouselItems.length - 1,
-      Math.max(0, Math.round(track.scrollLeft / stepWidth))
+      Math.max(0, Math.round(progress * (carouselItems.length - 1)))
     );
     setActiveSlideIndex(idx);
   };
@@ -392,7 +561,7 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
           <time dateTime={post.publishedAt}>
-            {formatPostTimestamp(post.publishedAt)}
+            {formatPostTimestamp(post.publishedAt, true, post.scheduledTimeZone)}
           </time>
           {isPinned && (
             <>
@@ -515,72 +684,83 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
         </div>
       )}
 
-      {/* First Below Text/Tags: Visual Media & Video/YouTube Carousel (Timeline) or Vertical Stack (Expanded) */}
+      {/* Below Text/Tags: Uncropped X/Twitter-Styled Media Carousel (Tallest-Height Matched) or Pinterest Masonry Grid */}
       {carouselItems.length > 0 && (
-        <div className="relative mt-4">
+        <div className="relative mt-3.5">
           {isDetailView ? (
             <div className="space-y-3">
               {carouselItems.map((att) => (
-                <CarouselSlide
+                <MediaSlide
                   key={att.id}
                   attachment={att}
-                  isMulti={false}
+                  mode="single"
                   onOpenLightbox={onOpenLightbox}
                 />
               ))}
             </div>
           ) : carouselItems.length === 1 ? (
-            <CarouselSlide
+            <MediaSlide
               attachment={carouselItems[0]}
-              isMulti={false}
+              mode="single"
               onOpenLightbox={onOpenLightbox}
             />
           ) : (
-            <>
-              <div className="mb-2 flex items-center justify-between text-[11px] font-mono text-slate-500 tabular-nums dark:text-slate-400">
-                <span>
-                  {activeSlideIndex + 1} / {carouselItems.length}
-                </span>
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => scrollCarouselBy(-1)}
-                    aria-label="Scroll media left"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white/85 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => scrollCarouselBy(1)}
-                    aria-label="Scroll media right"
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white/85 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
-                  >
-                    <ChevronRight className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
+            <div className="group/carousel relative">
               <div
                 ref={carouselTrackRef}
                 onScroll={handleCarouselScroll}
-                className="flex gap-3 overflow-x-auto pb-1 snap-x snap-mandatory scroll-smooth"
+                className="flex items-stretch gap-1.5 sm:gap-2 overflow-x-auto pb-1 snap-x snap-mandatory scroll-smooth"
               >
                 {carouselItems.map((att) => (
-                  <CarouselSlide
+                  <MediaSlide
                     key={att.id}
                     attachment={att}
-                    isMulti={true}
-                    isCompactGrid={isGridMode}
+                    mode="carousel"
+                    sharedHeight={sharedCarouselHeight}
+                    maxWidth={trackWidth}
+                    measuredDim={mediaDims[att.id]}
+                    onMeasure={handleMeasure}
                     onOpenLightbox={onOpenLightbox}
                   />
                 ))}
               </div>
-            </>
+
+              {/* X/Twitter-style Floating Carousel Navigation Arrows */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  scrollCarouselBy(-1);
+                }}
+                aria-label="Previous media"
+                title="Previous media"
+                className="absolute left-2 top-1/2 z-10 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-950/65 text-white shadow-md backdrop-blur-md opacity-85 sm:opacity-0 sm:group-hover/carousel:opacity-100 hover:bg-slate-950/90 transition-opacity cursor-pointer"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  scrollCarouselBy(1);
+                }}
+                aria-label="Next media"
+                title="Next media"
+                className="absolute right-2 top-1/2 z-10 -translate-y-1/2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-slate-950/65 text-white shadow-md backdrop-blur-md opacity-85 sm:opacity-0 sm:group-hover/carousel:opacity-100 hover:bg-slate-950/90 transition-opacity cursor-pointer"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+
+              {/* Subtle X-style Slide Counter Badge */}
+              <span className="pointer-events-none absolute bottom-3 right-2.5 z-10 rounded-full bg-slate-950/75 px-2.5 py-0.5 font-mono text-[11px] font-semibold text-white tabular-nums backdrop-blur-md">
+                {activeSlideIndex + 1} / {carouselItems.length}
+              </span>
+            </div>
           )}
         </div>
       )}
 
-      {/* Below Carousel: Stacked Web Link / Document / Audio Cards */}
+      {/* Below Carousel/Grid: Stacked Web Link / Document / Audio Cards */}
       {stackedCardItems.length > 0 && (
         <div className="mt-3 space-y-2.5">
           {stackedCardItems.map((att) => (
@@ -591,3 +771,4 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
     </article>
   );
 };
+

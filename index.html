@@ -3,6 +3,45 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Suppress benign Vite HMR WebSocket notices in cloud preview where HMR is disabled
+      (() => {
+        const isViteWsNotice = (msg) => {
+          if (!msg) return false;
+          const str = typeof msg === 'string' ? msg : String(msg?.message || msg?.stack || msg);
+          return (
+            str.includes('WebSocket closed without opened') ||
+            str.includes('[vite] Error: WebSocket') ||
+            str.includes('failed to connect to websocket')
+          );
+        };
+        const origConsoleError = console.error;
+        console.error = function (...args) {
+          if (args.some((arg) => isViteWsNotice(arg))) return;
+          origConsoleError.apply(console, args);
+        };
+        window.addEventListener(
+          'error',
+          (event) => {
+            if (isViteWsNotice(event.message) || isViteWsNotice(event.error)) {
+              event.stopImmediatePropagation();
+              event.preventDefault();
+            }
+          },
+          true
+        );
+        window.addEventListener(
+          'unhandledrejection',
+          (event) => {
+            if (isViteWsNotice(event.reason)) {
+              event.stopImmediatePropagation();
+              event.preventDefault();
+            }
+          },
+          true
+        );
+      })();
+    </script>
     <title>MY DIARIES DASHBOARD</title>
     <meta name="description" content="Personal Frutiger Aero 2026 multimedia diary, event timeline, and scheduled dashboard." />
     <meta property="og:title" content="MY DIARIES DASHBOARD" />

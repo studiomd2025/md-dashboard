@@ -4,6 +4,7 @@ export const DARK_THEME_IDS = new Set([
   'twilight-lagoon',
   'metro-eclipse-dark',
   'metro-ipod-electric',
+  'y2k-phosphor-grid',
 ]);
 
 function parseHexRgb(hex: string): [number, number, number] | null {

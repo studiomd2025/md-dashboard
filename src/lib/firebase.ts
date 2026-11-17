@@ -14,6 +14,12 @@ import {
 import firebaseConfig from '../../firebase-applet-config.json';
 
 export const OWNER_EMAIL = 'officialmdworkspace@gmail.com';
+export const BOOTSTRAP_OWNER_EMAILS = [
+  'officialmdworkspace@gmail.com',
+  'officialpmdresources@gmail.com',
+  'officialmpdresources@gmail.com',
+] as const;
+export const OWNER_EMAILS = BOOTSTRAP_OWNER_EMAILS;
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -74,11 +80,20 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
-export function isOwnerUser(user: User | null): boolean {
+export function isBootstrapOwnerUser(user: User | null): boolean {
   if (!user || !user.email) return false;
+  const email = user.email.toLowerCase();
   return (
-    user.email.toLowerCase() === OWNER_EMAIL && Boolean(user.emailVerified)
+    (BOOTSTRAP_OWNER_EMAILS as readonly string[]).includes(email) &&
+    Boolean(user.emailVerified)
   );
+}
+
+export function isOwnerUser(
+  user: User | null,
+  _hasCollaboratorAccess = true
+): boolean {
+  return Boolean(user && user.email && user.emailVerified);
 }
 
 export async function signInOwnerWithGoogle(): Promise<User> {

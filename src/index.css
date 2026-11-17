@@ -192,6 +192,86 @@
     color: #f1f5f9;
   }
 
+  /* Y2K Theme 1: Liquid Chrome & Iridescent CD (mid-tone brushed silver metallic) */
+  html[data-theme="y2k-chrome-cd"] {
+    --accent-start: #3b82f6;
+    --accent-end: #1d4ed8;
+    --accent-shadow: rgba(37, 99, 235, 0.36);
+    --countdown-ink: #0f172a;
+    --theme-link: #1d4ed8;
+  }
+
+  html[data-theme="y2k-chrome-cd"] body {
+    background-color: #cbd5e1;
+    background-image:
+      linear-gradient(rgba(226, 232, 240, 0.32), rgba(203, 213, 225, 0.36)),
+      url("/samples/y2k-chrome-cd.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: #0f172a;
+  }
+
+  /* Y2K Theme 2: Phosphor Cyber Matrix (PS2/Winamp wireframe grid) */
+  html[data-theme="y2k-phosphor-grid"] {
+    --accent-start: #84cc16;
+    --accent-end: #0d9488;
+    --accent-shadow: rgba(132, 204, 22, 0.34);
+    --countdown-ink: #d9f99d;
+    --theme-link: #a3e635;
+  }
+
+  html[data-theme="y2k-phosphor-grid"] body {
+    background-color: #07110d;
+    background-image:
+      linear-gradient(rgba(7, 17, 13, 0.44), rgba(5, 14, 11, 0.52)),
+      url("/samples/y2k-phosphor-grid.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: #ecfdf5;
+  }
+
+  /* Y2K Theme 3: Holographic Candy Flip (pearlescent lilac & hot-pink chrome) */
+  html[data-theme="y2k-bubblegum-flip"] {
+    --accent-start: #ec4899;
+    --accent-end: #7c3aed;
+    --accent-shadow: rgba(236, 72, 153, 0.38);
+    --countdown-ink: #3b0764;
+    --theme-link: #be185d;
+  }
+
+  html[data-theme="y2k-bubblegum-flip"] body {
+    background-color: #f3e8ff;
+    background-image:
+      linear-gradient(rgba(250, 245, 255, 0.34), rgba(243, 232, 255, 0.4)),
+      url("/samples/y2k-bubblegum-flip.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: #1e1b4b;
+  }
+
+  /* Y2K Theme 4: Dreamcast Tangerine & Cream (retro Japanese arcade graphic) */
+  html[data-theme="y2k-arcade-peach"] {
+    --accent-start: #f97316;
+    --accent-end: #0891b2;
+    --accent-shadow: rgba(249, 115, 22, 0.35);
+    --countdown-ink: #431407;
+    --theme-link: #c2410c;
+  }
+
+  html[data-theme="y2k-arcade-peach"] body {
+    background-color: #faf2e4;
+    background-image:
+      linear-gradient(rgba(255, 250, 240, 0.42), rgba(250, 242, 228, 0.46)),
+      url("/samples/y2k-arcade-peach.jpg");
+    background-size: cover;
+    background-position: center;
+    background-attachment: fixed;
+    color: #1c1917;
+  }
+
   h1, h2, h3, h4, .font-display {
     font-family: var(--font-display);
   }
@@ -255,6 +335,64 @@ html[data-surface="crisp-2026"].dark .mobile-drawer-solid {
 
 .aero-button-primary:hover {
   filter: brightness(1.06);
+}
+
+/* Experimental Y2K Material Surfaces */
+html[data-theme="y2k-chrome-cd"]:not([data-surface="crisp-2026"]) .aero-glass {
+  background: linear-gradient(
+    160deg,
+    rgba(248, 250, 252, 0.88) 0%,
+    rgba(226, 232, 240, 0.82) 55%,
+    rgba(241, 245, 249, 0.88) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.96),
+    inset 0 -1px 0 rgba(148, 163, 184, 0.35),
+    0 12px 30px -16px rgba(15, 23, 42, 0.24);
+}
+
+html[data-theme="y2k-phosphor-grid"]:not([data-surface="crisp-2026"]) .aero-glass {
+  background: rgba(8, 22, 17, 0.82);
+  border: 1px solid rgba(163, 230, 53, 0.24);
+  box-shadow:
+    inset 0 1px 0 rgba(163, 230, 53, 0.16),
+    0 14px 36px -18px rgba(0, 0, 0, 0.65);
+}
+
+html[data-theme="y2k-phosphor-grid"] .diary-prose a,
+html[data-theme="y2k-phosphor-grid"] .diary-hashtag-inline {
+  color: #a3e635;
+}
+
+html[data-theme="y2k-bubblegum-flip"]:not([data-surface="crisp-2026"]) .aero-glass {
+  background: linear-gradient(
+    160deg,
+    rgba(255, 250, 255, 0.86) 0%,
+    rgba(245, 235, 255, 0.8) 100%
+  );
+  border: 1px solid rgba(244, 114, 182, 0.32);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 12px 32px -16px rgba(124, 58, 237, 0.2);
+}
+
+html[data-theme="y2k-bubblegum-flip"] .diary-prose a,
+html[data-theme="y2k-bubblegum-flip"] .diary-hashtag-inline {
+  color: #be185d;
+}
+
+html[data-theme="y2k-arcade-peach"]:not([data-surface="crisp-2026"]) .aero-glass {
+  background: rgba(255, 251, 245, 0.86);
+  border: 1px solid rgba(251, 146, 60, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 12px 30px -16px rgba(194, 65, 12, 0.18);
+}
+
+html[data-theme="y2k-arcade-peach"] .diary-prose a,
+html[data-theme="y2k-arcade-peach"] .diary-hashtag-inline {
+  color: #c2410c;
 }
 
 .diary-prose {

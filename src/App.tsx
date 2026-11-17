@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
@@ -19,9 +19,11 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  AccessRequestRecord,
   ActiveView,
   BackendTab,
   BannerSchedule,
+  CollaboratorRecord,
   CountdownFormat,
   DesignSettings,
   DiaryFont,
@@ -32,27 +34,44 @@ import type {
 } from './types';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { getMergedPostTags, getMonthKey, stripHtml } from './lib/mediaUtils';
+import {
+  DEFAULT_TIME_ZONE,
+  dateFilterBoundToMs,
+  getTimeZoneAbbr,
+} from './lib/timeZones';
 import { getCustomThemeColors, getThemeIsDark } from './lib/themeColors';
+import { TimeZoneSelect } from './components/TimeZoneSelect';
 import {
   auth,
+  isBootstrapOwnerUser,
   isOwnerUser,
   signInOwnerWithGoogle,
   signOutOwner,
 } from './lib/firebase';
 import {
+  addCollaboratorDoc,
+  approveAccessRequestDoc,
   createBannerDoc,
   createCountdownDoc,
   createPostDoc,
+  declineAccessRequestDoc,
   deleteBannerDoc,
   deleteCountdownDoc,
   deletePostDoc,
   deleteTagBatch,
+  ensureSelfCollaboratorDoc,
+  removeCollaboratorDoc,
   renameTagBatch,
   saveDesignConfigDoc,
   seedFirestoreIfEmpty,
+  submitAccessRequestDoc,
   subscribeDashboardData,
+  subscribeOwnAccessRequest,
+  subscribeOwnCollaboratorStatus,
+  subscribeTeamManagement,
   updateBannerDoc,
   updatePostDoc,
+  withdrawAccessRequestDoc,
 } from './lib/firestoreStore';
 import { Header } from './components/Header';
 import { ScheduledBanner } from './components/ScheduledBanner';
@@ -61,6 +80,7 @@ import { MobileCountdownStrip, Sidebar } from './components/Sidebar';
 import { NextOnMdView } from './components/NextOnMdView';
 import { RichComposerModal } from './components/RichComposerModal';
 import { BackendConsoleView } from './components/BackendConsoleView';
+import { RegisterModal } from './components/RegisterModal';
 import {
   LiveTvView,
   STATIONS,
@@ -82,13 +102,28 @@ export default function App() {
     customBackdropUrl: '',
     customThemes: [],
   });
+  const serverDesignRef = useRef<{
+    theme: DesignSettings['theme'];
+    surfaceStyle: DesignSettings['surfaceStyle'];
+  }>({
+    theme: 'aero-daylight',
+    surfaceStyle: 'aero-glass',
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState('');
   const [subNonce, setSubNonce] = useState(0);
-  const isAdmin = useMemo(() => isOwnerUser(user), [user]);
+  const [hasCollaboratorAccess, setHasCollaboratorAccess] = useState(false);
+  const [ownAccessRequest, setOwnAccessRequest] = useState<AccessRequestRecord | null>(null);
+  const [collaborators, setCollaborators] = useState<CollaboratorRecord[]>([]);
+  const [accessRequests, setAccessRequests] = useState<AccessRequestRecord[]>([]);
+  const [registerModalOpen, setRegisterModalOpen] = useState(false);
+  const isAdmin = useMemo(
+    () => isOwnerUser(user, hasCollaboratorAccess),
+    [user, hasCollaboratorAccess]
+  );
 
   const [activeView, setActiveView] = useState<ActiveView>(() => {
     if (typeof window === 'undefined') return 'timeline';
@@ -128,8 +163,9 @@ export default function App() {
   const [activeStation, setActiveStation] = useState<BroadcastChannel>(STATIONS[0]);
   const [activeEvent, setActiveEvent] = useState<PlayEventItem | null>(null);
   const [floatingPlayerEnabled, setFloatingPlayerEnabled] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem('md_floating_player') === 'true';
+    if (typeof window === 'undefined') return true;
+    const saved = window.localStorage.getItem('md_floating_player');
+    return saved === null ? true : saved === 'true';
   });
   const [hasVisitedLive, setHasVisitedLive] = useState<boolean>(
     () => activeView === 'live'
@@ -138,6 +174,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [filterTimeZone, setFilterTimeZone] = useState<string>(DEFAULT_TIME_ZONE);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [activeMonth, setActiveMonth] = useState<string | null>(null);
   const [timelineLayout, setTimelineLayout] = useState<'stack' | 'grid'>(() => {
@@ -277,9 +314,16 @@ export default function App() {
     const unsub = onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
       setAuthReady(true);
-      if (nextUser && !isOwnerUser(nextUser)) {
+      if (!nextUser) {
+        setHasCollaboratorAccess(false);
+        setOwnAccessRequest(null);
+        setCollaborators([]);
+        setAccessRequests([]);
+        setAuthError('');
+      } else if (!nextUser.emailVerified) {
+        setHasCollaboratorAccess(false);
         setAuthError(
-          `Signed in as ${nextUser.email || 'unknown account'}. Only the owner account can save changes.`
+          `Signed in as ${nextUser.email || 'unknown account'}, but this email is not verified by Google.`
         );
       } else {
         setAuthError('');
@@ -287,6 +331,46 @@ export default function App() {
     });
     return () => unsub();
   }, []);
+
+  useEffect(() => {
+    if (!authReady || !user || !user.email || !user.emailVerified) {
+      setHasCollaboratorAccess(false);
+      return;
+    }
+    setHasCollaboratorAccess(true);
+    if (!isBootstrapOwnerUser(user)) {
+      ensureSelfCollaboratorDoc(
+        user.uid,
+        user.email,
+        user.displayName || undefined
+      );
+    }
+  }, [authReady, user]);
+
+  useEffect(() => {
+    if (!authReady || !user || isAdmin) {
+      setOwnAccessRequest(null);
+      return;
+    }
+    return subscribeOwnAccessRequest(user.uid, (req) => {
+      setOwnAccessRequest(req);
+    });
+  }, [authReady, user, isAdmin]);
+
+  useEffect(() => {
+    if (!authReady || !isAdmin) {
+      setCollaborators([]);
+      setAccessRequests([]);
+      return;
+    }
+    return subscribeTeamManagement({
+      onCollaborators: setCollaborators,
+      onRequests: setAccessRequests,
+      onError: (err) => {
+        console.warn('Team subscription warning:', err);
+      },
+    });
+  }, [authReady, isAdmin]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -307,6 +391,32 @@ export default function App() {
 
     setLoadError('');
 
+    const applyDeviceThemePreference = (baseDesign: DesignSettings): DesignSettings => {
+      try {
+        const savedLocal = localStorage.getItem('md-visitor-design');
+        if (savedLocal) {
+          const parsed = JSON.parse(savedLocal) as Partial<DesignSettings>;
+          const availableCustomIds = new Set(
+            (baseDesign.customThemes || []).map((t) => t.id)
+          );
+          const candidateTheme = parsed.theme;
+          const isValidCustomOrBuiltin =
+            Boolean(candidateTheme) &&
+            (!String(candidateTheme).startsWith('custom-') ||
+              availableCustomIds.has(String(candidateTheme)));
+
+          return {
+            ...baseDesign,
+            theme: isValidCustomOrBuiltin && candidateTheme ? candidateTheme : baseDesign.theme,
+            surfaceStyle: parsed.surfaceStyle || baseDesign.surfaceStyle,
+          };
+        }
+      } catch {
+        // ignore localStorage parse error
+      }
+      return baseDesign;
+    };
+
     const maybeLoadStarterPreview = async () => {
       if (fallbackFetched || sawDesignInFirestore || sawPostsInFirestore || isAdmin) {
         return;
@@ -320,7 +430,13 @@ export default function App() {
         setPosts(data.posts || []);
         setBanners(data.banners || []);
         setCountdowns(data.countdowns || []);
-        if (data.design) setDesign(data.design);
+        if (data.design) {
+          serverDesignRef.current = {
+            theme: data.design.theme,
+            surfaceStyle: data.design.surfaceStyle,
+          };
+          setDesign(applyDeviceThemePreference(data.design));
+        }
       } catch {
         // Ignore if local API fallback unavailable
       } finally {
@@ -356,24 +472,11 @@ export default function App() {
         if (cancelled) return;
         sawDesignInFirestore = existsInFirestore;
         if (existsInFirestore) {
-          if (!isAdmin) {
-            try {
-              const savedLocal = localStorage.getItem('md-visitor-design');
-              if (savedLocal) {
-                const parsed = JSON.parse(savedLocal) as Partial<DesignSettings>;
-                setDesign({
-                  ...nextDesign,
-                  theme: parsed.theme || nextDesign.theme,
-                  surfaceStyle: parsed.surfaceStyle || nextDesign.surfaceStyle,
-                });
-                setIsLoading(false);
-                return;
-              }
-            } catch {
-              // ignore localStorage parse error
-            }
-          }
-          setDesign(nextDesign);
+          serverDesignRef.current = {
+            theme: nextDesign.theme,
+            surfaceStyle: nextDesign.surfaceStyle,
+          };
+          setDesign(applyDeviceThemePreference(nextDesign));
           setIsLoading(false);
         } else {
           maybeLoadStarterPreview();
@@ -396,20 +499,65 @@ export default function App() {
     try {
       setAuthError('');
       const signedIn = await signInOwnerWithGoogle();
-      if (!isOwnerUser(signedIn)) {
+      if (!signedIn.emailVerified) {
         setAuthError(
-          `Signed in as ${signedIn.email || 'guest'}. Only officialmdworkspace@gmail.com has owner permissions.`
+          `Signed in as ${signedIn.email || 'guest'}, but Google email verification is required.`
         );
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Sign-in cancelled.';
-      setAuthError(msg);
+      const rawMsg = err instanceof Error ? err.message : 'Sign-in cancelled.';
+      if (rawMsg.includes('auth/unauthorized-domain')) {
+        setAuthError(
+          `${rawMsg} — Add "${window.location.hostname}" to Firebase Console > Authentication > Settings > Authorized domains for project ${auth.app.options.projectId || ''}.`
+        );
+      } else if (rawMsg.includes('auth/popup-blocked')) {
+        setAuthError(
+          `${rawMsg} — Your browser blocked the Google sign-in popup. Please allow popups for this site and try again.`
+        );
+      } else {
+        setAuthError(rawMsg);
+      }
     }
   };
 
   const handleOwnerSignOut = async () => {
     await signOutOwner();
     setAuthError('');
+  };
+
+  const handleAddCollaborator = async (email: string, note?: string) => {
+    if (!user || !isAdmin) return;
+    await addCollaboratorDoc(user.uid, user.email || '', email, { note });
+  };
+
+  const handleRemoveCollaborator = async (emailId: string) => {
+    if (!isAdmin) return;
+    await removeCollaboratorDoc(emailId);
+  };
+
+  const handleApproveAccessRequest = async (req: AccessRequestRecord) => {
+    if (!user || !isAdmin) return;
+    await approveAccessRequestDoc(user.uid, user.email || '', req);
+  };
+
+  const handleDeclineAccessRequest = async (uid: string) => {
+    if (!isAdmin) return;
+    await declineAccessRequestDoc(uid);
+  };
+
+  const handleSubmitAccessRequest = async (note: string) => {
+    if (!user) return;
+    await submitAccessRequestDoc({
+      uid: user.uid,
+      email: user.email || '',
+      displayName: user.displayName || undefined,
+      note,
+    });
+  };
+
+  const handleWithdrawAccessRequest = async () => {
+    if (!user) return;
+    await withdrawAccessRequestDoc(user.uid);
   };
 
   const nowDate = useMemo(() => new Date(nowMs), [nowMs]);
@@ -505,8 +653,8 @@ export default function App() {
 
   const filteredTimelinePosts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    const fromMs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
-    const toMs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
+    const fromMs = dateFilterBoundToMs(dateFrom, 'start', filterTimeZone);
+    const toMs = dateFilterBoundToMs(dateTo, 'end', filterTimeZone);
 
     return livePosts.filter((p) => {
       if (activeTag) {
@@ -531,7 +679,7 @@ export default function App() {
       }
       return true;
     });
-  }, [livePosts, activeTag, activeMonth, dateFrom, dateTo, searchQuery]);
+  }, [livePosts, activeTag, activeMonth, dateFrom, dateTo, filterTimeZone, searchQuery]);
 
   const handleSavePost = async (payload: {
     id?: string;
@@ -542,7 +690,9 @@ export default function App() {
     inlineTags: string[];
     attachments: Post['attachments'];
     scheduledFor: string | null;
+    scheduledTimeZone?: string | null;
     pinnedUntil: string | null;
+    pinnedTimeZone?: string | null;
     isDraft?: boolean;
   }) => {
     if (!user || !isAdmin) {
@@ -557,8 +707,10 @@ export default function App() {
         inlineTags: payload.inlineTags,
         attachments: payload.attachments,
         scheduledFor: payload.scheduledFor,
+        scheduledTimeZone: payload.scheduledTimeZone ?? null,
         publishedAt: payload.scheduledFor || new Date().toISOString(),
         pinnedUntil: payload.pinnedUntil,
+        pinnedTimeZone: payload.pinnedTimeZone ?? null,
         isDraft: Boolean(payload.isDraft),
       });
     } else {
@@ -581,7 +733,10 @@ export default function App() {
     const nextPinnedUntil = currentlyPinned
       ? null
       : new Date(Date.now() + 7 * 86400 * 1000).toISOString();
-    await updatePostDoc(post.id, { pinnedUntil: nextPinnedUntil });
+    await updatePostDoc(post.id, {
+      pinnedUntil: nextPinnedUntil,
+      pinnedTimeZone: currentlyPinned ? null : DEFAULT_TIME_ZONE,
+    });
   };
 
   const handlePublishScheduledNow = async (post: Post) => {
@@ -631,6 +786,7 @@ export default function App() {
   const handleAddCountdown = async (payload: {
     title: string;
     targetAt: string;
+    timeZone?: string;
     tag?: string;
     bodyHtml?: string;
     font?: DiaryFont;
@@ -652,14 +808,8 @@ export default function App() {
   const handleUpdateDesign = async (next: Partial<DesignSettings>) => {
     const merged: DesignSettings = { ...design, ...next };
     setDesign(merged);
-    if (user && isAdmin) {
-      try {
-        localStorage.removeItem('md-visitor-design');
-      } catch {
-        // ignore
-      }
-      await saveDesignConfigDoc(user.uid, merged);
-    } else {
+
+    if (next.theme !== undefined || next.surfaceStyle !== undefined) {
       try {
         localStorage.setItem(
           'md-visitor-design',
@@ -671,6 +821,26 @@ export default function App() {
       } catch {
         // ignore
       }
+    }
+
+    const managesGlobalAssets =
+      next.customThemes !== undefined || next.customBackdropUrl !== undefined;
+
+    if (user && isAdmin && managesGlobalAssets) {
+      const remainingCustomIds = new Set(
+        (merged.customThemes || []).map((t) => t.id)
+      );
+      const serverTheme =
+        !String(serverDesignRef.current.theme).startsWith('custom-') ||
+        remainingCustomIds.has(String(serverDesignRef.current.theme))
+          ? serverDesignRef.current.theme
+          : 'aero-daylight';
+
+      await saveDesignConfigDoc(user.uid, {
+        ...merged,
+        theme: serverTheme,
+        surfaceStyle: serverDesignRef.current.surfaceStyle,
+      });
     }
   };
 
@@ -834,7 +1004,9 @@ export default function App() {
         isAdmin={isAdmin}
         userEmail={user?.email}
         authReady={authReady}
+        hasPendingRequest={Boolean(ownAccessRequest)}
         onSignIn={handleOwnerSignIn}
+        onOpenRegister={() => setRegisterModalOpen(true)}
         onSignOut={handleOwnerSignOut}
         isSidebarCollapsed={isSidebarCollapsed}
         onToggleSidebar={() => {
@@ -847,7 +1019,15 @@ export default function App() {
         onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
       />
 
-      {/* Mobile / Tablet Countdown Strip only appears on main Timeline view */}
+      {activeView === 'timeline' && !selectedPostId && (
+        <ScheduledBanner
+          banners={banners}
+          now={nowDate}
+          onNavigateView={handleNavigateView}
+        />
+      )}
+
+      {/* Mobile / Tablet Countdown Strip only appears on main Timeline view (below active banner) */}
       {activeView === 'timeline' && !selectedPostId && (
         <MobileCountdownStrip
           countdowns={countdowns}
@@ -857,20 +1037,23 @@ export default function App() {
         />
       )}
 
-      {activeView !== 'live' && activeView !== 'next' && (
-        <ScheduledBanner
-          banners={banners}
-          now={nowDate}
-          onManageBanners={() => {
-            closePostDetail();
-            setSettingsTab('banners');
-            setActiveView('settings');
-          }}
-          onNavigateView={handleNavigateView}
-        />
-      )}
-
       <main className="mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8">
+        {authError && (
+          <div
+            role="alert"
+            className="flex items-start justify-between gap-3 rounded-2xl border border-rose-300 bg-rose-50/95 px-4 py-3 text-xs font-medium text-rose-800 shadow-sm backdrop-blur-md dark:border-rose-700/70 dark:bg-rose-950/80 dark:text-rose-200"
+          >
+            <span>{authError}</span>
+            <button
+              type="button"
+              onClick={() => setAuthError('')}
+              aria-label="Dismiss sign-in error"
+              className="shrink-0 font-semibold hover:underline cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         <div className="flex flex-col gap-6 lg:flex-row lg:gap-0 lg:items-start">
           <div className="min-w-0 flex-1 space-y-5 transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]">
             {activeView === 'timeline' && selectedPostId ? (
@@ -989,7 +1172,7 @@ export default function App() {
                       </label>
                     </div>
 
-                    {/* Timeline View Buttons (hidden on mobile <640px so only stack applies on mobile; retained on tablet & PC beside search bar) */}
+                    {/* Desktop Timeline View Toggle (Single Column vs Grid) */}
                     <div
                       role="group"
                       aria-label="Timeline layout"
@@ -1070,11 +1253,18 @@ export default function App() {
                             className="w-full rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
                           />
                         </label>
+                        <TimeZoneSelect
+                          id="mobile-filter-timezone"
+                          label="Time Zone (optional)"
+                          value={filterTimeZone}
+                          onChange={setFilterTimeZone}
+                          className="col-span-2"
+                        />
                       </div>
                     </div>
                   </div>
 
-                  {hasAnyFilter && (
+                  {(hasAnyFilter || dateFrom || dateTo) && (
                     <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-200/70 pt-2.5 text-xs text-slate-600 dark:border-slate-700/60 dark:text-slate-300">
                       <span>Filtering by:</span>
                       {activeTag && (
@@ -1096,16 +1286,26 @@ export default function App() {
                         </button>
                       )}
                       {(dateFrom || dateTo) && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDateFrom('');
-                            setDateTo('');
-                          }}
-                          className="inline-flex items-center gap-1 font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
-                        >
-                          {dateFrom || '...'} → {dateTo || '...'} ×
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDateFrom('');
+                              setDateTo('');
+                            }}
+                            className="inline-flex items-center gap-1 font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+                          >
+                            {dateFrom || '...'} → {dateTo || '...'} ({getTimeZoneAbbr(filterTimeZone)}) ×
+                          </button>
+                          <TimeZoneSelect
+                            id="desktop-filter-timezone"
+                            compact
+                            label="Filter Time Zone (optional)"
+                            value={filterTimeZone}
+                            onChange={setFilterTimeZone}
+                            className="hidden md:block max-w-[230px]"
+                          />
+                        </>
                       )}
                       {searchQuery && (
                         <button
@@ -1124,6 +1324,7 @@ export default function App() {
                           setSearchQuery('');
                           setDateFrom('');
                           setDateTo('');
+                          setFilterTimeZone(DEFAULT_TIME_ZONE);
                         }}
                         className="ml-auto font-medium text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
                       >
@@ -1266,6 +1467,14 @@ export default function App() {
                 onUpdateBanner={handleUpdateBanner}
                 onDeleteBanner={handleDeleteBanner}
                 onUpdateDesign={handleUpdateDesign}
+                collaborators={collaborators}
+                accessRequests={accessRequests}
+                onAddCollaborator={handleAddCollaborator}
+                onRemoveCollaborator={handleRemoveCollaborator}
+                onApproveRequest={handleApproveAccessRequest}
+                onDeclineRequest={handleDeclineAccessRequest}
+                onOpenRegister={() => setRegisterModalOpen(true)}
+                hasPendingRequest={Boolean(ownAccessRequest)}
                 isAdmin={isAdmin}
                 userEmail={user?.email}
                 authError={authError}
@@ -1299,7 +1508,7 @@ export default function App() {
               />
             )}
 
-            {(activeView === 'live' || floatingPlayerEnabled) && (
+            {(activeView === 'live' || (floatingPlayerEnabled && hasVisitedLive)) && (
               <LiveTvView
                 activeStation={activeStation}
                 activeEvent={activeEvent}
@@ -1313,7 +1522,6 @@ export default function App() {
                 onToggleFloating={() =>
                   setFloatingPlayerEnabled((prev) => !prev)
                 }
-                onReturnToLiveTab={() => handleNavigateView('live')}
                 isSidebarCollapsed={isSidebarCollapsed}
               />
             )}
@@ -1505,6 +1713,20 @@ export default function App() {
           </div>
         </div>
       )}
+
+      <RegisterModal
+        isOpen={registerModalOpen}
+        onClose={() => setRegisterModalOpen(false)}
+        userEmail={user?.email}
+        userDisplayName={user?.displayName}
+        isAdmin={isAdmin}
+        ownRequest={ownAccessRequest}
+        authError={authError}
+        onGoogleSignIn={handleOwnerSignIn}
+        onSignOut={handleOwnerSignOut}
+        onSubmitRequest={handleSubmitAccessRequest}
+        onWithdrawRequest={handleWithdrawAccessRequest}
+      />
 
       <OfflineIndicator />
     </div>

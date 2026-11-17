@@ -26,11 +26,18 @@ import {
   extractInlineHashtags,
   formatFileSize,
   getFontClass,
+  normalizeShortsToWatchUrl,
   normalizeTag,
   parsePlayableMediaUrl,
   sanitizeRichHtml,
 } from '../lib/mediaUtils';
 import { uploadMediaFile } from '../lib/cloudinaryUpload';
+import {
+  DEFAULT_TIME_ZONE,
+  isoToWallClockInput,
+  wallClockToIso,
+} from '../lib/timeZones';
+import { TimeZoneSelect } from './TimeZoneSelect';
 
 interface RichComposerModalProps {
   isOpen: boolean;
@@ -46,7 +53,9 @@ interface RichComposerModalProps {
     inlineTags: string[];
     attachments: MediaAttachment[];
     scheduledFor: string | null;
+    scheduledTimeZone?: string | null;
     pinnedUntil: string | null;
+    pinnedTimeZone?: string | null;
     isDraft?: boolean;
   }) => Promise<void>;
 }
@@ -67,16 +76,6 @@ const FONT_OPTIONS: { id: DiaryFont; label: string }[] = [
   { id: 'hand', label: 'Caveat (Journal)' },
 ];
 
-function toLocalInputValue(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}`;
-}
-
 export const RichComposerModal: React.FC<RichComposerModalProps> = ({
   isOpen,
   editingPost,
@@ -96,7 +95,9 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
   const [mediaUrlInput, setMediaUrlInput] = useState('');
   const [mediaTitleInput, setMediaTitleInput] = useState('');
   const [scheduledLocal, setScheduledLocal] = useState('');
+  const [scheduledTimeZone, setScheduledTimeZone] = useState<string>(DEFAULT_TIME_ZONE);
   const [pinnedUntilLocal, setPinnedUntilLocal] = useState('');
+  const [pinnedTimeZone, setPinnedTimeZone] = useState<string>(DEFAULT_TIME_ZONE);
   const [showLinkInput, setShowLinkInput] = useState(false);
   const [inlineLinkUrl, setInlineLinkUrl] = useState('');
   const [isUploading, setIsUploading] = useState(false);
@@ -106,13 +107,17 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     if (editingPost) {
+      const schedTz = editingPost.scheduledTimeZone || DEFAULT_TIME_ZONE;
+      const pinTz = editingPost.pinnedTimeZone || DEFAULT_TIME_ZONE;
       setTitle(editingPost.title || '');
       setBodyHtml(editingPost.bodyHtml || '');
       setFont(editingPost.font || 'sans');
       setManualTags(editingPost.manualTags || []);
       setAttachments(editingPost.attachments || []);
-      setScheduledLocal(toLocalInputValue(editingPost.scheduledFor));
-      setPinnedUntilLocal(toLocalInputValue(editingPost.pinnedUntil));
+      setScheduledTimeZone(schedTz);
+      setPinnedTimeZone(pinTz);
+      setScheduledLocal(isoToWallClockInput(editingPost.scheduledFor, schedTz));
+      setPinnedUntilLocal(isoToWallClockInput(editingPost.pinnedUntil, pinTz));
       if (editorRef.current) {
         editorRef.current.innerHTML = editingPost.bodyHtml || '';
       }
@@ -122,6 +127,8 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
       setFont('sans');
       setManualTags([]);
       setAttachments([]);
+      setScheduledTimeZone(DEFAULT_TIME_ZONE);
+      setPinnedTimeZone(DEFAULT_TIME_ZONE);
       setScheduledLocal('');
       setPinnedUntilLocal('');
       if (editorRef.current) {
@@ -220,9 +227,11 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
   const handleAttachUrl = () => {
     const trimmed = mediaUrlInput.trim();
     if (!trimmed) return;
-    const normalized = /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/')
-      ? trimmed
-      : `https://${trimmed}`;
+    const withProtocol =
+      /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/')
+        ? trimmed
+        : `https://${trimmed}`;
+    const normalized = normalizeShortsToWatchUrl(withProtocol);
 
     const parsed = parsePlayableMediaUrl(normalized);
     setAttachments((prev) => [
@@ -243,7 +252,7 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
 
   const applyPinPresetDays = (days: number) => {
     const target = new Date(Date.now() + days * 86400 * 1000);
-    setPinnedUntilLocal(toLocalInputValue(target.toISOString()));
+    setPinnedUntilLocal(isoToWallClockInput(target.toISOString(), pinnedTimeZone));
   };
 
   const submitPost = async (saveAsDraft: boolean) => {
@@ -265,13 +274,28 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
         manualTags,
         inlineTags,
         attachments,
-        scheduledFor: scheduledLocal ? new Date(scheduledLocal).toISOString() : null,
-        pinnedUntil: pinnedUntilLocal ? new Date(pinnedUntilLocal).toISOString() : null,
+        scheduledFor: scheduledLocal
+          ? wallClockToIso(scheduledLocal, scheduledTimeZone)
+          : null,
+        scheduledTimeZone: scheduledLocal ? scheduledTimeZone : null,
+        pinnedUntil: pinnedUntilLocal
+          ? wallClockToIso(pinnedUntilLocal, pinnedTimeZone)
+          : null,
+        pinnedTimeZone: pinnedUntilLocal ? pinnedTimeZone : null,
         isDraft: saveAsDraft,
       });
       onClose();
-    } catch {
-      setErrorMsg('Failed to save post.');
+    } catch (err) {
+      let msg = 'Failed to save post.';
+      if (err instanceof Error && err.message) {
+        try {
+          const parsed = JSON.parse(err.message) as { error?: string };
+          msg = parsed?.error ? `Failed to save post: ${parsed.error}` : err.message;
+        } catch {
+          msg = err.message;
+        }
+      }
+      setErrorMsg(msg);
     } finally {
       setIsSaving(false);
     }
@@ -678,6 +702,13 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
                 onChange={(e) => setScheduledLocal(e.target.value)}
                 className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
               />
+              <TimeZoneSelect
+                id="schedule-timezone"
+                label="Time Zone (optional)"
+                value={scheduledTimeZone}
+                onChange={setScheduledTimeZone}
+                className="mt-2.5"
+              />
               {scheduledLocal && (
                 <button
                   type="button"
@@ -703,6 +734,13 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
                 value={pinnedUntilLocal}
                 onChange={(e) => setPinnedUntilLocal(e.target.value)}
                 className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+              />
+              <TimeZoneSelect
+                id="pin-timezone"
+                label="Time Zone (optional)"
+                value={pinnedTimeZone}
+                onChange={setPinnedTimeZone}
+                className="mt-2.5"
               />
               <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
                 <button

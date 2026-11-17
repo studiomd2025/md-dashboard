@@ -1,8 +1,10 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Bold,
   CalendarClock,
   Check,
+  CheckCircle2,
+  Clock3,
   Edit3,
   FileText,
   Film,
@@ -19,14 +21,20 @@ import {
   Pin,
   Plus,
   Send,
+  ShieldCheck,
   Trash2,
   Underline,
   Upload,
+  UserPlus,
+  Users,
+  X,
 } from 'lucide-react';
 import type {
+  AccessRequestRecord,
   BackendTab,
   BannerMode,
   BannerSchedule,
+  CollaboratorRecord,
   CountdownFormat,
   CustomThemePreset,
   DesignSettings,
@@ -38,6 +46,7 @@ import type {
   ThemePresetId,
 } from '../types';
 import {
+  formatExpandedCountdownDate,
   formatFileSize,
   formatHourMinute12h,
   formatPostTimestamp,
@@ -46,8 +55,15 @@ import {
   sanitizeRichHtml,
   stripHtml,
 } from '../lib/mediaUtils';
+import {
+  DEFAULT_TIME_ZONE,
+  getTimeZoneAbbr,
+  wallClockToIso,
+} from '../lib/timeZones';
 import { uploadMediaFile } from '../lib/cloudinaryUpload';
+import { BOOTSTRAP_OWNER_EMAILS } from '../lib/firebase';
 import { resolveActiveBanner } from './ScheduledBanner';
+import { TimeZoneSelect } from './TimeZoneSelect';
 
 interface BackendConsoleViewProps {
   activeTab: BackendTab;
@@ -68,6 +84,7 @@ interface BackendConsoleViewProps {
   onAddCountdown: (payload: {
     title: string;
     targetAt: string;
+    timeZone?: string;
     tag?: string;
     bodyHtml?: string;
     font?: DiaryFont;
@@ -85,6 +102,14 @@ interface BackendConsoleViewProps {
   onUpdateBanner: (id: string, patch: Partial<BannerSchedule>) => Promise<void>;
   onDeleteBanner: (id: string) => Promise<void>;
   onUpdateDesign: (next: Partial<DesignSettings>) => Promise<void>;
+  collaborators: CollaboratorRecord[];
+  accessRequests: AccessRequestRecord[];
+  onAddCollaborator: (email: string, note?: string) => Promise<void>;
+  onRemoveCollaborator: (emailId: string) => Promise<void>;
+  onApproveRequest: (req: AccessRequestRecord) => Promise<void>;
+  onDeclineRequest: (uid: string) => Promise<void>;
+  onOpenRegister: () => void;
+  hasPendingRequest?: boolean;
   isAdmin: boolean;
   userEmail?: string | null;
   authError?: string;
@@ -152,11 +177,30 @@ export const THEME_PRESETS: {
     description: 'Crisp 2026 alabaster surfaces with high-contrast slate ink.',
     swatches: ['#f8fafc', '#cbd5e1', '#0f172a'],
   },
-];
-
-const PRESET_BANNERS = [
-  { label: 'Aero Daylight Horizon', url: '/samples/banner-aero-horizon.jpg' },
-  { label: 'Evening Lagoon Twilight', url: '/samples/banner-evening-aurora.jpg' },
+  {
+    id: 'y2k-chrome-cd',
+    label: 'Y2K Liquid Chrome CD',
+    description: 'Brushed silver metallic sheen, iridescent CD refraction, and cobalt iMac glass.',
+    swatches: ['#cbd5e1', '#e2e8f0', '#2563eb'],
+  },
+  {
+    id: 'y2k-phosphor-grid',
+    label: 'Y2K Phosphor Cyber Grid (Dark)',
+    description: 'Early-2000s PS2/Winamp wireframe terminal with acid lime and cyber teal.',
+    swatches: ['#07110d', '#a3e635', '#0d9488'],
+  },
+  {
+    id: 'y2k-bubblegum-flip',
+    label: 'Y2K Candy Flip Hologram',
+    description: '2001 Shibuya flip-phone pearlescent lilac metallic with hot-pink chrome accents.',
+    swatches: ['#f3e8ff', '#ec4899', '#7c3aed'],
+  },
+  {
+    id: 'y2k-arcade-peach',
+    label: 'Y2K Dreamcast Tangerine',
+    description: 'Warm retro cream halftone swirls paired with arcade tangerine and teal.',
+    swatches: ['#faf2e4', '#f97316', '#0891b2'],
+  },
 ];
 
 const COUNTDOWN_COLORS = ['#0f172a', '#0284c7', '#059669', '#e11d48', '#d97706'];
@@ -186,12 +230,27 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   onUpdateBanner,
   onDeleteBanner,
   onUpdateDesign,
+  collaborators,
+  accessRequests,
+  onAddCollaborator,
+  onRemoveCollaborator,
+  onApproveRequest,
+  onDeclineRequest,
+  onOpenRegister,
+  hasPendingRequest = false,
   isAdmin,
   userEmail,
   authError,
   onSignIn,
   onSignOut,
 }) => {
+  // Team management state
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteNote, setInviteNote] = useState('');
+  const [teamBusy, setTeamBusy] = useState(false);
+  const [teamStatusMsg, setTeamStatusMsg] = useState('');
+  const [teamErrorMsg, setTeamErrorMsg] = useState('');
+
   // Tag management state
   const [editingTag, setEditingTag] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -204,6 +263,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const milestoneFileRef = useRef<HTMLInputElement>(null);
   const [cdTitle, setCdTitle] = useState('');
   const [cdTarget, setCdTarget] = useState('');
+  const [cdTimeZone, setCdTimeZone] = useState<string>(DEFAULT_TIME_ZONE);
   const [cdTag, setCdTag] = useState('');
   const [cdFormat, setCdFormat] = useState<CountdownFormat>('full');
   const [cdFont, setCdFont] = useState<DiaryFont>('sans');
@@ -215,6 +275,35 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [milestoneAttachments, setMilestoneAttachments] = useState<MediaAttachment[]>([]);
   const [milestoneUploading, setMilestoneUploading] = useState(false);
 
+  // Settings sub-navigation responsive layout state (Observer-backed for precision across sidebar states)
+  const tabNavRef = useRef<HTMLDivElement>(null);
+  const [tabNavWidth, setTabNavWidth] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1024 ? window.innerWidth - 380 : window.innerWidth;
+    }
+    return 800;
+  });
+
+  useEffect(() => {
+    const el = tabNavRef.current;
+    if (!el) return;
+
+    const updateWidth = () => {
+      setTabNavWidth(el.getBoundingClientRect().width);
+    };
+
+    updateWidth();
+
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setTabNavWidth(entry.contentRect.width);
+      }
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // Banner upload/schedule state
   const bannerFileRef = useRef<HTMLInputElement>(null);
   const bannerCaptionRef = useRef<HTMLDivElement>(null);
@@ -225,13 +314,17 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [bannerSubtitleHtml, setBannerSubtitleHtml] = useState('');
   const [showBannerLinkInput, setShowBannerLinkInput] = useState(false);
   const [bannerLinkUrl, setBannerLinkUrl] = useState('');
-  const [bannerImageUrl, setBannerImageUrl] = useState('/samples/banner-aero-horizon.jpg');
+  const [bannerImageUrl, setBannerImageUrl] = useState('');
   const [bannerMode, setBannerMode] = useState<BannerMode>('slideshow');
   const [bannerStartAt, setBannerStartAt] = useState('');
   const [bannerEndAt, setBannerEndAt] = useState('');
   const [bannerStartHour, setBannerStartHour] = useState(9);
   const [bannerEndHour, setBannerEndHour] = useState(17);
+  const [bannerTimeZone, setBannerTimeZone] = useState<string>(DEFAULT_TIME_ZONE);
   const [isUploadingBanner, setIsUploadingBanner] = useState(false);
+  const [isSavingBanner, setIsSavingBanner] = useState(false);
+  const [bannerStatusMsg, setBannerStatusMsg] = useState('');
+  const [bannerPreviewError, setBannerPreviewError] = useState(false);
   const [isUploadingBackdrop, setIsUploadingBackdrop] = useState(false);
   const [customBackdropInput, setCustomBackdropInput] = useState(
     design.customBackdropUrl || ''
@@ -249,6 +342,18 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [isUploadingCustomThemeBg, setIsUploadingCustomThemeBg] = useState(false);
 
   const [uploadError, setUploadError] = useState('');
+
+  const formatActionError = (err: unknown, fallback: string): string => {
+    if (err instanceof Error && err.message) {
+      try {
+        const parsed = JSON.parse(err.message) as { error?: string };
+        return parsed?.error || err.message;
+      } catch {
+        return err.message;
+      }
+    }
+    return fallback;
+  };
 
   const activeBanner = resolveActiveBanner(banners, now);
   const nowMs = now.getTime();
@@ -358,31 +463,38 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const handleCreateCountdown = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cdTitle.trim() || !cdTarget) return;
+    setUploadError('');
     const cleanedHtml = sanitizeRichHtml(cdEditorRef.current?.innerHTML || cdBodyHtml);
     const cleanedMilestoneHtml = sanitizeRichHtml(
       milestoneEditorRef.current?.innerHTML || milestoneBodyHtml
     );
-    await onAddCountdown({
-      title: cdTitle.trim(),
-      targetAt: new Date(cdTarget).toISOString(),
-      tag: cdTag.trim() ? normalizeTag(cdTag) : undefined,
-      bodyHtml: cleanedHtml,
-      font: cdFont,
-      displayFormat: cdFormat,
-      attachments: cdAttachments,
-      milestoneBodyHtml: cleanedMilestoneHtml,
-      milestoneFont,
-      milestoneAttachments,
-    });
-    setCdTitle('');
-    setCdTarget('');
-    setCdTag('');
-    setCdBodyHtml('');
-    setCdAttachments([]);
-    setMilestoneBodyHtml('');
-    setMilestoneAttachments([]);
-    if (cdEditorRef.current) cdEditorRef.current.innerHTML = '';
-    if (milestoneEditorRef.current) milestoneEditorRef.current.innerHTML = '';
+    try {
+      await onAddCountdown({
+        title: cdTitle.trim(),
+        targetAt: wallClockToIso(cdTarget, cdTimeZone),
+        timeZone: cdTimeZone,
+        tag: cdTag.trim() ? normalizeTag(cdTag) : undefined,
+        bodyHtml: cleanedHtml,
+        font: cdFont,
+        displayFormat: cdFormat,
+        attachments: cdAttachments,
+        milestoneBodyHtml: cleanedMilestoneHtml,
+        milestoneFont,
+        milestoneAttachments,
+      });
+      setCdTitle('');
+      setCdTarget('');
+      setCdTimeZone(DEFAULT_TIME_ZONE);
+      setCdTag('');
+      setCdBodyHtml('');
+      setCdAttachments([]);
+      setMilestoneBodyHtml('');
+      setMilestoneAttachments([]);
+      if (cdEditorRef.current) cdEditorRef.current.innerHTML = '';
+      if (milestoneEditorRef.current) milestoneEditorRef.current.innerHTML = '';
+    } catch (err) {
+      setUploadError(formatActionError(err, 'Failed to save countdown.'));
+    }
   };
 
   const handleCustomThemeBackdropUpload = async (file: File | undefined) => {
@@ -400,6 +512,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const handleSaveCustomTheme = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!ctName.trim()) return;
+    setUploadError('');
     const newTheme: CustomThemePreset = {
       id: `custom-${Date.now()}`,
       name: ctName.trim(),
@@ -411,14 +524,18 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       backdropImageUrl: ctBackdropUrl.trim() || undefined,
     };
     const nextList = [...(design.customThemes || []), newTheme];
-    await onUpdateDesign({
-      customThemes: nextList,
-      theme: newTheme.id,
-      surfaceStyle: newTheme.surfaceStyle,
-    });
-    setCtName('');
-    setCtBackdropUrl('');
-    setShowCustomThemeBuilder(false);
+    try {
+      await onUpdateDesign({
+        customThemes: nextList,
+        theme: newTheme.id,
+        surfaceStyle: newTheme.surfaceStyle,
+      });
+      setCtName('');
+      setCtBackdropUrl('');
+      setShowCustomThemeBuilder(false);
+    } catch (err) {
+      setUploadError(formatActionError(err, 'Failed to save custom theme.'));
+    }
   };
 
   const handleDeleteCustomTheme = async (id: string) => {
@@ -432,9 +549,14 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const handleBannerFileChange = async (file: File | undefined) => {
     if (!file) return;
     setIsUploadingBanner(true);
+    setBannerStatusMsg('');
+    setBannerPreviewError(false);
     try {
       const uploaded = await uploadFileToServer(file);
-      if (uploaded?.url) setBannerImageUrl(uploaded.url);
+      if (uploaded?.url) {
+        setBannerImageUrl(uploaded.url);
+        setBannerStatusMsg('Image uploaded. Click Save Banner below to publish it.');
+      }
     } finally {
       setIsUploadingBanner(false);
       if (bannerFileRef.current) bannerFileRef.current.value = '';
@@ -515,37 +637,57 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
 
   const handleCreateBanner = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!bannerImageUrl.trim()) return;
+    if (!bannerImageUrl.trim() || isSavingBanner || isUploadingBanner) return;
+    setUploadError('');
+    setBannerStatusMsg('');
+    setIsSavingBanner(true);
     const rawHtml = bannerCaptionRef.current?.innerHTML || bannerSubtitleHtml;
     const cleanedCaption = sanitizeRichHtml(rawHtml);
-    await onAddBanner({
-      title: bannerTitle.trim(),
-      subtitle: stripHtml(cleanedCaption),
-      subtitleHtml: cleanedCaption,
-      imageUrl: bannerImageUrl.trim(),
-      mode: bannerMode,
-      startAt:
-        bannerMode === 'window' && bannerStartAt
-          ? new Date(bannerStartAt).toISOString()
-          : undefined,
-      endAt:
-        bannerMode === 'window' && bannerEndAt
-          ? new Date(bannerEndAt).toISOString()
-          : undefined,
-      dailyStartHour: bannerMode === 'daily-hours' ? bannerStartHour : undefined,
-      dailyEndHour: bannerMode === 'daily-hours' ? bannerEndHour : undefined,
-      priority:
-        bannerMode === 'window'
-          ? 40
-          : bannerMode === 'daily-hours'
-          ? 20
-          : bannerMode === 'slideshow'
-          ? 15
-          : 50,
-    });
-    setBannerTitle('');
-    setBannerSubtitleHtml('');
-    if (bannerCaptionRef.current) bannerCaptionRef.current.innerHTML = '';
+    const clampedStartHour = Math.max(0, Math.min(23, Math.floor(Number(bannerStartHour) || 0)));
+    const clampedEndHour = Math.max(0, Math.min(23, Math.floor(Number(bannerEndHour) || 0)));
+    try {
+      await onAddBanner({
+        title: bannerTitle.trim(),
+        subtitle: stripHtml(cleanedCaption),
+        subtitleHtml: cleanedCaption,
+        imageUrl: bannerImageUrl.trim(),
+        mode: bannerMode,
+        startAt:
+          bannerMode === 'window' && bannerStartAt
+            ? wallClockToIso(bannerStartAt, bannerTimeZone)
+            : undefined,
+        endAt:
+          bannerMode === 'window' && bannerEndAt
+            ? wallClockToIso(bannerEndAt, bannerTimeZone)
+            : undefined,
+        dailyStartHour: bannerMode === 'daily-hours' ? clampedStartHour : undefined,
+        dailyEndHour: bannerMode === 'daily-hours' ? clampedEndHour : undefined,
+        timeZone:
+          bannerMode === 'window' || bannerMode === 'daily-hours'
+            ? bannerTimeZone
+            : undefined,
+        priority:
+          bannerMode === 'window'
+            ? 40
+            : bannerMode === 'daily-hours'
+            ? 20
+            : bannerMode === 'slideshow'
+            ? 15
+            : 50,
+      });
+      setBannerTitle('');
+      setBannerSubtitleHtml('');
+      setBannerImageUrl('');
+      setBannerStartAt('');
+      setBannerEndAt('');
+      setBannerTimeZone(DEFAULT_TIME_ZONE);
+      if (bannerCaptionRef.current) bannerCaptionRef.current.innerHTML = '';
+      setBannerStatusMsg('Banner saved! It is now listed below and active on your dashboard.');
+    } catch (err) {
+      setUploadError(formatActionError(err, 'Failed to save banner.'));
+    } finally {
+      setIsSavingBanner(false);
+    }
   };
 
   const handleConfirmRenameTag = async (oldTag: string) => {
@@ -563,17 +705,54 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     }
   };
 
+  const handleAddCollaboratorSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setTeamErrorMsg('');
+    setTeamStatusMsg('');
+    setTeamBusy(true);
+    try {
+      await onAddCollaborator(inviteEmail, inviteNote);
+      setTeamStatusMsg(
+        `Authorized ${inviteEmail.trim().toLowerCase()} as a co-manager.`
+      );
+      setInviteEmail('');
+      setInviteNote('');
+    } catch (err) {
+      setTeamErrorMsg(
+        err instanceof Error ? err.message : 'Could not add co-manager.'
+      );
+    } finally {
+      setTeamBusy(false);
+    }
+  };
+
   const tabs: {
     id: BackendTab;
     label: string;
     icon: React.ComponentType<{ className?: string }>;
+    badge?: number;
   }[] = [
-    { id: 'compose', label: 'Post & Schedule', icon: Send },
-    { id: 'countdowns', label: 'Next on MD', icon: CalendarClock },
+    { id: 'compose', label: 'Timeline', icon: Send },
+    { id: 'countdowns', label: 'Countdown', icon: CalendarClock },
     { id: 'tags', label: 'Hashtags', icon: Hash },
     { id: 'banners', label: 'Banner', icon: ImageIcon },
+    {
+      id: 'team',
+      label: 'Team',
+      icon: Users,
+      badge: isAdmin && accessRequests.length > 0 ? accessRequests.length : undefined,
+    },
     { id: 'design', label: 'Theme', icon: Palette },
   ];
+
+  // Settings tabs responsive layout:
+  // 1. Narrow (< 540px, e.g. when 'New Post' is relocated): 3 columns, 2 rows (3x2 layout).
+  //    Labels are included down to 340px (where 3 columns have ample space); icons-only below 340px.
+  // 2. Intermediate (540px <= width < 730px): 1 single line of 6 tabs.
+  //    To avoid any label truncation, remove labels and leave icons only in that single line.
+  // 3. Wide (width >= 730px): 1 single line of 6 tabs with both icons and labels visible.
+  const is3x2 = tabNavWidth < 540;
+  const showLabels = is3x2 ? tabNavWidth >= 340 : tabNavWidth >= 730;
 
   return (
     <div className="space-y-5">
@@ -584,11 +763,8 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
             <h2 className="font-display text-xl font-bold text-slate-900 dark:text-white">
               Settings
             </h2>
-            <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
-              Manage posts, drafts, Next on MD countdowns, Hashtags, Banners, and Theme.
-            </p>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             {isAdmin ? (
               <button
                 type="button"
@@ -605,16 +781,19 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <LogIn className="h-4 w-4" />
-                Sign In
+                Sign In / Register
               </button>
             )}
           </div>
         </div>
 
         <div
+          ref={tabNavRef}
           role="tablist"
           aria-label="Settings Sections"
-          className="mt-4 flex flex-wrap items-center gap-1.5 rounded-2xl bg-slate-100/90 p-1.5 dark:bg-slate-800/80"
+          className={`mt-4 grid gap-1.5 rounded-2xl bg-slate-100/90 p-1.5 dark:bg-slate-800/80 ${
+            is3x2 ? 'grid-cols-3' : 'grid-cols-6'
+          }`}
         >
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -625,15 +804,30 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 type="button"
                 role="tab"
                 aria-selected={isActive}
+                aria-label={tab.label}
                 onClick={() => onSelectTab(tab.id)}
-                className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                className={`inline-flex items-center justify-center gap-1.5 rounded-xl px-2 sm:px-3 py-2 text-xs font-semibold transition-colors whitespace-nowrap cursor-pointer relative ${
                   isActive
                     ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-950 dark:text-white'
                     : 'text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white'
                 }`}
+                title={tab.label}
               >
-                <Icon className="h-3.5 w-3.5 shrink-0" />
-                {tab.label}
+                <Icon className="h-4 w-4 shrink-0" />
+                {showLabels && (
+                  <span className="whitespace-nowrap">{tab.label}</span>
+                )}
+                {tab.badge ? (
+                  <span
+                    className={
+                      showLabels
+                        ? 'ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shrink-0'
+                        : 'absolute top-1 right-1.5 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-xs'
+                    }
+                  >
+                    {tab.badge}
+                  </span>
+                ) : null}
               </button>
             );
           })}
@@ -647,14 +841,17 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
           </div>
           <div>
             <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white">
-              Owner Sign-In Required
+              Sign In with Google for Instant Access
             </h3>
             <p className="mx-auto mt-1 max-w-md text-xs text-slate-600 dark:text-slate-300">
-              Sign in with the dashboard owner Google account (<span className="font-mono">officialmdworkspace@gmail.com</span>) to create posts, manage drafts, update Next on MD, edit banners, or modify hashtags.
+              Any verified Google account automatically gets co-manager access upon signing in—no approval step needed. Sign in to create posts, manage drafts, update Countdown events, or edit banners.
             </p>
             {userEmail && (
               <p className="mt-2 text-xs font-medium text-amber-700 dark:text-amber-300">
-                Currently signed in as {userEmail}. Please switch to the owner account.
+                Signed in as <span className="font-mono">{userEmail}</span>.{' '}
+                {hasPendingRequest
+                  ? 'Please switch to a verified Google account.'
+                  : 'Please use a verified Google account to continue.'}
               </p>
             )}
             {authError && (
@@ -670,7 +867,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
               className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-xs font-semibold text-white cursor-pointer"
             >
               <LogIn className="h-4 w-4" />
-              Sign in with Google
+              Continue with Google
             </button>
             {userEmail && (
               <button
@@ -679,7 +876,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
               >
                 <LogOut className="h-3.5 w-3.5" />
-                Sign Out
+                Switch / Sign Out
               </button>
             )}
           </div>
@@ -808,7 +1005,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                   >
                     <div className="min-w-0">
                       <div className="font-mono text-[11px] font-semibold text-amber-700 tabular-nums dark:text-amber-300">
-                        Scheduled · {formatPostTimestamp(post.scheduledFor || post.publishedAt)}
+                        Scheduled · {formatPostTimestamp(post.scheduledFor || post.publishedAt, true, post.scheduledTimeZone)} ({getTimeZoneAbbr(post.scheduledTimeZone, post.scheduledFor || post.publishedAt)})
                       </div>
                       <div className="mt-0.5 truncate font-display text-sm font-bold text-slate-900 dark:text-white">
                         {post.title || 'Untitled Scheduled Post'}
@@ -861,7 +1058,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                   >
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-slate-500 tabular-nums dark:text-slate-400">
-                        <span>{formatPostTimestamp(post.publishedAt)}</span>
+                        <span>{formatPostTimestamp(post.publishedAt, true, post.scheduledTimeZone)}</span>
                         {isPinned && (
                           <>
                             <span aria-hidden="true">·</span>
@@ -912,31 +1109,30 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
         <div className="space-y-5">
           <section className="aero-glass rounded-3xl p-6">
             <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Next on MD — Countdown Setup
+              Countdown
             </h3>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              Create customized event countdowns with rich text notes (RTF), display format options, optional hashtags, and optional multimedia files. The Next on MD widget appears in the sidebar automatically whenever at least one countdown is active.
+              Create customized event countdowns with rich text notes (RTF), display format options, optional hashtags, and optional multimedia files. Active countdowns appear in the sidebar automatically.
             </p>
 
             <form onSubmit={handleCreateCountdown} className="mt-4 space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
+                <div className="sm:col-span-2">
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
-                    Event Title
+                    Event
                   </label>
                   <input
                     type="text"
                     required
                     value={cdTitle}
                     onChange={(e) => setCdTitle(e.target.value)}
-                    placeholder="e.g., Kyoto Autumn Trip"
                     className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                   />
                 </div>
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
-                    Target Date & Time
+                    Date & Time
                   </label>
                   <input
                     type="datetime-local"
@@ -948,8 +1144,18 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 </div>
 
                 <div>
+                  <TimeZoneSelect
+                    id="countdown-timezone"
+                    label="Time Zone"
+                    value={cdTimeZone}
+                    onChange={setCdTimeZone}
+                    className="mt-0"
+                  />
+                </div>
+
+                <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
-                    Countdown Display Format
+                    Format
                   </label>
                   <select
                     value={cdFormat}
@@ -965,13 +1171,12 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
-                    Hashtag (optional)
+                    Hashtag (Optional)
                   </label>
                   <input
                     type="text"
                     value={cdTag}
                     onChange={(e) => setCdTag(e.target.value)}
-                    placeholder="Optional #EventTag"
                     className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                   />
                 </div>
@@ -1015,6 +1220,24 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                       title={`Text color ${c}`}
                     />
                   ))}
+                  <span className="mx-1 h-4 w-px bg-slate-300 dark:bg-slate-600" />
+                  <input
+                    ref={cdFileRef}
+                    type="file"
+                    multiple
+                    accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip"
+                    onChange={(e) => handleCountdownMediaUpload(e.target.files)}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    disabled={cdUploading}
+                    onClick={() => cdFileRef.current?.click()}
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    <span>{cdUploading ? 'Uploading...' : 'Upload Media'}</span>
+                  </button>
                   <select
                     value={cdFont}
                     onChange={(e) => setCdFont(e.target.value as DiaryFont)}
@@ -1038,81 +1261,52 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 />
               </div>
 
-              {/* Optional Multimedia Upload for Countdown */}
-              <div className="rounded-2xl border border-slate-200/80 bg-white/60 p-4 dark:border-slate-700/60 dark:bg-slate-900/40">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                    Optional Countdown Multimedia (Image, GIF, Video, Audio, File)
-                  </span>
-                  <input
-                    ref={cdFileRef}
-                    type="file"
-                    multiple
-                    accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip"
-                    onChange={(e) => handleCountdownMediaUpload(e.target.files)}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    disabled={cdUploading}
-                    onClick={() => cdFileRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    {cdUploading ? 'Uploading...' : 'Attach Media'}
-                  </button>
-                </div>
-
-                {cdAttachments.length > 0 && (
-                  <div className="mt-3 space-y-1.5">
-                    {cdAttachments.map((att) => (
-                      <div
-                        key={att.id}
-                        className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-900"
+              {cdAttachments.length > 0 && (
+                <div className="space-y-1.5">
+                  {cdAttachments.map((att) => (
+                    <div
+                      key={att.id}
+                      className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-900"
+                    >
+                      <span className="inline-flex items-center gap-2 truncate">
+                        {att.type === 'image' || att.type === 'gif' ? (
+                          <ImageIcon className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                        ) : att.type === 'video' ? (
+                          <Film className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                        ) : att.type === 'audio' ? (
+                          <Music className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                        ) : (
+                          <FileText className="h-3.5 w-3.5 text-sky-600 shrink-0" />
+                        )}
+                        <span className="truncate">{att.title}</span>
+                        {att.fileSize ? (
+                          <span className="font-mono text-[10px] text-slate-400">
+                            {formatFileSize(att.fileSize)}
+                          </span>
+                        ) : null}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCdAttachments((prev) =>
+                            prev.filter((a) => a.id !== att.id)
+                          )
+                        }
+                        className="text-rose-600 hover:underline cursor-pointer"
                       >
-                        <span className="inline-flex items-center gap-2 truncate">
-                          {att.type === 'image' || att.type === 'gif' ? (
-                            <ImageIcon className="h-3.5 w-3.5 text-sky-600 shrink-0" />
-                          ) : att.type === 'video' ? (
-                            <Film className="h-3.5 w-3.5 text-sky-600 shrink-0" />
-                          ) : att.type === 'audio' ? (
-                            <Music className="h-3.5 w-3.5 text-sky-600 shrink-0" />
-                          ) : (
-                            <FileText className="h-3.5 w-3.5 text-sky-600 shrink-0" />
-                          )}
-                          <span className="truncate">{att.title}</span>
-                          {att.fileSize ? (
-                            <span className="font-mono text-[10px] text-slate-400">
-                              {formatFileSize(att.fileSize)}
-                            </span>
-                          ) : null}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCdAttachments((prev) =>
-                              prev.filter((a) => a.id !== att.id)
-                            )
-                          }
-                          className="text-rose-600 hover:underline cursor-pointer"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
               {/* Optional Milestone Content When Countdown Ends */}
               <div className="rounded-2xl border border-slate-200/80 bg-white/60 p-4 space-y-3 dark:border-slate-700/60 dark:bg-slate-900/40">
                 <div>
                   <div className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                    When Countdown Ends — Optional Milestone Content (RTF & Multimedia)
+                    Milestone (Optional)
                   </div>
-                  <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-                    Replaces the pre-event note automatically as soon as the timer reaches zero.
-                  </p>
                 </div>
 
                 <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white/85 dark:border-slate-700 dark:bg-slate-900/75">
@@ -1152,6 +1346,24 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                         title={`Text color ${c}`}
                       />
                     ))}
+                    <span className="mx-1 h-4 w-px bg-slate-300 dark:bg-slate-600" />
+                    <input
+                      ref={milestoneFileRef}
+                      type="file"
+                      multiple
+                      accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip"
+                      onChange={(e) => handleMilestoneMediaUpload(e.target.files)}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      disabled={milestoneUploading}
+                      onClick={() => milestoneFileRef.current?.click()}
+                      className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      <span>{milestoneUploading ? 'Uploading...' : 'Upload Media'}</span>
+                    </button>
                     <select
                       value={milestoneFont}
                       onChange={(e) => setMilestoneFont(e.target.value as DiaryFont)}
@@ -1175,29 +1387,6 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                       milestoneFont
                     )}`}
                   />
-                </div>
-
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
-                    Optional Milestone Multimedia (Image, GIF, Video, Audio, File)
-                  </span>
-                  <input
-                    ref={milestoneFileRef}
-                    type="file"
-                    multiple
-                    accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.txt,.zip"
-                    onChange={(e) => handleMilestoneMediaUpload(e.target.files)}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    disabled={milestoneUploading}
-                    onClick={() => milestoneFileRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    {milestoneUploading ? 'Uploading...' : 'Attach Milestone Media'}
-                  </button>
                 </div>
 
                 {milestoneAttachments.length > 0 && (
@@ -1248,7 +1437,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                   className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white cursor-pointer"
                 >
                   <Plus className="h-4 w-4" />
-                  Add to Next on MD
+                  Add Countdown
                 </button>
               </div>
             </form>
@@ -1260,7 +1449,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
             </h3>
             {countdowns.length === 0 ? (
               <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-                No countdowns configured. The Next on MD sidebar card stays hidden until you add one.
+                No countdowns configured. The countdown sidebar card stays hidden until you add one.
               </p>
             ) : (
               <div className="mt-4 divide-y divide-slate-200/70 dark:divide-slate-700/60">
@@ -1274,7 +1463,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                         {cd.title}
                       </div>
                       <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                        {formatPostTimestamp(cd.targetAt)} · Format: {cd.displayFormat || 'full'}
+                        {formatExpandedCountdownDate(cd.targetAt, cd.timeZone)} · Format: {cd.displayFormat || 'full'}
                         {cd.tag ? ` · #${cd.tag}` : ''}
                         {cd.attachments?.length ? ` · ${cd.attachments.length} file(s)` : ''}
                         {cd.milestoneBodyHtml || cd.milestoneAttachments?.length
@@ -1408,8 +1597,15 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
               Banner
             </h3>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-              No banner is shown by default. Upload a wide photo or animated GIF here to display one or schedule banner swaps.
+              Recommended canvas: <span className="font-semibold">1920 × 480 px (4:1)</span> with faces, logos, and text kept inside the center <span className="font-semibold">1280 × 400 px</span> safe zone
             </p>
+            <div className="mt-3 overflow-hidden rounded-2xl border border-slate-200/80 bg-white/75 shadow-sm dark:border-slate-700/70 dark:bg-slate-900/60">
+              <img
+                src="/assets/aistudio/banner_16758633.png"
+                alt="Recommended 1920 × 480 px banner canvas and 1280 × 400 px safe zone guide"
+                className="block h-auto w-full object-contain"
+              />
+            </div>
 
             <form
               onSubmit={handleCreateBanner}
@@ -1423,14 +1619,13 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                   type="text"
                   value={bannerTitle}
                   onChange={(e) => setBannerTitle(e.target.value)}
-                  placeholder="Leave blank for clean image-only banner"
                   className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                 />
               </div>
 
               <div className="sm:col-span-2">
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
-                  Banner Caption / Subtitle (select text and click Link for clickable CTA)
+                  Banner Caption / Subtitle
                 </label>
                 <div className="mt-1.5 overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
                   <div className="flex flex-wrap items-center gap-1 border-b border-slate-200/80 bg-slate-50/80 px-3 py-1.5 dark:border-slate-700 dark:bg-slate-800/60">
@@ -1468,10 +1663,10 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                         captureBannerSelection();
                         setShowBannerLinkInput((v) => !v);
                       }}
-                      className="ml-1 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-50 dark:border-slate-700 dark:bg-slate-900 dark:text-sky-300 cursor-pointer"
+                      title="Add Link to Selected Text"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-700 hover:bg-white dark:text-slate-200 dark:hover:bg-slate-700 cursor-pointer"
                     >
                       <Link2 className="h-3.5 w-3.5" />
-                      Add Link to Selected Text
                     </button>
                   </div>
 
@@ -1524,7 +1719,11 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     type="text"
                     required
                     value={bannerImageUrl}
-                    onChange={(e) => setBannerImageUrl(e.target.value)}
+                    onChange={(e) => {
+                      setBannerImageUrl(e.target.value);
+                      setBannerPreviewError(false);
+                    }}
+                    placeholder="https://... or upload an image/GIF"
                     className="min-w-[220px] flex-1 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                   />
                   <input
@@ -1536,32 +1735,38 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                   />
                   <button
                     type="button"
-                    disabled={isUploadingBanner}
+                    disabled={isUploadingBanner || isSavingBanner}
                     onClick={() => bannerFileRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-slate-800 dark:bg-sky-600 whitespace-nowrap shrink-0 cursor-pointer"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50 dark:bg-sky-600 whitespace-nowrap shrink-0 cursor-pointer"
                   >
                     <Upload className="h-3.5 w-3.5" />
                     {isUploadingBanner ? 'Uploading...' : 'Upload Image / GIF'}
                   </button>
                 </div>
-                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs">
-                  <span className="text-slate-500">Built-in presets:</span>
-                  {PRESET_BANNERS.map((p) => (
-                    <button
-                      key={p.url}
-                      type="button"
-                      onClick={() => setBannerImageUrl(p.url)}
-                      className="font-medium text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
+
+                {bannerImageUrl.trim() && (
+                  <div className="mt-2.5 overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-900/90 dark:border-slate-700/80">
+                    {bannerPreviewError ? (
+                      <div className="flex h-28 items-center justify-center px-4 text-xs text-rose-300">
+                        Could not load preview for this URL. Check the image link or upload another file.
+                      </div>
+                    ) : (
+                      <img
+                        src={bannerImageUrl}
+                        alt="Selected banner preview"
+                        referrerPolicy="no-referrer"
+                        onLoad={() => setBannerPreviewError(false)}
+                        onError={() => setBannerPreviewError(true)}
+                        className="h-28 w-full object-cover"
+                      />
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
-                  Activation Mode
+                  Animation
                 </label>
                 <select
                   value={bannerMode}
@@ -1601,6 +1806,13 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                       className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                   </div>
+                  <TimeZoneSelect
+                    id="banner-window-timezone"
+                    label="Time Zone (optional)"
+                    value={bannerTimeZone}
+                    onChange={setBannerTimeZone}
+                    className="sm:col-span-2 mt-1"
+                  />
                 </div>
               )}
 
@@ -1632,16 +1844,37 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                       className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                   </div>
+                  <TimeZoneSelect
+                    id="banner-daily-timezone"
+                    label="Time Zone (optional)"
+                    value={bannerTimeZone}
+                    onChange={setBannerTimeZone}
+                    className="col-span-2 mt-1"
+                  />
+                </div>
+              )}
+
+              {bannerStatusMsg && (
+                <div className="sm:col-span-2 flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-200">
+                  <span>{bannerStatusMsg}</span>
+                  <button
+                    type="button"
+                    onClick={() => setBannerStatusMsg('')}
+                    className="font-semibold hover:underline cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
                 </div>
               )}
 
               <div className="sm:col-span-2 flex justify-end">
                 <button
                   type="submit"
-                  className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white cursor-pointer"
+                  disabled={isUploadingBanner || isSavingBanner}
+                  className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
                 >
                   <Plus className="h-4 w-4" />
-                  Save Banner
+                  {isSavingBanner ? 'Saving Banner...' : 'Save Banner'}
                 </button>
               </div>
             </form>
@@ -1677,9 +1910,15 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                               ? `Daily ${formatHourMinute12h(
                                   b.dailyStartHour ?? 0,
                                   0
-                                )} – ${formatHourMinute12h(b.dailyEndHour ?? 23, 59)}`
+                                )} – ${formatHourMinute12h(
+                                  b.dailyEndHour ?? 23,
+                                  59
+                                )} (${getTimeZoneAbbr(b.timeZone)})`
                               : b.mode === 'window'
-                              ? 'Scheduled Window'
+                              ? `Scheduled Window (${getTimeZoneAbbr(
+                                  b.timeZone,
+                                  b.startAt || now
+                                )})`
                               : b.mode === 'slideshow'
                               ? 'Slideshow Rotation'
                               : 'Default Banner'}
@@ -1735,7 +1974,272 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
         </div>
       )}
 
-      {/* Tab 5: Theme */}
+      {/* Tab 5: Team & Co-Managers */}
+      {isAdmin && activeTab === 'team' && (
+        <div className="space-y-5">
+          {/* Instant Access Banner */}
+          <section className="rounded-3xl border border-emerald-200/80 bg-emerald-50/85 px-6 py-4 text-xs text-emerald-900 dark:border-emerald-800/50 dark:bg-emerald-950/40 dark:text-emerald-200 flex items-start gap-3">
+            <CheckCircle2 className="h-4.5 w-4.5 shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" />
+            <div>
+              <div className="font-bold">Instant Co-Manager Access Enabled</div>
+              <p className="mt-0.5 opacity-90">
+                Any new user who signs in with a verified Google account automatically receives co-manager access to this shared timeline without waiting for manual approval, and appears in the directory below.
+              </p>
+            </div>
+          </section>
+
+          {/* Add / Label Co-Manager Directly */}
+          <section className="aero-glass rounded-3xl p-6 space-y-4">
+            <div>
+              <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                Add or Tag Co-Manager by Google Email
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+                Optionally add a teammate&rsquo;s Google email and role label here. Every co-manager publishes to the exact same shared timeline.
+              </p>
+            </div>
+
+            {teamErrorMsg && (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-2.5 text-xs font-medium text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/60 dark:text-rose-200">
+                {teamErrorMsg}
+              </div>
+            )}
+
+            {teamStatusMsg && (
+              <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs font-medium text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/60 dark:text-emerald-200">
+                {teamStatusMsg}
+              </div>
+            )}
+
+            <form
+              onSubmit={handleAddCollaboratorSubmit}
+              className="grid gap-3 sm:grid-cols-[1.4fr_1fr_auto]"
+            >
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Google Email Address
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="teammate@gmail.com"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Role / Note (Optional)
+                </label>
+                <input
+                  type="text"
+                  maxLength={240}
+                  value={inviteNote}
+                  onChange={(e) => setInviteNote(e.target.value)}
+                  placeholder="e.g. Timeline Editor"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+              <div className="flex items-end">
+                <button
+                  type="submit"
+                  disabled={teamBusy}
+                  className="aero-button-primary inline-flex w-full items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-60 cursor-pointer whitespace-nowrap"
+                >
+                  <UserPlus className="h-4 w-4" />
+                  <span>{teamBusy ? 'Saving...' : 'Save Member'}</span>
+                </button>
+              </div>
+            </form>
+          </section>
+
+          {/* Legacy Pending Requests (shown only if any exist) */}
+          {accessRequests.length > 0 && (
+          <section className="aero-glass rounded-3xl p-6 space-y-4">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                  Pending Registration Requests ({accessRequests.length})
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+                  Previously submitted requests.
+                </p>
+              </div>
+            </div>
+
+              <div className="space-y-2.5">
+                {accessRequests.map((req) => (
+                  <div
+                    key={req.uid}
+                    className="flex flex-col gap-3 rounded-2xl border border-amber-200/80 bg-amber-50/70 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-amber-800/50 dark:bg-amber-950/35"
+                  >
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Clock3 className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">
+                          {req.displayName || req.email}
+                        </span>
+                        <span className="font-mono text-[11px] text-slate-600 dark:text-slate-300">
+                          {req.email}
+                        </span>
+                      </div>
+                      {req.note && (
+                        <p className="text-xs text-slate-700 dark:text-slate-300">
+                          &ldquo;{req.note}&rdquo;
+                        </p>
+                      )}
+                      {req.requestedAt && (
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Requested {formatPostTimestamp(req.requestedAt)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        disabled={teamBusy}
+                        onClick={async () => {
+                          setTeamBusy(true);
+                          setTeamErrorMsg('');
+                          try {
+                            await onApproveRequest(req);
+                            setTeamStatusMsg(`Approved ${req.email} as co-manager.`);
+                          } catch (err) {
+                            setTeamErrorMsg(
+                              err instanceof Error
+                                ? err.message
+                                : 'Could not approve request.'
+                            );
+                          } finally {
+                            setTeamBusy(false);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-60 cursor-pointer"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        disabled={teamBusy}
+                        onClick={async () => {
+                          setTeamBusy(true);
+                          setTeamErrorMsg('');
+                          try {
+                            await onDeclineRequest(req.uid);
+                            setTeamStatusMsg(`Declined request from ${req.email}.`);
+                          } catch (err) {
+                            setTeamErrorMsg(
+                              err instanceof Error
+                                ? err.message
+                                : 'Could not decline request.'
+                            );
+                          } finally {
+                            setTeamBusy(false);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+          </section>
+          )}
+
+          {/* Authorized Co-Managers Directory */}
+          <section className="aero-glass rounded-3xl p-6 space-y-4">
+            <div>
+              <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                Authorized Co-Managers ({BOOTSTRAP_OWNER_EMAILS.length + collaborators.length})
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-300">
+                Bootstrap owners are permanently protected. Additional co-managers added from this panel can be revoked anytime.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              {BOOTSTRAP_OWNER_EMAILS.map((ownerEmail) => (
+                <div
+                  key={ownerEmail}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-sky-200/80 bg-sky-50/70 px-4 py-3 dark:border-sky-800/50 dark:bg-sky-950/35"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <ShieldCheck className="h-4 w-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                    <span className="truncate font-mono text-xs font-semibold text-slate-900 dark:text-white">
+                      {ownerEmail}
+                    </span>
+                  </div>
+                  <span className="rounded-lg bg-sky-600/15 px-2.5 py-1 text-[11px] font-semibold text-sky-800 dark:bg-sky-400/20 dark:text-sky-200">
+                    Primary Owner
+                  </span>
+                </div>
+              ))}
+
+              {collaborators.map((collab) => (
+                <div
+                  key={collab.email}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-slate-200/80 bg-white/75 px-4 py-3 dark:border-slate-700/80 dark:bg-slate-900/65"
+                >
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate font-mono text-xs font-semibold text-slate-900 dark:text-white">
+                        {collab.email}
+                      </span>
+                      {collab.displayName && (
+                        <span className="text-xs text-slate-500 dark:text-slate-400">
+                          ({collab.displayName})
+                        </span>
+                      )}
+                    </div>
+                    {collab.note && (
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300">
+                        {collab.note}
+                      </p>
+                    )}
+                    {collab.addedByEmail && (
+                      <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                        Authorized by {collab.addedByEmail}
+                        {collab.addedAt ? ` · ${formatPostTimestamp(collab.addedAt)}` : ''}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={teamBusy}
+                    onClick={async () => {
+                      setTeamBusy(true);
+                      setTeamErrorMsg('');
+                      try {
+                        await onRemoveCollaborator(collab.email);
+                        setTeamStatusMsg(`Removed ${collab.email} from team access.`);
+                      } catch (err) {
+                        setTeamErrorMsg(
+                          err instanceof Error
+                            ? err.message
+                            : 'Could not remove co-manager.'
+                        );
+                      } finally {
+                        setTeamBusy(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-800/60 dark:bg-rose-950/40 dark:text-rose-300 cursor-pointer shrink-0"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* Tab 6: Theme */}
       {activeTab === 'design' && (
         <section className="aero-glass rounded-3xl p-6 space-y-6">
           <div>
@@ -1749,14 +2253,14 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                   onClick={onSignIn}
                   className="text-xs font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
                 >
-                  Sign in as Owner to save globally
+                  Sign in to create or delete themes
                 </button>
               )}
             </div>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
               {isAdmin
-                ? 'Switch between Frutiger Aero, Frutiger Metro, and 2026 minimal palettes, or create and save your own custom theme.'
-                : 'Preview themes locally in your browser. Owner sign-in is required to create themes or save global defaults.'}
+                ? 'Choose any theme for this device without affecting other devices, or create and remove custom themes for everyone below.'
+                : 'Choose any theme for this device without affecting other users. Sign in with Google to create or delete custom themes.'}
             </p>
           </div>
 

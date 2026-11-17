@@ -40,7 +40,9 @@ export interface Post {
   createdAt: string;
   publishedAt: string;
   scheduledFor: string | null;
+  scheduledTimeZone?: string | null;
   pinnedUntil: string | null;
+  pinnedTimeZone?: string | null;
   isDraft?: boolean;
 }
 
@@ -57,6 +59,7 @@ export interface BannerSchedule {
   endAt?: string;
   dailyStartHour?: number;
   dailyEndHour?: number;
+  timeZone?: string;
   priority: number;
 }
 
@@ -66,6 +69,7 @@ export interface EventCountdown {
   id: string;
   title: string;
   targetAt: string;
+  timeZone?: string;
   tag?: string;
   location?: string;
   bodyHtml?: string;
@@ -86,7 +90,11 @@ export type ThemePresetId =
   | 'metro-prism-light'
   | 'metro-eclipse-dark'
   | 'metro-ipod-pop'
-  | 'metro-ipod-electric';
+  | 'metro-ipod-electric'
+  | 'y2k-chrome-cd'
+  | 'y2k-phosphor-grid'
+  | 'y2k-bubblegum-flip'
+  | 'y2k-arcade-peach';
 
 export type ThemeId = ThemePresetId | (string & {});
 
@@ -118,5 +126,29 @@ export interface IntranetState {
   serverTime: string;
 }
 
+export interface CollaboratorRecord {
+  email: string;
+  displayName?: string;
+  note?: string;
+  addedByUid: string;
+  addedByEmail?: string;
+  addedAt: string;
+}
+
+export interface AccessRequestRecord {
+  uid: string;
+  email: string;
+  displayName?: string;
+  note?: string;
+  status: 'pending';
+  requestedAt: string;
+}
+
 export type ActiveView = 'timeline' | 'live' | 'settings' | 'install' | 'next';
-export type BackendTab = 'compose' | 'countdowns' | 'tags' | 'banners' | 'design';
+export type BackendTab =
+  | 'compose'
+  | 'countdowns'
+  | 'tags'
+  | 'banners'
+  | 'team'
+  | 'design';

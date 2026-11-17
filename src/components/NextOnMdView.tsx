@@ -11,6 +11,7 @@ import {
 import type { EventCountdown, MediaAttachment } from '../types';
 import {
   formatDateYmd,
+  formatExpandedCountdownDate,
   getFontClass,
   sanitizeRichHtml,
 } from '../lib/mediaUtils';
@@ -93,15 +94,24 @@ const FullMediaAttachment: React.FC<{
   }
 
   if (attachment.type === 'embed' && attachment.embedUrl) {
+    const isShorts = (attachment.url || '').includes('/shorts/');
     return (
-      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-slate-950 aspect-video shadow-sm dark:border-slate-700/70">
-        <iframe
-          src={attachment.embedUrl}
-          title={attachment.title || 'Embedded media'}
-          allowFullScreen
-          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-          className="h-full w-full border-0"
-        />
+      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-black shadow-sm dark:border-slate-700/70">
+        <div
+          className={
+            isShorts
+              ? 'mx-auto aspect-[9/16] max-h-[520px] w-full max-w-[310px]'
+              : 'aspect-video w-full'
+          }
+        >
+          <iframe
+            src={attachment.embedUrl}
+            title={attachment.title || 'Embedded media'}
+            allowFullScreen
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+            className="h-full w-full border-0"
+          />
+        </div>
       </div>
     );
   }
@@ -148,25 +158,25 @@ export const NextOnMdView: React.FC<NextOnMdViewProps> = ({
             className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800 hover:text-sky-700 dark:text-slate-100 dark:hover:text-sky-300 cursor-pointer"
           >
             <ArrowLeft className="h-4 w-4" />
-            <span>Next on MD</span>
-          </button>
-          <button
-            type="button"
-            onClick={onBackToTimeline}
-            className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
-          >
-            Back to Timeline
+            <span>Back to Timeline</span>
           </button>
         </section>
 
-        <section className="aero-glass rounded-3xl p-8 text-center space-y-3">
-          <CalendarClock className="mx-auto h-8 w-8 text-sky-600 dark:text-sky-400" />
-          <h2 className="font-display text-lg font-bold text-slate-900 dark:text-white">
-            No upcoming events scheduled
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            Countdown events added in Settings will appear here in full detail.
-          </p>
+        <section className="aero-glass rounded-3xl p-6 sm:p-8 space-y-4">
+          <div className="flex items-center justify-start">
+            <h2 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+              NEXT ON MD
+            </h2>
+          </div>
+          <div className="py-2 text-center space-y-3">
+            <CalendarClock className="mx-auto h-8 w-8 text-sky-600 dark:text-sky-400" />
+            <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white">
+              No upcoming events scheduled
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Countdown events added in Settings will appear here in full detail.
+            </p>
+          </div>
         </section>
       </div>
     );
@@ -191,16 +201,10 @@ export const NextOnMdView: React.FC<NextOnMdViewProps> = ({
     ? activeCd.milestoneAttachments || []
     : activeCd.attachments || [];
 
-  const formattedTargetDate = (() => {
-    if (Number.isNaN(targetMs)) return activeCd.targetAt;
-    return new Date(targetMs).toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  })();
+  const formattedTargetDate = formatExpandedCountdownDate(
+    activeCd.targetAt,
+    activeCd.timeZone
+  );
 
   return (
     <div className="space-y-5">
@@ -212,46 +216,30 @@ export const NextOnMdView: React.FC<NextOnMdViewProps> = ({
           className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800 hover:text-sky-700 dark:text-slate-100 dark:hover:text-sky-300 cursor-pointer"
         >
           <ArrowLeft className="h-4 w-4" />
-          <span>Next on MD</span>
+          <span>Back to Timeline</span>
         </button>
 
-        <div className="flex items-center gap-3">
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={onManageCountdowns}
-              className="inline-flex items-center gap-1 rounded-xl border border-slate-200/90 bg-white/80 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 cursor-pointer"
-            >
-              <Settings className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
-              <span>Edit</span>
-            </button>
-          )}
+        {isAdmin && (
           <button
             type="button"
-            onClick={onBackToTimeline}
-            className="text-xs font-medium text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+            onClick={onManageCountdowns}
+            className="inline-flex items-center gap-1 rounded-xl border border-slate-200/90 bg-white/80 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 cursor-pointer"
           >
-            Back to Timeline
+            <Settings className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
+            <span>Edit</span>
           </button>
-        </div>
+        )}
       </section>
 
       {/* Main Fully Formatted & Detailed Next on MD Card */}
       <article className="aero-glass rounded-3xl p-6 sm:p-8 space-y-6">
-        <header className="text-center space-y-2.5">
-          <div className="flex flex-wrap items-center justify-center gap-3 text-xs font-medium text-slate-500 dark:text-slate-400">
-            <span className="inline-flex items-center gap-1.5">
-              <CalendarClock className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
-              <span>{formattedTargetDate || formatDateYmd(activeCd.targetAt)}</span>
-            </span>
-            {activeCd.location && (
-              <span className="inline-flex items-center gap-1">
-                <MapPin className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
-                <span>{activeCd.location}</span>
-              </span>
-            )}
-          </div>
+        <div className="flex items-center justify-start">
+          <h2 className="font-display text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-900 dark:text-white">
+            NEXT ON MD
+          </h2>
+        </div>
 
+        <header className="text-center space-y-2.5">
           <h1 className="font-display text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
             {activeCd.title}
           </h1>
@@ -282,18 +270,28 @@ export const NextOnMdView: React.FC<NextOnMdViewProps> = ({
           </div>
         )}
 
-        {activeCd.tag && (
-          <div className="flex items-center justify-end border-t border-slate-200/70 pt-4 dark:border-slate-700/60">
+        <div className="flex flex-col items-end gap-1.5 border-t border-slate-200/70 pt-4 text-right dark:border-slate-700/60">
+          <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+            {formattedTargetDate ||
+              formatDateYmd(activeCd.targetAt, activeCd.timeZone)}
+          </span>
+          {activeCd.location && (
+            <span className="inline-flex items-center justify-end gap-1 text-xs font-medium text-slate-500 dark:text-slate-400">
+              <MapPin className="h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-400" />
+              <span>{activeCd.location}</span>
+            </span>
+          )}
+          {activeCd.tag && (
             <button
               type="button"
               onClick={() => onSelectTag(activeCd.tag || '')}
-              className="inline-flex items-center gap-1 text-xs sm:text-sm font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
+              className="mt-0.5 inline-flex items-center justify-end gap-1 text-xs sm:text-sm font-semibold text-sky-700 hover:underline dark:text-sky-300 cursor-pointer"
             >
               <Hash className="h-3.5 w-3.5" />
               <span>{activeCd.tag}</span>
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </article>
 
       {/* Switcher if multiple countdowns exist */}

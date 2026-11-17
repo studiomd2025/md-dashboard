@@ -65,7 +65,7 @@ export function formatCountdownDisplay(cd: EventCountdown, nowMs: number): strin
   const format = cd.displayFormat || 'full';
 
   if (format === 'date-only') {
-    return formatDateYmd(cd.targetAt);
+    return formatDateYmd(cd.targetAt, cd.timeZone);
   }
   if (Number.isNaN(diff) || diff <= 0) {
     return 'Event arrived';
@@ -582,6 +582,72 @@ const TabletMarqueeTitle: React.FC<{
   );
 };
 
+const MobileMarqueeTitle: React.FC<{
+  title: string;
+}> = ({ title }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  useEffect(() => {
+    const checkOverflow = () => {
+      const container = containerRef.current;
+      const measure = measureRef.current;
+      if (!container || !measure) return;
+      setIsOverflowing(measure.scrollWidth > container.clientWidth + 1);
+    };
+
+    checkOverflow();
+    if (typeof document !== 'undefined' && 'fonts' in document) {
+      document.fonts.ready.then(checkOverflow).catch(() => {});
+    }
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', checkOverflow);
+      return () => window.removeEventListener('resize', checkOverflow);
+    }
+
+    const observer = new ResizeObserver(checkOverflow);
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+      if (containerRef.current.parentElement) {
+        observer.observe(containerRef.current.parentElement);
+      }
+    }
+    window.addEventListener('resize', checkOverflow);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', checkOverflow);
+    };
+  }, [title]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative w-full min-w-0 overflow-hidden py-0.5 text-2xl font-light tracking-wide leading-normal"
+    >
+      <span
+        ref={measureRef}
+        aria-hidden="true"
+        className="pointer-events-none invisible absolute whitespace-nowrap text-2xl"
+      >
+        {title}
+      </span>
+
+      {isOverflowing ? (
+        <div className="md-marquee-track whitespace-nowrap">
+          <span className="pr-12">{title}</span>
+          <span aria-hidden="true" className="pr-12">
+            {title}
+          </span>
+        </div>
+      ) : (
+        <span className="block whitespace-nowrap text-center">{title}</span>
+      )}
+    </div>
+  );
+};
+
 export const MobileCountdownStrip: React.FC<MobileCountdownStripProps> = ({
   countdowns,
   nowMs,
@@ -626,7 +692,7 @@ export const MobileCountdownStrip: React.FC<MobileCountdownStripProps> = ({
   }
 
   return (
-    <div className="mx-auto max-w-[1380px] px-3 pt-4 pb-1 sm:px-6 lg:hidden">
+    <div className="mx-auto max-w-[1380px] px-3 pt-5 pb-0 sm:px-6 sm:pt-6 sm:pb-0 lg:hidden">
       <div className="flex flex-col items-center gap-3 text-center">
         {countdowns.map((cd) => (
           <button
@@ -637,14 +703,12 @@ export const MobileCountdownStrip: React.FC<MobileCountdownStripProps> = ({
             style={{ color: resolvedColor }}
             className="w-full bg-transparent py-1 cursor-pointer transition-opacity active:opacity-75"
           >
-            {/* Phone (< 640px): Almost full phone width centered clock + 1x larger lighter caption below */}
+            {/* Phone (< 640px): Almost full phone width centered clock + 1x larger lighter caption below (with marquee if long) */}
             <div className="flex w-full flex-col items-center justify-center text-center sm:hidden">
               <span className="w-full whitespace-nowrap font-display text-[clamp(1.85rem,10.8vw,3.5rem)] font-extrabold tracking-tight tabular-nums leading-none">
                 {formatCountdownDisplay(cd, nowMs)}
               </span>
-              <span className="mt-1.5 max-w-full truncate py-0.5 text-2xl font-light tracking-wide leading-normal">
-                {cd.title}
-              </span>
+              <MobileMarqueeTitle title={cd.title} />
             </div>
 
             {/* Tablet (640px – 1023px): Full-width single horizontal line (3.5rem clock + similar-size lighter title, auto-marquee if title overflows) */}

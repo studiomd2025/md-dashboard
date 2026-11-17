@@ -35,10 +35,17 @@ const twitchStatusCache = new Map<
   { fetchedAt: number; data: TwitchStatusInfo }
 >();
 
+const playlistTrackCache = new Map<
+  string,
+  { title: string; items: PlaylistTrackItem[] }
+>();
+
+
 export interface PlaylistTrackItem {
   videoId: string;
   title: string;
   thumbnail: string;
+  url?: string;
   published?: string;
 }
 
@@ -388,7 +395,6 @@ interface LiveTvViewProps {
   isActiveTab?: boolean;
   floatingEnabled?: boolean;
   onToggleFloating?: () => void;
-  onReturnToLiveTab?: () => void;
   isSidebarCollapsed?: boolean;
 }
 
@@ -398,9 +404,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   onSelectStation,
   onSelectEvent,
   isActiveTab = true,
-  floatingEnabled = false,
+  floatingEnabled = true,
   onToggleFloating,
-  onReturnToLiveTab,
   isSidebarCollapsed = false,
 }) => {
   const parentHost = useMemo(() => {
@@ -432,6 +437,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     }
   }, [activeEvent]);
 
+  const [floatOnLiveTab, setFloatOnLiveTab] = useState(false);
+  const [dockedHeight, setDockedHeight] = useState<number | null>(null);
+  const dockedSectionRef = useRef<HTMLElement>(null);
+  const miniHeaderRef = useRef<HTMLDivElement>(null);
+
   const [autoplayEnabled, setAutoplayEnabled] = useState(false);
   const [eventViewMode, setEventViewMode] = useState<'list' | 'tiles'>('list');
   const [showPlaylistDrawer, setShowPlaylistDrawer] = useState(false);
@@ -453,18 +463,28 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     startH: number;
     startXPos: number;
     startYPos: number;
+    headerH: number;
   }>({
     startX: 0,
     startY: 0,
     startW: 380,
-    startH: 236,
+    startH: 247,
     startXPos: 0,
     startYPos: 0,
+    headerH: 33,
   });
   const playerContainerRef = useRef<HTMLDivElement>(null);
+  const playerIframeRef = useRef<HTMLIFrameElement>(null);
+  const [ch4PlaybackStarted, setCh4PlaybackStarted] = useState(false);
+
+  useEffect(() => {
+    if (!floatingEnabled) {
+      setFloatOnLiveTab(false);
+    }
+  }, [floatingEnabled]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (!floatingEnabled) return;
+    if (!floatingEnabled && !floatOnLiveTab) return;
     setIsDragging(true);
     const rect = (e.currentTarget as HTMLElement).closest('.fixed')?.getBoundingClientRect();
     const posX = rect ? rect.left : window.innerWidth - 380;
@@ -478,9 +498,12 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     setResizeCorner(corner);
     const rect = (e.currentTarget as HTMLElement).closest('.fixed')?.getBoundingClientRect();
     const startW = rect ? rect.width : 380;
-    const startH = rect ? rect.height : 236;
+    const startH = rect ? rect.height : 247;
     const startXPos = rect ? rect.left : window.innerWidth - 400;
     const startYPos = rect ? rect.top : window.innerHeight - 260;
+    const headerH =
+      miniHeaderRef.current?.offsetHeight ||
+      Math.max(0, Math.round(startH - startW * (9 / 16)));
     resizeStartRef.current = {
       startX: e.clientX,
       startY: e.clientY,
@@ -488,6 +511,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       startH,
       startXPos,
       startYPos,
+      headerH,
     };
   };
 
@@ -525,8 +549,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
         newX = resizeStartRef.current.startXPos + (resizeStartRef.current.startW - newW);
       }
 
-      // Strictly preserve 16:9 ratio
-      const newH = Math.round(newW * (9 / 16));
+      // Strictly preserve 16:9 ratio for the video surface plus the mini-player bar height
+      const newH = Math.round(newW * (9 / 16)) + resizeStartRef.current.headerH;
 
       if (resizeCorner === 'nw' || resizeCorner === 'ne') {
         newY = resizeStartRef.current.startYPos + (resizeStartRef.current.startH - newH);
@@ -544,23 +568,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       window.removeEventListener('mouseup', onMouseUp);
     };
   }, [resizeCorner]);
-
-  const handlePopOutPiP = async () => {
-    if (typeof window !== 'undefined' && 'documentPictureInPicture' in (window as any)) {
-      try {
-        const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
-          width: 420,
-          height: 240,
-        });
-        const container = playerContainerRef.current;
-        if (container) {
-          pipWindow.document.body.append(container);
-        }
-      } catch (err) {
-        console.warn('Document PiP error:', err);
-      }
-    }
-  };
 
   const [selectedTrack, setSelectedTrack] = useState<{
     videoId: string;
@@ -586,6 +593,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
 
   useEffect(() => {
     setSelectedTrack(null);
+    setCh4PlaybackStarted(false);
     if (!activeEvent && activeStation.kind === 'twitch') {
       setShowPlaylistDrawer(false);
     }
@@ -619,6 +627,130 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
 
   const isTwitch = !activeEvent && activeStation.kind === 'twitch';
   const ytAutoplay = autoplayEnabled ? '1' : '0';
+  const playerOrigin = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    return window.location.origin || '';
+  }, []);
+  const autoplayEnabledRef = useRef(autoplayEnabled);
+  const selectedTrackRef = useRef(selectedTrack);
+  const playlistTracksRef = useRef(playlistTracks);
+  const lastEndedKeyRef = useRef('');
+
+  useEffect(() => {
+    autoplayEnabledRef.current = autoplayEnabled;
+  }, [autoplayEnabled]);
+
+  useEffect(() => {
+    selectedTrackRef.current = selectedTrack;
+    lastEndedKeyRef.current = '';
+    if (!autoplayEnabled) {
+      setCh4PlaybackStarted(false);
+    }
+  }, [selectedTrack, autoplayEnabled]);
+
+  useEffect(() => {
+    playlistTracksRef.current = playlistTracks;
+  }, [playlistTracks]);
+
+  const sendYtListeningHandshake = () => {
+    const win = playerIframeRef.current?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage(
+        JSON.stringify({ event: 'listening', id: 'md-yt-player', channel: 'widget' }),
+        '*'
+      );
+      win.postMessage(
+        JSON.stringify({ event: 'command', func: 'addEventListener', args: ['onStateChange'] }),
+        '*'
+      );
+    } catch {
+      // Ignore cross-origin postMessage errors
+    }
+  };
+
+  useEffect(() => {
+    if (isTwitch) return;
+
+    const onWindowMessage = (event: MessageEvent) => {
+      if (
+        typeof event.origin === 'string' &&
+        !event.origin.includes('youtube.com') &&
+        !event.origin.includes('youtube-nocookie.com')
+      ) {
+        return;
+      }
+
+      let data: unknown = event.data;
+      if (typeof data === 'string') {
+        try {
+          data = JSON.parse(data);
+        } catch {
+          return;
+        }
+      }
+      if (!data || typeof data !== 'object') return;
+
+      const payload = data as {
+        event?: string;
+        info?: number | { playerState?: number };
+      };
+
+      let playerState: number | undefined;
+      if (payload.event === 'onStateChange' && typeof payload.info === 'number') {
+        playerState = payload.info;
+      } else if (
+        (payload.event === 'infoDelivery' || payload.event === 'initialDelivery') &&
+        payload.info &&
+        typeof payload.info === 'object' &&
+        typeof payload.info.playerState === 'number'
+      ) {
+        playerState = payload.info.playerState;
+      }
+
+      if (playerState === 1 || playerState === 3) {
+        setCh4PlaybackStarted(true);
+      }
+
+      if (playerState === 0) {
+        const cur = selectedTrackRef.current;
+        const tracks = playlistTracksRef.current;
+        if (cur && tracks.length > 1 && autoplayEnabledRef.current) {
+          const trackKey = `${cur.index}:${cur.videoId}`;
+          if (lastEndedKeyRef.current !== trackKey) {
+            lastEndedKeyRef.current = trackKey;
+            const nextIdx = (cur.index + 1) % tracks.length;
+            const nextTrack = tracks[nextIdx];
+            if (nextTrack) {
+              setSelectedTrack({
+                videoId: nextTrack.videoId,
+                title: nextTrack.title,
+                index: nextIdx,
+                total: tracks.length,
+              });
+            }
+          }
+        }
+      }
+    };
+
+    const onWindowBlur = () => {
+      if (
+        activeStation.number === 4 &&
+        !activeEvent &&
+        document.activeElement === playerIframeRef.current
+      ) {
+        setCh4PlaybackStarted(true);
+      }
+    };
+
+    window.addEventListener('message', onWindowMessage);
+    window.addEventListener('blur', onWindowBlur);
+    return () => {
+      window.removeEventListener('message', onWindowMessage);
+      window.removeEventListener('blur', onWindowBlur);
+    };
+  }, [isTwitch, activeStation.number, activeEvent]);
 
   const [twitchState, setTwitchState] = useState<{
     channelKey: string;
@@ -719,6 +851,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     !currentTwitchInfo.isLive &&
     Boolean(currentTwitchInfo.bannerImageUrl);
 
+  const twitchProfileBanner = currentTwitchInfo?.bannerImageUrl || null;
+
   const getCleanYoutubeMediaId = (item: PlayEventItem | null): { mediaId: string; isShorts: boolean } => {
     if (!item) return { mediaId: '', isShorts: false };
     if (item.url && item.url.includes('/shorts/')) {
@@ -730,6 +864,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   };
 
   const cleanYt = getCleanYoutubeMediaId(activeEvent);
+  const showChannel4Indicator =
+    !activeEvent &&
+    activeStation.number === 4 &&
+    !autoplayEnabled &&
+    !ch4PlaybackStarted;
 
   const activePlaylistId = useMemo(() => {
     if (activeEvent) {
@@ -748,8 +887,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     return activeStation.label;
   }, [activeEvent, activeStation]);
 
+  const isChannel4Station = !activeEvent && activeStation.number === 4;
+  const shouldFetchPlaylist = showPlaylistDrawer || isChannel4Station;
+
   useEffect(() => {
-    if (!showPlaylistDrawer) return;
     if (!activePlaylistId) {
       setPlaylistTracks([]);
       setPlaylistLoading(false);
@@ -757,7 +898,22 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       return;
     }
 
+    const cached = playlistTrackCache.get(activePlaylistId);
+    if (cached && playlistSyncNonce === 0) {
+      setActivePlaylistTitle(cached.title || defaultPlaylistTitle);
+      setPlaylistTracks(cached.items);
+      setPlaylistLoading(false);
+      setPlaylistError('');
+      return;
+    }
+
+    if (!shouldFetchPlaylist) {
+      setPlaylistTracks([]);
+      return;
+    }
+
     let cancelled = false;
+    setPlaylistTracks([]);
     setPlaylistLoading(true);
     setPlaylistError('');
 
@@ -774,8 +930,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
         if (data.error && (!data.items || data.items.length === 0)) {
           setPlaylistError(data.error);
         } else {
-          setActivePlaylistTitle(data.title || defaultPlaylistTitle);
-          setPlaylistTracks(data.items || []);
+          const resolvedTitle = data.title || defaultPlaylistTitle;
+          const items = data.items || [];
+          playlistTrackCache.set(activePlaylistId, { title: resolvedTitle, items });
+          setActivePlaylistTitle(resolvedTitle);
+          setPlaylistTracks(items);
         }
       })
       .catch(() => {
@@ -789,7 +948,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [showPlaylistDrawer, activePlaylistId, defaultPlaylistTitle, playlistSyncNonce]);
+  }, [shouldFetchPlaylist, activePlaylistId, defaultPlaylistTitle, playlistSyncNonce]);
 
   const filteredPlaylistTracks = useMemo(() => {
     const q = playlistFilterQuery.trim().toLowerCase();
@@ -812,31 +971,29 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     }
   };
 
+  const ytJsApiQuery = playerOrigin
+    ? `&enablejsapi=1&origin=${encodeURIComponent(playerOrigin)}`
+    : '&enablejsapi=1';
+
   const playerSrc = selectedTrack
     ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
         selectedTrack.videoId
-      )}?autoplay=${ytAutoplay}&rel=0`
+      )}?autoplay=${ytAutoplay}&rel=0${ytJsApiQuery}`
     : activeEvent
-    ? cleanYt.isShorts
+    ? cleanYt.isShorts || activeEvent.kind === 'youtube-video'
       ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
-          cleanYt.mediaId
-        )}?autoplay=${ytAutoplay}&loop=0&rel=0`
-      : activeEvent.kind === 'youtube-video'
-      ? `https://www.youtube-nocookie.com/embed/${encodeURIComponent(
-          activeEvent.mediaId
-        )}?autoplay=${ytAutoplay}&rel=0`
+          cleanYt.mediaId || activeEvent.mediaId
+        )}?autoplay=${ytAutoplay}&rel=0${ytJsApiQuery}`
       : `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(
           activeEvent.mediaId
-        )}&autoplay=${ytAutoplay}`
+        )}&autoplay=${ytAutoplay}${ytJsApiQuery}`
     : isTwitch
     ? `https://player.twitch.tv/?channel=${encodeURIComponent(
         activeStation.callsign
-      )}&parent=${encodeURIComponent(parentHost)}&muted=false&autoplay=${
-        autoplayEnabled ? 'true' : 'false'
-      }`
+      )}&parent=${encodeURIComponent(parentHost)}&muted=false&autoplay=true`
     : `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(
         activeStation.playlistId || ''
-      )}&autoplay=${ytAutoplay}`;
+      )}&autoplay=${ytAutoplay}${ytJsApiQuery}`;
 
   const rawExternalUrl = selectedTrack
     ? `https://www.youtube.com/watch?v=${selectedTrack.videoId}`
@@ -904,13 +1061,9 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     }
   };
 
-  // If we are NOT on the live tab, but floating player is enabled, render just the floating player overlay!
-  if (!isActiveTab) {
-    if (!floatingEnabled) return null;
-  }
-
   const renderPlayerInner = (isFloatingMini: boolean) => (
     <section
+      ref={!isFloatingMini ? dockedSectionRef : undefined}
       style={
         isFloatingMini
           ? {
@@ -922,7 +1075,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 : {}),
               overflow: 'hidden',
               minWidth: '260px',
-              minHeight: '160px',
+              minHeight: '179px',
               maxWidth: '90vw',
               maxHeight: '90vh',
             }
@@ -930,24 +1083,41 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       }
       className={
         isFloatingMini
-          ? `fixed z-40 w-[320px] sm:w-[380px] h-[210px] sm:h-[236px] rounded-2xl border border-slate-700/80 bg-slate-950/95 text-white shadow-2xl backdrop-blur-xl flex flex-col ${
+          ? `fixed z-40 w-[320px] sm:w-[380px] h-[213px] sm:h-[247px] rounded-2xl border border-slate-700/80 bg-slate-950/95 text-white shadow-2xl backdrop-blur-xl flex flex-col ${
               !floatPos ? 'bottom-5 right-5' : ''
             }`
           : 'aero-glass overflow-hidden rounded-3xl p-3 sm:p-4'
       }
     >
-      {/* 4 Corner Resize Handles preserving 16:9 (invisible) */}
+      {/* 4 Corner Resize Handles preserving 16:9 (invisible, no blue corners) */}
       {isFloatingMini && (
         <>
-          <div onMouseDown={(e) => handleResizeStart('nw', e)} className="absolute -top-2 -left-2 w-5 h-5 cursor-nwse-resize z-50 bg-transparent" />
-          <div onMouseDown={(e) => handleResizeStart('ne', e)} className="absolute -top-2 -right-2 w-5 h-5 cursor-nesw-resize z-50 bg-transparent" />
-          <div onMouseDown={(e) => handleResizeStart('sw', e)} className="absolute -bottom-2 -left-2 w-5 h-5 cursor-nesw-resize z-50 bg-transparent" />
-          <div onMouseDown={(e) => handleResizeStart('se', e)} className="absolute -bottom-2 -right-2 w-5 h-5 cursor-nwse-resize z-50 bg-transparent" />
+          <div
+            onMouseDown={(e) => handleResizeStart('nw', e)}
+            aria-hidden="true"
+            className="absolute top-0 left-0 w-4 h-4 cursor-nwse-resize z-50 bg-transparent border-0 outline-none select-none"
+          />
+          <div
+            onMouseDown={(e) => handleResizeStart('ne', e)}
+            aria-hidden="true"
+            className="absolute top-0 right-0 w-4 h-4 cursor-nesw-resize z-50 bg-transparent border-0 outline-none select-none"
+          />
+          <div
+            onMouseDown={(e) => handleResizeStart('sw', e)}
+            aria-hidden="true"
+            className="absolute bottom-0 left-0 w-4 h-4 cursor-nesw-resize z-50 bg-transparent border-0 outline-none select-none"
+          />
+          <div
+            onMouseDown={(e) => handleResizeStart('se', e)}
+            aria-hidden="true"
+            className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-50 bg-transparent border-0 outline-none select-none"
+          />
         </>
       )}
 
       {/* Compact Floating Mini-Player Bar (Draggable) */}
       <div
+        ref={miniHeaderRef}
         onMouseDown={handleMouseDown}
         className={
           isFloatingMini
@@ -971,39 +1141,22 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
           </span>
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          {'documentPictureInPicture' in (typeof window !== 'undefined' ? window : {}) && (
-            <button
-              type="button"
-              onClick={handlePopOutPiP}
-              title="Pop out into floating window outside browser tab"
-              aria-label="Pop out floating window"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-            </button>
-          )}
-          {onReturnToLiveTab && (
-            <button
-              type="button"
-              onClick={onReturnToLiveTab}
-              title="Return to Live tab"
-              aria-label="Return to Live tab"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
-            >
-              <Maximize2 className="h-3.5 w-3.5" />
-            </button>
-          )}
-          {onToggleFloating && (
-            <button
-              type="button"
-              onClick={onToggleFloating}
-              title="Close floating player"
-              aria-label="Close floating player"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          )}
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => {
+              if (isActiveTab && floatOnLiveTab) {
+                setFloatOnLiveTab(false);
+              } else {
+                onToggleFloating?.();
+              }
+            }}
+            title={isActiveTab && floatOnLiveTab ? 'Restore' : 'Close floating player'}
+            aria-label={isActiveTab && floatOnLiveTab ? 'Restore' : 'Close floating player'}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       </div>
 
@@ -1044,7 +1197,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           {selectedTrack && playlistTracks.length > 0 ? (
             <div className="flex items-center gap-1">
               <button
@@ -1052,18 +1205,30 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 onClick={() => handleStepTrack(-1)}
                 aria-label="Previous Video in Playlist"
                 title="Previous Video in Playlist"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+                className="relative group inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
               >
                 <ChevronLeft className="h-4 w-4" />
+                <span
+                  role="tooltip"
+                  className="pointer-events-none absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
+                >
+                  Previous Video
+                </span>
               </button>
               <button
                 type="button"
                 onClick={() => handleStepTrack(1)}
                 aria-label="Next Video in Playlist"
                 title="Next Video in Playlist"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+                className="relative group inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
               >
                 <ChevronRight className="h-4 w-4" />
+                <span
+                  role="tooltip"
+                  className="pointer-events-none absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
+                >
+                  Next Video
+                </span>
               </button>
             </div>
           ) : activeEvent && (
@@ -1073,77 +1238,150 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 onClick={() => handleStepEvent(-1)}
                 aria-label="Previous Event"
                 title="Previous Event"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+                className="relative group inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
               >
                 <ChevronLeft className="h-4 w-4" />
+                <span
+                  role="tooltip"
+                  className="pointer-events-none absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
+                >
+                  Previous Event
+                </span>
               </button>
               <button
                 type="button"
                 onClick={() => handleStepEvent(1)}
                 aria-label="Next Event"
                 title="Next Event"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
+                className="relative group inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer"
               >
                 <ChevronRight className="h-4 w-4" />
+                <span
+                  role="tooltip"
+                  className="pointer-events-none absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
+                >
+                  Next Event
+                </span>
               </button>
             </div>
           )}
-          <button
-            type="button"
-            role="switch"
-            aria-checked={autoplayEnabled}
-            onClick={() => setAutoplayEnabled((prev) => !prev)}
-            className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-              autoplayEnabled
-                ? 'aero-button-primary border-transparent text-white'
-                : 'border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
-            }`}
-          >
-            <Play className="h-3.5 w-3.5" />
-            <span>Autoplay: {autoplayEnabled ? 'On' : 'Off'}</span>
-          </button>
-          {onToggleFloating && (
+
+          {/* Autoplay: Play icon + On/Off Switch (YouTube only) */}
+          {!isTwitch && (
             <button
               type="button"
               role="switch"
-              aria-checked={floatingEnabled}
-              onClick={onToggleFloating}
-              title="Keep playing in a floating mini-player when switching tabs"
-              className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-                floatingEnabled
-                  ? 'aero-button-primary border-transparent text-white'
+              aria-checked={autoplayEnabled}
+              aria-label={autoplayEnabled ? 'Autoplay: On' : 'Autoplay: Off'}
+              title={autoplayEnabled ? 'Autoplay: On' : 'Autoplay: Off'}
+              onClick={() => setAutoplayEnabled((prev) => !prev)}
+              className={`relative group inline-flex h-8 items-center gap-2 rounded-xl border px-2.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                autoplayEnabled
+                  ? 'border-sky-400/70 bg-sky-50/90 text-sky-700 dark:border-sky-500/50 dark:bg-sky-950/60 dark:text-sky-200'
                   : 'border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
               }`}
             >
-              <PictureInPicture2 className="h-3.5 w-3.5" />
-              <span>Floating: {floatingEnabled ? 'On' : 'Off'}</span>
+              <Play className="h-3.5 w-3.5 shrink-0" />
+              <span
+                aria-hidden="true"
+                className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors duration-200 ${
+                  autoplayEnabled
+                    ? 'bg-sky-600 dark:bg-sky-500'
+                    : 'bg-slate-300 dark:bg-slate-700'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                    autoplayEnabled ? 'translate-x-3.5' : 'translate-x-0.5'
+                  }`}
+                />
+              </span>
+              <span
+                role="tooltip"
+                className="pointer-events-none absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
+              >
+                {autoplayEnabled ? 'Autoplay: On' : 'Autoplay: Off'}
+              </span>
             </button>
           )}
+
+          {/* Floating Player (icon only) */}
+          <button
+            type="button"
+            onClick={() => {
+              if (dockedSectionRef.current) {
+                setDockedHeight(dockedSectionRef.current.offsetHeight);
+              }
+              if (!floatingEnabled && onToggleFloating) {
+                onToggleFloating();
+              }
+              setFloatOnLiveTab(true);
+            }}
+            aria-label="Floating Player"
+            title="Floating Player"
+            className="relative group inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-sky-600 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-sky-400 shrink-0 cursor-pointer"
+          >
+            <PictureInPicture2 className="h-4 w-4" />
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
+            >
+              Floating Player
+            </span>
+          </button>
+
+          {/* Playlist (icon only) */}
           {!isTwitch && Boolean(activePlaylistId) && (
             <button
               type="button"
               onClick={() => setShowPlaylistDrawer(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+              aria-label="Playlist"
+              title="Playlist"
+              className="relative group inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-sky-600 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-sky-400 shrink-0 cursor-pointer"
             >
-              <ListVideo className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
-              <span>Playlist</span>
+              <ListVideo className="h-4 w-4" />
+              <span
+                role="tooltip"
+                className="pointer-events-none absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
+              >
+                Playlist
+              </span>
             </button>
           )}
+
+          {/* Fullscreen (icon only) */}
           <button
             type="button"
             onClick={handleToggleFullscreen}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 cursor-pointer"
+            aria-label="Fullscreen"
+            title="Fullscreen"
+            className="relative group inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 shrink-0 cursor-pointer"
           >
-            <span>Fullscreen</span>
+            <Maximize2 className="h-4 w-4" />
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute top-full right-0 z-30 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
+            >
+              Fullscreen
+            </span>
           </button>
+
+          {/* Open External YouTube / Twitch (icon only) */}
           <a
             href={externalUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white/80 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 whitespace-nowrap shrink-0 capitalize"
+            aria-label={externalLabel}
+            title={externalLabel}
+            className="relative group inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 shrink-0"
           >
-            <span>{externalLabel}</span>
-            <ExternalLink className="h-3.5 w-3.5" />
+            <ExternalLink className="h-4 w-4" />
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute top-full right-0 z-30 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
+            >
+              {externalLabel}
+            </span>
           </a>
         </div>
       </div>
@@ -1153,46 +1391,103 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
         ref={playerContainerRef}
         className={`relative overflow-hidden bg-slate-950 flex items-center justify-center ${
           isFloatingMini
-            ? 'aspect-video w-full'
+            ? 'flex-1 w-full min-h-0'
             : isFullscreen
             ? 'h-full w-full'
             : 'w-full rounded-2xl border border-slate-200/80 dark:border-slate-800 aspect-video lg:aspect-auto lg:h-[calc((100vw_-_442px)_*_9_/_16)] xl:h-[calc((min(100vw,1380px)_-_538px)_*_9_/_16)]'
         }`}
       >
-        {showTwitchOfflineBanner && (
-          <div className="absolute top-3 right-3 z-20 pointer-events-none rounded bg-black/85 px-2.5 py-1 text-right font-mono text-[11px] font-extrabold uppercase tracking-widest text-amber-400 border border-amber-500/50 shadow-xl backdrop-blur-md">
-            <div className="text-white">{activeStation.callsign}</div>
-            <div className="text-[10px] text-rose-500 animate-pulse tracking-wider">OFFLINE</div>
-          </div>
-        )}
         {isCheckingTwitch ? (
           <div className="flex h-full w-full items-center justify-center bg-slate-950">
             <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
           </div>
-        ) : showTwitchOfflineBanner && currentTwitchInfo?.bannerImageUrl ? (
-          <div className="h-full max-w-full aspect-video overflow-hidden">
-            <img
-              src={currentTwitchInfo.bannerImageUrl}
-              alt={`${activeStation.callsign} profile banner`}
-              referrerPolicy="no-referrer"
-              className="h-full w-full object-cover object-center"
-            />
-          </div>
         ) : (
-          <iframe
-            key={playerSrc}
-            src={playerSrc}
-            title={
-              selectedTrack
-                ? selectedTrack.title
-                : activeEvent
-                ? activeEvent.title
-                : `${activeStation.label} (${activeStation.callsign})`
-            }
-            allowFullScreen
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-            className="h-full w-full border-0 relative z-0"
-          />
+          <div
+            style={{ containerType: 'size' }}
+            className="absolute inset-0 flex items-center justify-center"
+          >
+            <div
+              className="relative flex items-center justify-center overflow-hidden bg-black"
+              style={
+                isTwitch && !selectedTrack && currentTwitchInfo?.isLive
+                  ? {
+                      width: 'min(100cqw, calc(100cqh * 16 / 9))',
+                      height: 'min(100cqh, calc(100cqw * 9 / 16))',
+                    }
+                  : isTwitch && !selectedTrack
+                  ? { width: '100%', height: '100%' }
+                  : activeEvent && !selectedTrack && cleanYt.isShorts
+                  ? {
+                      width: 'min(100cqw, calc(100cqh * 9 / 16))',
+                      height: 'min(100cqh, calc(100cqw * 16 / 9))',
+                    }
+                  : {
+                      width: 'min(100cqw, calc(100cqh * 16 / 9))',
+                      height: 'min(100cqh, calc(100cqw * 9 / 16))',
+                    }
+              }
+            >
+              {showTwitchOfflineBanner && (
+                <div className="absolute top-3 right-3 z-20 pointer-events-none rounded bg-black/85 px-2.5 py-1 text-right font-mono text-[11px] font-extrabold uppercase tracking-widest text-amber-400 border border-amber-500/50 shadow-xl backdrop-blur-md">
+                  <div className="text-white">{activeStation.callsign}</div>
+                  <div className="text-[10px] text-rose-500 animate-pulse tracking-wider">OFFLINE</div>
+                </div>
+              )}
+
+              {showChannel4Indicator && (
+                <div className="pointer-events-none absolute top-3 right-3 z-20">
+                  <div
+                    className={`shrink-0 rounded bg-black/85 text-right font-mono font-extrabold uppercase tracking-widest text-sky-400 border border-sky-400/50 shadow-xl backdrop-blur-md ${
+                      isFloatingMini ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
+                    }`}
+                  >
+                    <div className="text-white">VOD_CH4</div>
+                    <div
+                      className={`text-emerald-400 tracking-wider ${
+                        isFloatingMini ? 'text-[9px]' : 'text-[10px]'
+                      }`}
+                    >
+                      ON DEMAND
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {showTwitchOfflineBanner && twitchProfileBanner ? (
+                <img
+                  src={twitchProfileBanner}
+                  alt={`${activeStation.callsign} profile banner`}
+                  referrerPolicy="no-referrer"
+                  className="h-full w-full object-cover object-center"
+                />
+              ) : (
+                <iframe
+                  ref={playerIframeRef}
+                  key={playerSrc}
+                  src={playerSrc}
+                  onLoad={() => {
+                    if (!isTwitch) {
+                      sendYtListeningHandshake();
+                      window.setTimeout(sendYtListeningHandshake, 250);
+                      window.setTimeout(sendYtListeningHandshake, 800);
+                    }
+                  }}
+                  title={
+                    selectedTrack
+                      ? selectedTrack.title
+                      : activeEvent
+                      ? activeEvent.title
+                      : `${activeStation.label} (${activeStation.callsign})`
+                  }
+                  allowFullScreen
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                  className={`h-full w-full border-0 relative z-0 ${
+                    isDragging || resizeCorner !== null ? 'pointer-events-none' : ''
+                  }`}
+                />
+              )}
+            </div>
+          </div>
         )}
       </div>
 
@@ -1424,12 +1719,12 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                                 >
                                   {originalIdx >= 0 ? originalIdx + 1 : idx + 1}
                                 </span>
-                                <div className="relative h-11 w-18 sm:h-12 sm:w-20 shrink-0 overflow-hidden rounded-xl bg-slate-900 border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
+                                <div className="relative aspect-video h-11 sm:h-12 shrink-0 overflow-hidden rounded-xl bg-black border border-slate-200/70 dark:border-slate-700/60 shadow-sm">
                                   <img
                                     src={item.thumbnail}
                                     alt={item.title}
                                     loading="lazy"
-                                    className="h-full w-full object-cover"
+                                    className="h-full w-full object-contain"
                                   />
                                 </div>
                                 <div className="min-w-0">
@@ -1544,31 +1839,68 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     </section>
   );
 
+  // If we are NOT on the live tab, render ONLY the floating mini-player overlay
+  if (!isActiveTab) {
+    if (!floatingEnabled) return null;
+    return renderPlayerInner(true);
+  }
+
   return (
     <div className="space-y-6">
-      {/* If floating enabled on the Live tab, render the floating player + placeholder void card in original position */}
-      {floatingEnabled ? (
+      {/* If floating on the Live tab, render the floating player + exact-height void placeholder in original position */}
+      {floatOnLiveTab ? (
         <>
           {renderPlayerInner(true)}
-          <section className="aero-glass overflow-hidden rounded-3xl p-3 sm:p-4 flex flex-col justify-center items-center text-center space-y-3 border border-dashed border-sky-400/40 bg-sky-500/5">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300 animate-pulse">
-              <PictureInPicture2 className="h-6 w-6" />
+          <section
+            style={dockedHeight ? { minHeight: `${dockedHeight}px` } : undefined}
+            className="aero-glass overflow-hidden rounded-3xl p-3 sm:p-4 flex flex-col"
+          >
+            <div
+              aria-hidden="true"
+              className="mb-3 flex min-h-8 items-center justify-between gap-2 px-1 text-xs invisible pointer-events-none select-none"
+            >
+              <span className="h-8" />
             </div>
-            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Video currently playing in floating player
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-              You can drag or resize the floating player anywhere on screen. It will keep playing even when you navigate other tabs.
-            </p>
-            {onToggleFloating && (
+
+            <div className="w-full flex-1 rounded-2xl border border-dashed border-sky-400/40 bg-sky-500/5 flex flex-col justify-center items-center text-center space-y-3 p-4 aspect-video lg:aspect-auto lg:h-[calc((100vw_-_442px)_*_9_/_16)] xl:h-[calc((min(100vw,1380px)_-_538px)_*_9_/_16)]">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300 animate-pulse">
+                <PictureInPicture2 className="h-6 w-6" />
+              </div>
+              <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                Video currently playing in floating player
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                You can drag or resize the floating player anywhere on screen. It will keep playing even when you navigate other tabs.
+              </p>
               <button
                 type="button"
-                onClick={onToggleFloating}
+                onClick={() => setFloatOnLiveTab(false)}
                 className="aero-button-primary rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer shadow-sm"
               >
                 Restore
               </button>
-            )}
+            </div>
+
+            <div
+              aria-hidden="true"
+              className={`${
+                isSidebarCollapsed ? 'mt-3 grid grid-cols-4 gap-2' : 'mt-3 grid grid-cols-4 gap-2 lg:hidden'
+              } invisible pointer-events-none select-none`}
+            >
+              {STATIONS.map((station) => (
+                <div
+                  key={`void-spacer-${station.callsign}`}
+                  className="flex flex-col items-center justify-center gap-2 rounded-xl border border-transparent px-1.5 py-2.5"
+                >
+                  <span className="font-display text-lg sm:text-xl font-bold leading-none">
+                    {station.number}
+                  </span>
+                  <span className="font-mono text-[10px] sm:text-xs font-semibold leading-tight">
+                    {station.callsign}
+                  </span>
+                </div>
+              ))}
+            </div>
           </section>
         </>
       ) : (

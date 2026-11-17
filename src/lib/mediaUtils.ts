@@ -1,4 +1,9 @@
 import type { DiaryFont, EmbedKind, MediaAttachment } from '../types';
+import {
+  DEFAULT_TIME_ZONE,
+  getTimeZoneAbbr,
+  getWallClockParts,
+} from './timeZones';
 
 export function normalizeTag(raw: string): string {
   return raw.replace(/^#+/, '').replace(/[^\p{L}\p{N}_-]/gu, '').trim();
@@ -15,16 +20,32 @@ export function stripHtml(html: string): string {
 
 export function normalizeShortsToWatchUrl(url: string): string {
   if (!url) return '';
-  if (url.includes('/shorts/')) {
-    const parts = url.split('/shorts/');
+  const trimmed = url.trim();
+  const shortsMatch = trimmed.match(
+    /^https?:\/\/(?:[\w-]+\.)?youtube\.com\/shorts\/([a-zA-Z0-9_-]+)(?:\/)?(?:\?([^#]*))?(?:#.*)?$/i
+  );
+  if (shortsMatch && shortsMatch[1]) {
+    const videoId = shortsMatch[1];
+    const query = shortsMatch[2];
+    if (query) {
+      const cleanedParams = new URLSearchParams(query);
+      cleanedParams.delete('v');
+      cleanedParams.delete('feature');
+      const extra = cleanedParams.toString();
+      return `https://www.youtube.com/watch?v=${videoId}${extra ? `&${extra}` : ''}`;
+    }
+    return `https://www.youtube.com/watch?v=${videoId}`;
+  }
+  if (trimmed.includes('/shorts/')) {
+    const parts = trimmed.split('/shorts/');
     const rest = parts[1] || '';
-    const videoId = rest.split('?')[0].split('/')[0];
-    const search = rest.includes('?') ? '?' + rest.split('?')[1] : '';
+    const videoId = rest.split('?')[0].split('/')[0].split('#')[0];
+    const rawQuery = rest.includes('?') ? rest.split('?')[1].split('#')[0] : '';
     if (videoId) {
-      return `https://www.youtube.com/watch?v=${videoId}${search ? '&' + search.replace(/^\?/, '') : ''}`;
+      return `https://www.youtube.com/watch?v=${videoId}${rawQuery ? `&${rawQuery}` : ''}`;
     }
   }
-  return url;
+  return trimmed;
 }
 
 export function extractInlineHashtags(title: string, bodyHtml: string): string[] {
@@ -259,37 +280,62 @@ export function getFontClass(font: DiaryFont): string {
   }
 }
 
-export function formatDateYmd(input: string | Date): string {
+export function formatDateYmd(
+  input: string | Date,
+  timeZone: string | null | undefined = DEFAULT_TIME_ZONE
+): string {
   const date = input instanceof Date ? input : new Date(input);
   if (Number.isNaN(date.getTime())) return typeof input === 'string' ? input : '';
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate());
-  return `${y}.${m}.${d}`;
+  const p = getWallClockParts(date, timeZone);
+  const m = String(p.month).padStart(2, '0');
+  return `${p.year}.${m}.${p.day}`;
 }
 
 export function formatHourMinute12h(hour24: number, minute = 0): string {
   const normalizedHour = ((Math.floor(hour24) % 24) + 24) % 24;
-  const period = normalizedHour >= 12 ? 'pm' : 'am';
+  const period = normalizedHour >= 12 ? 'PM' : 'AM';
   const hour12 = normalizedHour % 12 || 12;
   const min = String(Math.max(0, Math.min(59, Math.floor(minute)))).padStart(2, '0');
   return `${hour12}:${min} ${period}`;
 }
 
-export function formatPostTimestamp(iso: string, includeTime = true): string {
+export function formatPostTimestamp(
+  iso: string,
+  includeTime = true,
+  timeZone: string | null | undefined = DEFAULT_TIME_ZONE
+): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  const datePart = formatDateYmd(date);
+  const p = getWallClockParts(date, timeZone);
+  const datePart = `${p.year}.${String(p.month).padStart(2, '0')}.${p.day}`;
   if (!includeTime) return datePart;
-  return `${datePart} ${formatHourMinute12h(date.getHours(), date.getMinutes())}`;
+  return `${datePart} ${formatHourMinute12h(p.hour24, p.minute)}`;
 }
 
-export function getMonthKey(iso: string): string {
+export function formatExpandedCountdownDate(
+  iso: string,
+  timeZone: string | null | undefined = DEFAULT_TIME_ZONE
+): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const p = getWallClockParts(date, timeZone);
+  const period = p.hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = p.hour24 % 12 || 12;
+  const hh = String(hour12).padStart(2, '0');
+  const mm = String(p.minute).padStart(2, '0');
+  const abbr = getTimeZoneAbbr(timeZone, date);
+  return `${p.year}.${p.month}.${p.day} ${hh}:${mm} ${period} ${abbr}`;
+}
+
+export function getMonthKey(
+  iso: string,
+  timeZone: string | null | undefined = DEFAULT_TIME_ZONE
+): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return 'unknown';
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
+  const p = getWallClockParts(date, timeZone);
+  const m = String(p.month).padStart(2, '0');
+  return `${p.year}-${m}`;
 }
 
 export function formatMonthLabel(monthKey: string): string {

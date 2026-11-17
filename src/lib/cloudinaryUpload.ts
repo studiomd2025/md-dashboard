@@ -6,58 +6,67 @@ export interface UploadedMediaResult {
 }
 
 export async function uploadMediaFile(file: File): Promise<UploadedMediaResult> {
-  // Use local backend upload as primary storage for 100% reliability with banners & images
-  try {
-    const res = await fetch(
-      `/api/upload-raw?fileName=${encodeURIComponent(
-        file.name
-      )}&mimeType=${encodeURIComponent(file.type || 'application/octet-stream')}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: file,
+  const cloudName =
+    (typeof import.meta !== 'undefined' &&
+      import.meta.env?.VITE_CLOUDINARY_CLOUD_NAME) ||
+    'fk8nmnjl';
+  const uploadPreset =
+    (typeof import.meta !== 'undefined' &&
+      import.meta.env?.VITE_CLOUDINARY_UPLOAD_PRESET) ||
+    'wie9lb5k';
+
+  // Primary: Cloudinary persistent CDN so uploaded banners & media work across deployments & restarts
+  if (cloudName && uploadPreset) {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', uploadPreset);
+
+      const res = await fetch(
+        `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/auto/upload`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
+
+      const data = (await res.json().catch(() => ({}))) as {
+        secure_url?: string;
+        url?: string;
+        bytes?: number;
+        error?: { message?: string };
+      };
+
+      if (res.ok && (data.secure_url || data.url)) {
+        return {
+          url: data.secure_url || data.url || '',
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          fileSize: typeof data.bytes === 'number' ? data.bytes : file.size,
+        };
       }
-    );
-    if (res.ok) {
-      return (await res.json()) as UploadedMediaResult;
+      console.warn('Cloudinary upload failed, trying local backend:', data.error?.message || res.status);
+    } catch (err) {
+      console.warn('Cloudinary upload error, trying local backend:', err);
     }
-  } catch (err) {
-    console.warn('Local upload failed, trying cloud fallback:', err);
   }
 
-  // Fallback to Cloudinary if local backend fails
-  const cloudName = 'fk8nmnjl';
-  const uploadPreset = 'wie9lb5k';
-
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', uploadPreset);
-
+  // Fallback: local Express upload endpoint
   const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${encodeURIComponent(cloudName)}/auto/upload`,
+    `/api/upload-raw?fileName=${encodeURIComponent(
+      file.name
+    )}&mimeType=${encodeURIComponent(file.type || 'application/octet-stream')}`,
     {
       method: 'POST',
-      body: formData,
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: file,
     }
   );
 
-  const data = (await res.json().catch(() => ({}))) as {
-    secure_url?: string;
-    url?: string;
-    bytes?: number;
-    error?: { message?: string };
-  };
-
-  if (!res.ok || (!data.secure_url && !data.url)) {
-    const reason =
-      data.error?.message || `Upload failed (${res.status})`;
-    throw new Error(reason);
+  if (!res.ok) {
+    const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(errBody.error || `Upload failed (${res.status})`);
   }
 
-  return {
-    url: data.secure_url || data.url || '',
-    fileName: file.name,
-    mimeType: file.type || 'application/octet-stream',
-    fileSize: typeof data.bytes === 'number' ? data.bytes : file.size,
-  };
+  return (await res.json()) as UploadedMediaResult;
 }

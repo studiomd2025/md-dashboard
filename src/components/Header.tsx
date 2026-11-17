@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogIn, LogOut, Menu, PanelRightClose, PanelRightOpen, X } from 'lucide-react';
+import {
+  LogIn,
+  LogOut,
+  Menu,
+  PanelRightClose,
+  PanelRightOpen,
+  UserPlus,
+  X,
+} from 'lucide-react';
 import type { ActiveView } from '../types';
 
 interface HeaderProps {
@@ -9,7 +17,9 @@ interface HeaderProps {
   isAdmin: boolean;
   userEmail?: string | null;
   authReady: boolean;
+  hasPendingRequest?: boolean;
   onSignIn: () => void;
+  onOpenRegister?: () => void;
   onSignOut: () => void;
   isSidebarCollapsed: boolean;
   onToggleSidebar: () => void;
@@ -24,7 +34,9 @@ export const Header: React.FC<HeaderProps> = ({
   isAdmin,
   userEmail,
   authReady,
+  hasPendingRequest = false,
   onSignIn,
+  onOpenRegister,
   onSignOut,
   isSidebarCollapsed,
   onToggleSidebar,
@@ -168,26 +180,54 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             </>
           ) : authReady && userEmail ? (
-            <button
-              type="button"
-              onClick={onSignOut}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200 whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              <span>Switch Account</span>
-            </button>
+            <>
+              {onOpenRegister && (
+                <button
+                  type="button"
+                  onClick={onOpenRegister}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-sky-300 bg-sky-50 px-2.5 sm:px-3 py-2 text-xs font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-700/60 dark:bg-sky-950/40 dark:text-sky-200 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  <span>{hasPendingRequest ? 'Pending Access' : 'Request Access'}</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onSignOut}
+                title={`Signed in as ${userEmail} — Switch account`}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-2.5 sm:px-3 py-2 text-xs font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200 whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Switch Account</span>
+              </button>
+            </>
           ) : (
-            <button
-              type="button"
-              onClick={onSignIn}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white/85 px-3 sm:px-3.5 py-2 text-xs sm:text-sm font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100 whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <LogIn
-                className="h-3.5 w-3.5"
-                style={{ color: 'var(--theme-link)' }}
-              />
-              <span>Sign In</span>
-            </button>
+            <>
+              {onOpenRegister && (
+                <button
+                  type="button"
+                  onClick={onOpenRegister}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white/85 px-2.5 sm:px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <UserPlus
+                    className="h-3.5 w-3.5"
+                    style={{ color: 'var(--theme-link)' }}
+                  />
+                  <span>Register</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onSignIn}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200/90 bg-white/85 px-2.5 sm:px-3.5 py-2 text-xs sm:text-sm font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100 whitespace-nowrap shrink-0 cursor-pointer"
+              >
+                <LogIn
+                  className="h-3.5 w-3.5"
+                  style={{ color: 'var(--theme-link)' }}
+                />
+                <span>Sign In</span>
+              </button>
+            </>
           )}
 
           {/* Minimize / Expand Sidebar Button (desktop lg+ only, right of Sign In) */}

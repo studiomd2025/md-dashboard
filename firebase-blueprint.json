@@ -14,7 +14,9 @@
         "createdAt": { "type": "string", "format": "date-time", "maxLength": 64 },
         "publishedAt": { "type": "string", "format": "date-time", "maxLength": 64 },
         "scheduledFor": { "type": "string", "maxLength": 64 },
+        "scheduledTimeZone": { "type": "string", "maxLength": 64 },
         "pinnedUntil": { "type": "string", "maxLength": 64 },
+        "pinnedTimeZone": { "type": "string", "maxLength": 64 },
         "isDraft": { "type": "boolean" },
         "authorId": { "type": "string", "maxLength": 128 },
         "serverCreatedAt": { "type": "string", "format": "date-time" },
@@ -49,6 +51,7 @@
         "endAt": { "type": "string", "maxLength": 64 },
         "dailyStartHour": { "type": "number" },
         "dailyEndHour": { "type": "number" },
+        "timeZone": { "type": "string", "maxLength": 64 },
         "priority": { "type": "number" },
         "authorId": { "type": "string", "maxLength": 128 },
         "serverUpdatedAt": { "type": "string", "format": "date-time" }
@@ -62,6 +65,7 @@
       "properties": {
         "title": { "type": "string", "maxLength": 200 },
         "targetAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "timeZone": { "type": "string", "maxLength": 64 },
         "tag": { "type": "string", "maxLength": 80 },
         "location": { "type": "string", "maxLength": 200 },
         "bodyHtml": { "type": "string", "maxLength": 100000 },
@@ -99,6 +103,34 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["email"]
+    },
+    "Collaborator": {
+      "title": "Collaborator",
+      "description": "Google account authorized from within the website to co-manage the shared timeline.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 254 },
+        "displayName": { "type": "string", "maxLength": 160 },
+        "note": { "type": "string", "maxLength": 500 },
+        "addedByUid": { "type": "string", "maxLength": 128 },
+        "addedByEmail": { "type": "string", "maxLength": 254 },
+        "addedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "addedByUid", "addedAt"]
+    },
+    "AccessRequest": {
+      "title": "AccessRequest",
+      "description": "Self-registration request submitted by a signed-in Google user to join the shared timeline.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 254 },
+        "displayName": { "type": "string", "maxLength": 160 },
+        "note": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["pending"] },
+        "requestedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "status", "requestedAt"]
     }
   },
   "firestore": {
@@ -121,6 +153,14 @@
     "/admins/{userId}": {
       "schema": { "$ref": "#/entities/AdminUser" },
       "description": "Authorized dashboard owner accounts."
+    },
+    "/collaborators/{emailId}": {
+      "schema": { "$ref": "#/entities/Collaborator" },
+      "description": "Dynamically registered co-managers authorized to edit the shared timeline."
+    },
+    "/access_requests/{uid}": {
+      "schema": { "$ref": "#/entities/AccessRequest" },
+      "description": "Pending registration requests submitted from the website."
     }
   }
 }
