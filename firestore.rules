@@ -191,7 +191,7 @@ service cloud.firestore {
         isOptionalStr(data, 'location', 200) &&
         isOptionalStr(data, 'bodyHtml', 100000) &&
         (!('font' in data) || data.font == null || data.font in ['sans', 'serif', 'mono', 'hand']) &&
-        (!('displayFormat' in data) || data.displayFormat == null || data.displayFormat in ['full', 'days-only', 'compact', 'date-only']) &&
+        (!('displayFormat' in data) || data.displayFormat == null || data.displayFormat in ['full', 'days-only', 'd-day', 'compact', 'date-only']) &&
         (!('attachments' in data) || isBoundedMapList(data.attachments, 20)) &&
         isOptionalStr(data, 'milestoneBodyHtml', 100000) &&
         (!('milestoneFont' in data) || data.milestoneFont == null || data.milestoneFont in ['sans', 'serif', 'mono', 'hand']) &&

@@ -21,6 +21,7 @@ import {
   getFontClass,
   sanitizeRichHtml,
 } from '../lib/mediaUtils';
+import { getWallClockParts } from '../lib/timeZones';
 import { PWAInstallButton } from './PWAInstallButton';
 import { THEME_PRESETS } from './BackendConsoleView';
 import { STATIONS, type BroadcastChannel } from './LiveTvView';
@@ -61,25 +62,99 @@ const MD_LINKS = [
 ];
 
 export function formatCountdownDisplay(cd: EventCountdown, nowMs: number): string {
-  const diff = new Date(cd.targetAt).getTime() - nowMs;
+  const targetDate = new Date(cd.targetAt);
+  const targetMs = targetDate.getTime();
+  const diff = targetMs - nowMs;
   const format = cd.displayFormat || 'full';
 
   if (format === 'date-only') {
     return formatDateYmd(cd.targetAt, cd.timeZone);
   }
-  if (Number.isNaN(diff) || diff <= 0) {
+  if (Number.isNaN(targetMs)) {
     return 'Event arrived';
   }
+
+  // Days Remaining (D-#) is the only countdown format that continues counting on & after the event date (D-DAY, D+1, D+2...)
+  if (format === 'd-day') {
+    const targetParts = getWallClockParts(targetDate, cd.timeZone);
+    const nowParts = getWallClockParts(nowMs, cd.timeZone);
+    const targetDayUtc = Date.UTC(
+      targetParts.year,
+      targetParts.month - 1,
+      targetParts.day
+    );
+    const nowDayUtc = Date.UTC(
+      nowParts.year,
+      nowParts.month - 1,
+      nowParts.day
+    );
+    const dayDiff = Math.round((nowDayUtc - targetDayUtc) / 86400000);
+    if (dayDiff === 0) {
+      return 'D-DAY';
+    }
+    if (dayDiff > 0) {
+      return `D+${dayDiff}`;
+    }
+    return `D-${Math.abs(dayDiff)}`;
+  }
+
+  if (diff <= 0) {
+    return 'Event arrived';
+  }
+
+  if (format === 'days-only') {
+    const totalDays = diff / 86400000;
+    if (totalDays >= 365) {
+      const years = Math.max(1, Math.round(totalDays / 365.25));
+      return `${years} ${years === 1 ? 'year' : 'years'}`;
+    }
+    if (totalDays >= 30) {
+      const months = Math.max(1, Math.round(totalDays / 30.436875));
+      if (months >= 12) {
+        return '1 year';
+      }
+      return `${months} ${months === 1 ? 'month' : 'months'}`;
+    }
+    if (totalDays >= 7) {
+      const weeks = Math.max(1, Math.round(totalDays / 7));
+      return `${weeks} ${weeks === 1 ? 'week' : 'weeks'}`;
+    }
+    if (totalDays >= 1) {
+      const roundedDays = Math.max(1, Math.round(totalDays));
+      if (roundedDays >= 7) {
+        return '1 week';
+      }
+      return `${roundedDays} ${roundedDays === 1 ? 'day' : 'days'}`;
+    }
+    const totalHours = diff / 3600000;
+    if (totalHours >= 1) {
+      const roundedHours = Math.max(1, Math.round(totalHours));
+      if (roundedHours >= 24) {
+        return '1 day';
+      }
+      return `${roundedHours} ${roundedHours === 1 ? 'hour' : 'hours'}`;
+    }
+    const totalMins = diff / 60000;
+    if (totalMins >= 1) {
+      const roundedMins = Math.max(1, Math.round(totalMins));
+      if (roundedMins >= 60) {
+        return '1 hour';
+      }
+      return `${roundedMins} ${roundedMins === 1 ? 'min' : 'mins'}`;
+    }
+    const roundedSecs = Math.max(1, Math.round(diff / 1000));
+    if (roundedSecs >= 60) {
+      return '1 min';
+    }
+    return `${roundedSecs} ${roundedSecs === 1 ? 'sec' : 'secs'}`;
+  }
+
   const totalSec = Math.floor(diff / 1000);
   const days = Math.floor(totalSec / 86400);
   const hours = Math.floor((totalSec % 86400) / 3600);
   const mins = Math.floor((totalSec % 3600) / 60);
   const secs = totalSec % 60;
 
-  if (format === 'days-only') {
-    const ceilDays = Math.ceil(diff / 86400000);
-    return `${ceilDays} ${ceilDays === 1 ? 'day' : 'days'} left`;
-  }
   if (format === 'compact') {
     const totalHours = Math.floor(totalSec / 3600);
     return `${String(totalHours).padStart(2, '0')}:${String(mins).padStart(

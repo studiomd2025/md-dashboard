@@ -63,7 +63,7 @@ export interface BannerSchedule {
   priority: number;
 }
 
-export type CountdownFormat = 'full' | 'days-only' | 'compact' | 'date-only';
+export type CountdownFormat = 'full' | 'days-only' | 'd-day' | 'compact' | 'date-only';
 
 export interface EventCountdown {
   id: string;
@@ -82,6 +82,7 @@ export interface EventCountdown {
 }
 
 export type ThemePresetId =
+  | 'default'
   | 'aero-daylight'
   | 'twilight-lagoon'
   | 'meadow-mint'

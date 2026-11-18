@@ -70,7 +70,7 @@
         "location": { "type": "string", "maxLength": 200 },
         "bodyHtml": { "type": "string", "maxLength": 100000 },
         "font": { "type": "string", "enum": ["sans", "serif", "mono", "hand"] },
-        "displayFormat": { "type": "string", "enum": ["full", "days-only", "compact", "date-only"] },
+        "displayFormat": { "type": "string", "enum": ["full", "days-only", "d-day", "compact", "date-only"] },
         "attachments": { "type": "array" },
         "milestoneBodyHtml": { "type": "string", "maxLength": 100000 },
         "milestoneFont": { "type": "string", "enum": ["sans", "serif", "mono", "hand"] },

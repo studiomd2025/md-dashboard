@@ -190,7 +190,7 @@ interface StoreData {
 }
 
 const DEFAULT_DESIGN: DesignSettings = {
-  theme: 'aero-daylight',
+  theme: 'default',
   surfaceStyle: 'aero-glass',
   customBackdropUrl: '',
   customThemes: [],
@@ -333,7 +333,7 @@ function readStore(): StoreData {
         countdowns: Array.isArray(parsed.countdowns) ? parsed.countdowns : [],
         design: parsed.design
           ? {
-              theme: parsed.design.theme || 'aero-daylight',
+              theme: parsed.design.theme || 'default',
               surfaceStyle: parsed.design.surfaceStyle || 'aero-glass',
               customBackdropUrl: parsed.design.customBackdropUrl || '',
               customThemes: Array.isArray(parsed.design.customThemes)
@@ -712,7 +712,7 @@ async function startServer() {
     const store = readStore();
     const body = req.body as Partial<DesignSettings>;
     store.design = {
-      theme: body.theme || store.design.theme || 'aero-daylight',
+      theme: body.theme || store.design.theme || 'default',
       surfaceStyle: body.surfaceStyle || store.design.surfaceStyle || 'aero-glass',
       customBackdropUrl:
         body.customBackdropUrl !== undefined
@@ -1180,8 +1180,26 @@ async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
+      server: { middlewareMode: true, hmr: false, ws: false },
       appType: 'spa',
+      plugins: [
+        {
+          name: 'disable-vite-hmr-ws-client',
+          enforce: 'post',
+          transform(code, id) {
+            const cleanId = id.split('?')[0].replace(/\\/g, '/');
+            if (
+              cleanId.endsWith('/vite/dist/client/client.mjs') ||
+              cleanId.endsWith('/@vite/client')
+            ) {
+              return code.replace(
+                /let wsTransport = createWebSocketModuleRunnerTransport\(\{[\s\S]*?\}\);/,
+                'let wsTransport = { async connect() {}, disconnect() {}, send() {} };'
+              );
+            }
+          },
+        },
+      ],
     });
     app.use(vite.middlewares);
   } else {

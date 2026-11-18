@@ -244,7 +244,7 @@ export function subscribeDashboardData({
         if (!snap.exists()) {
           onDesign(
             {
-              theme: 'aero-daylight',
+              theme: 'default',
               surfaceStyle: 'aero-glass',
               customBackdropUrl: '',
               customThemes: [],
@@ -256,7 +256,7 @@ export function subscribeDashboardData({
         const raw = snap.data();
         onDesign(
           {
-            theme: String(raw.theme || 'aero-daylight'),
+            theme: String(raw.theme || 'default'),
             surfaceStyle:
               raw.surfaceStyle === 'crisp-2026' ? 'crisp-2026' : 'aero-glass',
             customBackdropUrl: String(raw.customBackdropUrl || ''),
@@ -381,7 +381,7 @@ export async function seedFirestoreIfEmpty(authorId: string): Promise<void> {
     }
 
     const designPayload = local.design || {
-      theme: 'aero-daylight',
+      theme: 'default',
       surfaceStyle: 'aero-glass',
       customBackdropUrl: '',
       customThemes: [],
@@ -389,7 +389,7 @@ export async function seedFirestoreIfEmpty(authorId: string): Promise<void> {
     batch.set(
       doc(db, 'config', 'design'),
       stripUndefinedDeep({
-        theme: String(designPayload.theme || 'aero-daylight').slice(0, 128),
+        theme: String(designPayload.theme || 'default').slice(0, 128),
         surfaceStyle:
           designPayload.surfaceStyle === 'crisp-2026'
             ? 'crisp-2026'
@@ -787,6 +787,48 @@ export async function createCountdownDoc(
   }
 }
 
+export async function updateCountdownDoc(
+  countdownId: string,
+  payload: Omit<EventCountdown, 'id'>
+): Promise<void> {
+  const path = `countdowns/${countdownId}`;
+  try {
+    await updateDoc(
+      doc(db, 'countdowns', countdownId),
+      stripUndefinedDeep({
+        title: String(payload.title || 'Upcoming Event').slice(0, 200),
+        targetAt: String(
+          payload.targetAt || new Date(Date.now() + 7 * 86400 * 1000).toISOString()
+        ).slice(0, 64),
+        timeZone: payload.timeZone
+          ? String(payload.timeZone).slice(0, 64)
+          : null,
+        tag: payload.tag ? String(payload.tag).slice(0, 80) : null,
+        location: payload.location
+          ? String(payload.location).slice(0, 200)
+          : null,
+        bodyHtml: payload.bodyHtml
+          ? String(payload.bodyHtml).slice(0, 100000)
+          : '',
+        font: payload.font || 'sans',
+        displayFormat: payload.displayFormat || 'full',
+        attachments: sanitizeAttachments(payload.attachments, 20),
+        milestoneBodyHtml: payload.milestoneBodyHtml
+          ? String(payload.milestoneBodyHtml).slice(0, 100000)
+          : '',
+        milestoneFont: payload.milestoneFont || 'sans',
+        milestoneAttachments: sanitizeAttachments(
+          payload.milestoneAttachments,
+          20
+        ),
+        serverUpdatedAt: serverTimestamp(),
+      })
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
 export async function deleteCountdownDoc(countdownId: string): Promise<void> {
   const path = `countdowns/${countdownId}`;
   try {
@@ -803,7 +845,7 @@ export async function saveDesignConfigDoc(
   const path = 'config/design';
   const ref = doc(db, 'config', 'design');
   const fields = stripUndefinedDeep({
-    theme: String(design.theme || 'aero-daylight').slice(0, 128),
+    theme: String(design.theme || 'default').slice(0, 128),
     surfaceStyle:
       design.surfaceStyle === 'crisp-2026' ? 'crisp-2026' : 'aero-glass',
     customBackdropUrl: String(design.customBackdropUrl || '').slice(0, 2000),

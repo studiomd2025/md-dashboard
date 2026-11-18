@@ -42,6 +42,31 @@
         );
       })();
     </script>
+    <script>
+      (() => {
+        try {
+          var raw = window.localStorage.getItem('md-visitor-design');
+          var parsed = raw ? JSON.parse(raw) : null;
+          var theme = (parsed && parsed.theme) || 'default';
+          var surface = (parsed && parsed.surfaceStyle) || 'aero-glass';
+          var darkThemes = [
+            'twilight-lagoon',
+            'metro-eclipse-dark',
+            'metro-ipod-electric',
+            'y2k-phosphor-grid',
+          ];
+          var root = document.documentElement;
+          root.setAttribute('data-theme', theme);
+          root.setAttribute('data-surface', surface);
+          if (darkThemes.indexOf(theme) !== -1) {
+            root.classList.add('dark');
+          }
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'default');
+          document.documentElement.setAttribute('data-surface', 'aero-glass');
+        }
+      })();
+    </script>
     <title>MY DIARIES DASHBOARD</title>
     <meta name="description" content="Personal Frutiger Aero 2026 multimedia diary, event timeline, and scheduled dashboard." />
     <meta property="og:title" content="MY DIARIES DASHBOARD" />

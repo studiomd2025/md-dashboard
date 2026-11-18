@@ -127,7 +127,7 @@
     }
   ],
   "design": {
-    "theme": "aero-daylight",
+    "theme": "default",
     "surfaceStyle": "aero-glass",
     "customBackdropUrl": "",
     "customThemes": []

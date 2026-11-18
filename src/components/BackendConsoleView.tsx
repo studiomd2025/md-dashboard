@@ -58,6 +58,7 @@ import {
 import {
   DEFAULT_TIME_ZONE,
   getTimeZoneAbbr,
+  isoToWallClockInput,
   wallClockToIso,
 } from '../lib/timeZones';
 import { uploadMediaFile } from '../lib/cloudinaryUpload';
@@ -94,6 +95,10 @@ interface BackendConsoleViewProps {
     milestoneFont?: DiaryFont;
     milestoneAttachments?: MediaAttachment[];
   }) => Promise<void>;
+  onUpdateCountdown: (
+    id: string,
+    payload: Omit<EventCountdown, 'id'>
+  ) => Promise<void>;
   onDeleteCountdown: (id: string) => Promise<void>;
   onRenameTag: (oldTag: string, newTag: string) => Promise<void>;
   onDeleteTag: (tag: string) => Promise<void>;
@@ -124,6 +129,12 @@ export const THEME_PRESETS: {
   swatches: [string, string, string];
 }[] = [
   {
+    id: 'default',
+    label: 'Default',
+    description: 'Clean neutral gray canvas with balanced slate surfaces.',
+    swatches: ['#f3f4f6', '#64748b', '#1f2937'],
+  },
+  {
     id: 'aero-daylight',
     label: 'Frutiger Aero Daylight',
     description: 'Sunlit cyan sky, turquoise accents, and clear frosted glass.',
@@ -131,7 +142,7 @@ export const THEME_PRESETS: {
   },
   {
     id: 'twilight-lagoon',
-    label: 'Twilight Lagoon (Dark)',
+    label: 'Twilight Lagoon',
     description: 'Deep ocean slate canvas with luminous cyan-emerald glass.',
     swatches: ['#06131c', '#0ea5e9', '#10b981'],
   },
@@ -143,7 +154,7 @@ export const THEME_PRESETS: {
   },
   {
     id: 'metro-eclipse-dark',
-    label: 'Frutiger Metro Eclipse (Dark)',
+    label: 'Frutiger Metro Eclipse',
     description: 'Midnight obsidian canvas with sleek cyan-teal Frutiger Metro vector art.',
     swatches: ['#050d17', '#22d3ee', '#0284c7'],
   },
@@ -155,7 +166,7 @@ export const THEME_PRESETS: {
   },
   {
     id: 'metro-ipod-electric',
-    label: 'Frutiger Metro Electric Club (Dark)',
+    label: 'Frutiger Metro Electric Club',
     description: 'Deep midnight violet canvas with glowing neon cyan, acid lime, and hot pink swooshes.',
     swatches: ['#0b0719', '#22d3ee', '#ec4899'],
   },
@@ -185,7 +196,7 @@ export const THEME_PRESETS: {
   },
   {
     id: 'y2k-phosphor-grid',
-    label: 'Y2K Phosphor Cyber Grid (Dark)',
+    label: 'Y2K Phosphor Cyber Grid',
     description: 'Early-2000s PS2/Winamp wireframe terminal with acid lime and cyber teal.',
     swatches: ['#07110d', '#a3e635', '#0d9488'],
   },
@@ -222,6 +233,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   onPublishNow,
   onTogglePin,
   onAddCountdown,
+  onUpdateCountdown,
   onDeleteCountdown,
   onRenameTag,
   onDeleteTag,
@@ -256,11 +268,14 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [renameValue, setRenameValue] = useState('');
   const [tagBusy, setTagBusy] = useState(false);
 
-  // Next on MD (Countdown) creator state
+  // Next on MD (Countdown) creator / editor state
+  const cdFormRef = useRef<HTMLElement>(null);
   const cdEditorRef = useRef<HTMLDivElement>(null);
   const cdFileRef = useRef<HTMLInputElement>(null);
   const milestoneEditorRef = useRef<HTMLDivElement>(null);
   const milestoneFileRef = useRef<HTMLInputElement>(null);
+  const [editingCountdownId, setEditingCountdownId] = useState<string | null>(null);
+  const [cdLocation, setCdLocation] = useState<string | undefined>(undefined);
   const [cdTitle, setCdTitle] = useState('');
   const [cdTarget, setCdTarget] = useState('');
   const [cdTimeZone, setCdTimeZone] = useState<string>(DEFAULT_TIME_ZONE);
@@ -270,6 +285,8 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [cdBodyHtml, setCdBodyHtml] = useState('');
   const [cdAttachments, setCdAttachments] = useState<MediaAttachment[]>([]);
   const [cdUploading, setCdUploading] = useState(false);
+  const [cdSaving, setCdSaving] = useState(false);
+  const [cdStatusMsg, setCdStatusMsg] = useState('');
   const [milestoneFont, setMilestoneFont] = useState<DiaryFont>('sans');
   const [milestoneBodyHtml, setMilestoneBodyHtml] = useState('');
   const [milestoneAttachments, setMilestoneAttachments] = useState<MediaAttachment[]>([]);
@@ -460,40 +477,93 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     }
   };
 
+  const resetCountdownForm = () => {
+    setEditingCountdownId(null);
+    setCdLocation(undefined);
+    setCdTitle('');
+    setCdTarget('');
+    setCdTimeZone(DEFAULT_TIME_ZONE);
+    setCdTag('');
+    setCdFormat('full');
+    setCdFont('sans');
+    setCdBodyHtml('');
+    setCdAttachments([]);
+    setMilestoneFont('sans');
+    setMilestoneBodyHtml('');
+    setMilestoneAttachments([]);
+    if (cdEditorRef.current) cdEditorRef.current.innerHTML = '';
+    if (milestoneEditorRef.current) milestoneEditorRef.current.innerHTML = '';
+  };
+
+  const handleStartEditCountdown = (cd: EventCountdown) => {
+    const tz = cd.timeZone || DEFAULT_TIME_ZONE;
+    const safeBody = sanitizeRichHtml(cd.bodyHtml || '');
+    const safeMilestone = sanitizeRichHtml(cd.milestoneBodyHtml || '');
+
+    setUploadError('');
+    setCdStatusMsg('');
+    setEditingCountdownId(cd.id);
+    setCdLocation(cd.location);
+    setCdTitle(cd.title || '');
+    setCdTimeZone(tz);
+    setCdTarget(isoToWallClockInput(cd.targetAt, tz));
+    setCdTag(cd.tag || '');
+    setCdFormat(cd.displayFormat || 'full');
+    setCdFont(cd.font || 'sans');
+    setCdBodyHtml(safeBody);
+    setCdAttachments(cd.attachments ? [...cd.attachments] : []);
+    setMilestoneFont(cd.milestoneFont || 'sans');
+    setMilestoneBodyHtml(safeMilestone);
+    setMilestoneAttachments(
+      cd.milestoneAttachments ? [...cd.milestoneAttachments] : []
+    );
+
+    if (cdEditorRef.current) cdEditorRef.current.innerHTML = safeBody;
+    if (milestoneEditorRef.current) {
+      milestoneEditorRef.current.innerHTML = safeMilestone;
+    }
+
+    cdFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   const handleCreateCountdown = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cdTitle.trim() || !cdTarget) return;
     setUploadError('');
+    setCdStatusMsg('');
     const cleanedHtml = sanitizeRichHtml(cdEditorRef.current?.innerHTML || cdBodyHtml);
     const cleanedMilestoneHtml = sanitizeRichHtml(
       milestoneEditorRef.current?.innerHTML || milestoneBodyHtml
     );
+    const payload: Omit<EventCountdown, 'id'> = {
+      title: cdTitle.trim(),
+      targetAt: wallClockToIso(cdTarget, cdTimeZone),
+      timeZone: cdTimeZone,
+      tag: cdTag.trim() ? normalizeTag(cdTag) : undefined,
+      location: cdLocation,
+      bodyHtml: cleanedHtml,
+      font: cdFont,
+      displayFormat: cdFormat,
+      attachments: cdAttachments,
+      milestoneBodyHtml: cleanedMilestoneHtml,
+      milestoneFont,
+      milestoneAttachments,
+    };
+
+    setCdSaving(true);
     try {
-      await onAddCountdown({
-        title: cdTitle.trim(),
-        targetAt: wallClockToIso(cdTarget, cdTimeZone),
-        timeZone: cdTimeZone,
-        tag: cdTag.trim() ? normalizeTag(cdTag) : undefined,
-        bodyHtml: cleanedHtml,
-        font: cdFont,
-        displayFormat: cdFormat,
-        attachments: cdAttachments,
-        milestoneBodyHtml: cleanedMilestoneHtml,
-        milestoneFont,
-        milestoneAttachments,
-      });
-      setCdTitle('');
-      setCdTarget('');
-      setCdTimeZone(DEFAULT_TIME_ZONE);
-      setCdTag('');
-      setCdBodyHtml('');
-      setCdAttachments([]);
-      setMilestoneBodyHtml('');
-      setMilestoneAttachments([]);
-      if (cdEditorRef.current) cdEditorRef.current.innerHTML = '';
-      if (milestoneEditorRef.current) milestoneEditorRef.current.innerHTML = '';
+      const wasEditing = Boolean(editingCountdownId);
+      if (editingCountdownId) {
+        await onUpdateCountdown(editingCountdownId, payload);
+      } else {
+        await onAddCountdown(payload);
+      }
+      resetCountdownForm();
+      setCdStatusMsg(wasEditing ? 'Countdown updated.' : 'Countdown added.');
     } catch (err) {
       setUploadError(formatActionError(err, 'Failed to save countdown.'));
+    } finally {
+      setCdSaving(false);
     }
   };
 
@@ -542,7 +612,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     const nextList = (design.customThemes || []).filter((t) => t.id !== id);
     await onUpdateDesign({
       customThemes: nextList,
-      ...(design.theme === id ? { theme: 'aero-daylight' } : {}),
+      ...(design.theme === id ? { theme: 'default' } : {}),
     });
   };
 
@@ -1107,13 +1177,38 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       {/* Tab 2: Next on MD (Countdown Setup with RTF, Custom Format & Multimedia) */}
       {isAdmin && activeTab === 'countdowns' && (
         <div className="space-y-5">
-          <section className="aero-glass rounded-3xl p-6">
-            <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-              Countdown
-            </h3>
+          <section ref={cdFormRef} className="aero-glass rounded-3xl p-6">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                {editingCountdownId ? 'Edit Countdown' : 'Countdown'}
+              </h3>
+              {editingCountdownId && (
+                <button
+                  type="button"
+                  onClick={resetCountdownForm}
+                  className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Cancel Edit
+                </button>
+              )}
+            </div>
             <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
               Create customized event countdowns with rich text notes (RTF), display format options, optional hashtags, and optional multimedia files. Active countdowns appear in the sidebar automatically.
             </p>
+
+            {cdStatusMsg && (
+              <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-200">
+                <span>{cdStatusMsg}</span>
+                <button
+                  type="button"
+                  onClick={() => setCdStatusMsg('')}
+                  className="font-semibold hover:underline cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
 
             <form onSubmit={handleCreateCountdown} className="mt-4 space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -1163,7 +1258,8 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                   >
                     <option value="full">Full Timer (00 : 00 : 00 : 00)</option>
-                    <option value="days-only">Days Remaining (e.g. 14 days left)</option>
+                    <option value="days-only">Adaptive Remaining (e.g. 2 months, 2 weeks, 3 days)</option>
+                    <option value="d-day">Days Remaining (D-# / D-DAY / D+#)</option>
                     <option value="compact">Compact Clock (HH:MM:SS)</option>
                     <option value="date-only">Target Date Only</option>
                   </select>
@@ -1430,14 +1526,34 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 )}
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {editingCountdownId && (
+                  <button
+                    type="button"
+                    onClick={resetCountdownForm}
+                    disabled={cdSaving}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                  >
+                    <X className="h-4 w-4" />
+                    Cancel
+                  </button>
+                )}
                 <button
                   type="submit"
-                  disabled={cdUploading || milestoneUploading}
-                  className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white cursor-pointer"
+                  disabled={cdUploading || milestoneUploading || cdSaving}
+                  className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
                 >
-                  <Plus className="h-4 w-4" />
-                  Add Countdown
+                  {editingCountdownId ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      {cdSaving ? 'Saving...' : 'Save Changes'}
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" />
+                      {cdSaving ? 'Adding...' : 'Add Countdown'}
+                    </>
+                  )}
                 </button>
               </div>
             </form>
@@ -1453,34 +1569,65 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
               </p>
             ) : (
               <div className="mt-4 divide-y divide-slate-200/70 dark:divide-slate-700/60">
-                {countdowns.map((cd) => (
-                  <div
-                    key={cd.id}
-                    className="flex flex-wrap items-center justify-between gap-3 py-3"
-                  >
-                    <div className="min-w-0">
-                      <div className="font-display text-sm font-bold text-slate-900 dark:text-white">
-                        {cd.title}
+                {countdowns.map((cd) => {
+                  const isEditingThis = editingCountdownId === cd.id;
+                  return (
+                    <div
+                      key={cd.id}
+                      className={`flex flex-wrap items-center justify-between gap-3 py-3 ${
+                        isEditingThis
+                          ? 'rounded-2xl bg-sky-50/70 px-3 dark:bg-sky-950/30'
+                          : ''
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                          {cd.title}
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
+                          {formatExpandedCountdownDate(cd.targetAt, cd.timeZone)} · Format:{' '}
+                          {cd.displayFormat === 'days-only'
+                            ? 'Adaptive Remaining'
+                            : cd.displayFormat === 'd-day'
+                            ? 'Days Remaining (D-#)'
+                            : cd.displayFormat === 'compact'
+                            ? 'Compact Clock'
+                            : cd.displayFormat === 'date-only'
+                            ? 'Target Date Only'
+                            : 'Full Timer'}
+                          {cd.tag ? ` · #${cd.tag}` : ''}
+                          {cd.attachments?.length ? ` · ${cd.attachments.length} file(s)` : ''}
+                          {cd.milestoneBodyHtml || cd.milestoneAttachments?.length
+                            ? ' · Milestone configured'
+                            : ''}
+                        </div>
                       </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400 font-mono tabular-nums">
-                        {formatExpandedCountdownDate(cd.targetAt, cd.timeZone)} · Format: {cd.displayFormat || 'full'}
-                        {cd.tag ? ` · #${cd.tag}` : ''}
-                        {cd.attachments?.length ? ` · ${cd.attachments.length} file(s)` : ''}
-                        {cd.milestoneBodyHtml || cd.milestoneAttachments?.length
-                          ? ' · Milestone configured'
-                          : ''}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleStartEditCountdown(cd)}
+                          className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-50 dark:border-slate-700 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-slate-700/80 cursor-pointer"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                          {isEditingThis ? 'Editing' : 'Edit'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isEditingThis) {
+                              resetCountdownForm();
+                            }
+                            onDeleteCountdown(cd.id);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Remove
+                        </button>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteCountdown(cd.id)}
-                      className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Remove
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>

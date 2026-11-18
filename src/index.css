@@ -12,18 +12,19 @@
 }
 
 @layer base {
-  :root {
+  :root,
+  html[data-theme="default"] {
     --font-display: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
     --font-body: "DM Sans", ui-sans-serif, system-ui, sans-serif;
     --font-serif: "Fraunces", ui-serif, Georgia, serif;
     --font-hand: "Caveat", cursive;
     --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
-    --accent-start: #38bdf8;
-    --accent-end: #0284c7;
-    --accent-shadow: rgba(2, 132, 199, 0.45);
-    --countdown-ink: #082f49;
-    --theme-link: #0284c7;
+    --accent-start: #475569;
+    --accent-end: #334155;
+    --accent-shadow: rgba(15, 23, 42, 0.22);
+    --countdown-ink: #18181b;
+    --theme-link: #334155;
   }
 
   html {
@@ -35,6 +36,21 @@
   body {
     margin: 0;
     min-height: 100vh;
+    background-color: #f3f4f6;
+    background-image: none;
+    color: #111827;
+    transition: background-color 200ms ease, color 200ms ease;
+  }
+
+  html[data-theme="aero-daylight"] {
+    --accent-start: #38bdf8;
+    --accent-end: #0284c7;
+    --accent-shadow: rgba(2, 132, 199, 0.45);
+    --countdown-ink: #082f49;
+    --theme-link: #0284c7;
+  }
+
+  html[data-theme="aero-daylight"] body {
     background-color: #eff8fd;
     background-image:
       linear-gradient(rgba(239, 248, 253, 0.45), rgba(247, 251, 253, 0.48)),
@@ -43,10 +59,12 @@
     background-position: center;
     background-attachment: fixed;
     color: #0f172a;
-    transition: background-color 200ms ease, color 200ms ease;
   }
 
   html[data-theme="twilight-lagoon"] {
+    --accent-start: #38bdf8;
+    --accent-end: #0284c7;
+    --accent-shadow: rgba(2, 132, 199, 0.45);
     --countdown-ink: #e0f2fe;
     --theme-link: #38bdf8;
   }
@@ -335,6 +353,21 @@ html[data-surface="crisp-2026"].dark .mobile-drawer-solid {
 
 .aero-button-primary:hover {
   filter: brightness(1.06);
+}
+
+html[data-theme="default"]:not([data-surface="crisp-2026"]) .aero-glass {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(209, 213, 219, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    0 10px 28px -16px rgba(17, 24, 39, 0.14);
+}
+
+html[data-theme="default"] .diary-prose a,
+html[data-theme="default"] .diary-hashtag-inline {
+  color: #334155;
 }
 
 /* Experimental Y2K Material Surfaces */

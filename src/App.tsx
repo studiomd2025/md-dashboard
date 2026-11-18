@@ -70,6 +70,7 @@ import {
   subscribeOwnCollaboratorStatus,
   subscribeTeamManagement,
   updateBannerDoc,
+  updateCountdownDoc,
   updatePostDoc,
   withdrawAccessRequestDoc,
 } from './lib/firestoreStore';
@@ -91,22 +92,42 @@ import { MobileWidgetStudioView } from './components/MobileWidgetStudioView';
 import { OfflineIndicator } from './components/PWAInstallButton';
 import { useFlipLayout, useSystemAnimationGuard } from './hooks/useFlipLayout';
 
+const getInitialDesignState = (): DesignSettings => {
+  const fallback: DesignSettings = {
+    theme: 'default',
+    surfaceStyle: 'aero-glass',
+    customBackdropUrl: '',
+    customThemes: [],
+  };
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const savedLocal = window.localStorage.getItem('md-visitor-design');
+    if (savedLocal) {
+      const parsed = JSON.parse(savedLocal) as Partial<DesignSettings>;
+      return {
+        ...fallback,
+        theme: parsed.theme || 'default',
+        surfaceStyle:
+          parsed.surfaceStyle === 'crisp-2026' ? 'crisp-2026' : 'aero-glass',
+      };
+    }
+  } catch {
+    // ignore localStorage read error
+  }
+  return fallback;
+};
+
 export default function App() {
   useSystemAnimationGuard();
   const [posts, setPosts] = useState<Post[]>([]);
   const [banners, setBanners] = useState<BannerSchedule[]>([]);
   const [countdowns, setCountdowns] = useState<EventCountdown[]>([]);
-  const [design, setDesign] = useState<DesignSettings>({
-    theme: 'aero-daylight',
-    surfaceStyle: 'aero-glass',
-    customBackdropUrl: '',
-    customThemes: [],
-  });
+  const [design, setDesign] = useState<DesignSettings>(getInitialDesignState);
   const serverDesignRef = useRef<{
     theme: DesignSettings['theme'];
     surfaceStyle: DesignSettings['surfaceStyle'];
   }>({
-    theme: 'aero-daylight',
+    theme: 'default',
     surfaceStyle: 'aero-glass',
   });
   const [isLoading, setIsLoading] = useState(true);
@@ -800,6 +821,14 @@ export default function App() {
     await createCountdownDoc(user.uid, payload);
   };
 
+  const handleUpdateCountdown = async (
+    id: string,
+    payload: Omit<EventCountdown, 'id'>
+  ) => {
+    if (!user || !isAdmin) return;
+    await updateCountdownDoc(id, payload);
+  };
+
   const handleDeleteCountdown = async (id: string) => {
     if (!isAdmin) return;
     await deleteCountdownDoc(id);
@@ -834,7 +863,7 @@ export default function App() {
         !String(serverDesignRef.current.theme).startsWith('custom-') ||
         remainingCustomIds.has(String(serverDesignRef.current.theme))
           ? serverDesignRef.current.theme
-          : 'aero-daylight';
+          : 'default';
 
       await saveDesignConfigDoc(user.uid, {
         ...merged,
@@ -1459,6 +1488,7 @@ export default function App() {
                 onPublishNow={handlePublishScheduledNow}
                 onTogglePin={handleTogglePin}
                 onAddCountdown={handleAddCountdown}
+                onUpdateCountdown={handleUpdateCountdown}
                 onDeleteCountdown={handleDeleteCountdown}
                 onRenameTag={handleRenameTag}
                 onDeleteTag={handleDeleteTag}
