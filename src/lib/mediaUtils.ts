@@ -287,8 +287,7 @@ export function formatDateYmd(
   const date = input instanceof Date ? input : new Date(input);
   if (Number.isNaN(date.getTime())) return typeof input === 'string' ? input : '';
   const p = getWallClockParts(date, timeZone);
-  const m = String(p.month).padStart(2, '0');
-  return `${p.year}.${m}.${p.day}`;
+  return `${p.year}.${p.month}.${p.day}`;
 }
 
 export function formatHourMinute12h(hour24: number, minute = 0): string {
@@ -307,7 +306,7 @@ export function formatPostTimestamp(
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   const p = getWallClockParts(date, timeZone);
-  const datePart = `${p.year}.${String(p.month).padStart(2, '0')}.${p.day}`;
+  const datePart = `${p.year}.${p.month}.${p.day}`;
   if (!includeTime) return datePart;
   return `${datePart} ${formatHourMinute12h(p.hour24, p.minute)}`;
 }

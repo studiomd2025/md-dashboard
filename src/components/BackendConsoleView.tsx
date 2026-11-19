@@ -13,6 +13,7 @@ import {
   Italic,
   Layers,
   Link2,
+  ListVideo,
   Lock,
   LogIn,
   LogOut,
@@ -41,6 +42,7 @@ import type {
   DiaryFont,
   EventCountdown,
   MediaAttachment,
+  PlayEventRecord,
   Post,
   SurfaceStyle,
   ThemePresetId,
@@ -65,6 +67,9 @@ import { uploadMediaFile } from '../lib/cloudinaryUpload';
 import { BOOTSTRAP_OWNER_EMAILS } from '../lib/firebase';
 import { resolveActiveBanner } from './ScheduledBanner';
 import { TimeZoneSelect } from './TimeZoneSelect';
+import { FontSelect } from './FontSelect';
+import { YmdDateInput, YmdDateTimeInput } from './YmdDateInputs';
+import { PLAY_EVENTS, type PlayEventItem } from './LiveTvView';
 
 interface BackendConsoleViewProps {
   activeTab: BackendTab;
@@ -100,6 +105,13 @@ interface BackendConsoleViewProps {
     payload: Omit<EventCountdown, 'id'>
   ) => Promise<void>;
   onDeleteCountdown: (id: string) => Promise<void>;
+  customPlayEvents?: PlayEventRecord[];
+  onAddPlayEvent?: (payload: Omit<PlayEventRecord, 'id'>) => Promise<void>;
+  onUpdatePlayEvent?: (
+    id: string,
+    payload: Omit<PlayEventRecord, 'id'>
+  ) => Promise<void>;
+  onDeletePlayEvent?: (id: string) => Promise<void>;
   onRenameTag: (oldTag: string, newTag: string) => Promise<void>;
   onDeleteTag: (tag: string) => Promise<void>;
   onFilterByTag: (tag: string) => void;
@@ -130,9 +142,9 @@ export const THEME_PRESETS: {
 }[] = [
   {
     id: 'default',
-    label: 'Default',
-    description: 'Clean neutral gray canvas with balanced slate surfaces.',
-    swatches: ['#f3f4f6', '#64748b', '#1f2937'],
+    label: 'System Default',
+    description: 'Adapts automatically to your device Light or Dark mode with clean neutral gray surfaces.',
+    swatches: ['#f3f4f6', '#64748b', '#121417'],
   },
   {
     id: 'aero-daylight',
@@ -242,6 +254,10 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   onUpdateBanner,
   onDeleteBanner,
   onUpdateDesign,
+  customPlayEvents = [],
+  onAddPlayEvent,
+  onUpdatePlayEvent,
+  onDeletePlayEvent,
   collaborators,
   accessRequests,
   onAddCollaborator,
@@ -291,6 +307,20 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [milestoneBodyHtml, setMilestoneBodyHtml] = useState('');
   const [milestoneAttachments, setMilestoneAttachments] = useState<MediaAttachment[]>([]);
   const [milestoneUploading, setMilestoneUploading] = useState(false);
+
+  // Play Event playlist creator / editor state
+  const [editingPlayEventId, setEditingPlayEventId] = useState<string | null>(null);
+  const [peUrl, setPeUrl] = useState('');
+  const [peTitle, setPeTitle] = useState('');
+  const [peDate, setPeDate] = useState('');
+  const [peEraSelect, setPeEraSelect] = useState<string>('Daliatime Era');
+  const [peCustomEra, setPeCustomEra] = useState('');
+  const [peScheduleEnabled, setPeScheduleEnabled] = useState(false);
+  const [peScheduledAt, setPeScheduledAt] = useState('');
+  const [peScheduledTz, setPeScheduledTz] = useState<string>(DEFAULT_TIME_ZONE);
+  const [peSaving, setPeSaving] = useState(false);
+  const [peStatusMsg, setPeStatusMsg] = useState('');
+  const [peErrorMsg, setPeErrorMsg] = useState('');
 
   // Settings sub-navigation responsive layout state (Observer-backed for precision across sidebar states)
   const tabNavRef = useRef<HTMLDivElement>(null);
@@ -347,8 +377,12 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     design.customBackdropUrl || ''
   );
 
-  // Custom Theme Creator state
+  // Custom Theme Creator & Editor state
   const [showCustomThemeBuilder, setShowCustomThemeBuilder] = useState(false);
+  const [editingCustomThemeId, setEditingCustomThemeId] = useState<string | null>(null);
+  const [showManagePlaylistsDrawer, setShowManagePlaylistsDrawer] = useState(false);
+  const [manageSearchQuery, setManageSearchQuery] = useState('');
+  const [manageEraFilter, setManageEraFilter] = useState<string>('all');
   const [ctName, setCtName] = useState('');
   const [ctIsDark, setCtIsDark] = useState(false);
   const [ctSurface, setCtSurface] = useState<SurfaceStyle>('aero-glass');
@@ -508,7 +542,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     setCdTimeZone(tz);
     setCdTarget(isoToWallClockInput(cd.targetAt, tz));
     setCdTag(cd.tag || '');
-    setCdFormat(cd.displayFormat || 'full');
+    setCdFormat(cd.displayFormat === 'compact' ? 'full' : (cd.displayFormat || 'full'));
     setCdFont(cd.font || 'sans');
     setCdBodyHtml(safeBody);
     setCdAttachments(cd.attachments ? [...cd.attachments] : []);
@@ -567,6 +601,199 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     }
   };
 
+  const parsePlayEventLink = (
+    rawUrl: string
+  ): {
+    kind: 'youtube-playlist' | 'youtube-video';
+    mediaId: string;
+    normalizedUrl: string;
+  } | null => {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return null;
+    try {
+      const parsed = new URL(trimmed);
+      const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
+      if (
+        host === 'youtube.com' ||
+        host === 'm.youtube.com' ||
+        host === 'music.youtube.com' ||
+        host === 'youtu.be'
+      ) {
+        const listId = parsed.searchParams.get('list');
+        if (listId) {
+          return {
+            kind: 'youtube-playlist',
+            mediaId: listId,
+            normalizedUrl: trimmed,
+          };
+        }
+        let videoId = parsed.searchParams.get('v');
+        if (host === 'youtu.be') {
+          videoId = parsed.pathname.replace(/^\//, '').split('/')[0] || null;
+        } else if (parsed.pathname.startsWith('/shorts/')) {
+          videoId = parsed.pathname.split('/')[2] || null;
+        } else if (parsed.pathname.startsWith('/embed/')) {
+          videoId = parsed.pathname.split('/')[2] || null;
+        }
+        if (videoId) {
+          return {
+            kind: 'youtube-video',
+            mediaId: videoId,
+            normalizedUrl: trimmed,
+          };
+        }
+      }
+    } catch {
+      // ignore invalid URL syntax
+    }
+    if (/^PL[a-zA-Z0-9_-]{8,}$/.test(trimmed)) {
+      return {
+        kind: 'youtube-playlist',
+        mediaId: trimmed,
+        normalizedUrl: `https://www.youtube.com/playlist?list=${encodeURIComponent(trimmed)}`,
+      };
+    }
+    return null;
+  };
+
+  const resetPlayEventForm = () => {
+    setEditingPlayEventId(null);
+    setPeUrl('');
+    setPeTitle('');
+    setPeDate('');
+    setPeEraSelect('Daliatime Era');
+    setPeCustomEra('');
+    setPeScheduleEnabled(false);
+    setPeScheduledAt('');
+    setPeScheduledTz(DEFAULT_TIME_ZONE);
+    setPeErrorMsg('');
+  };
+
+  const handleStartEditPlayEvent = (ev: PlayEventRecord) => {
+    setEditingPlayEventId(ev.id);
+    setPeUrl(ev.url);
+    setPeTitle(ev.title);
+    const isoDate = /^\d{4}\.\d{1,2}\.\d{1,2}$/.test(ev.dateLabel)
+      ? ev.dateLabel
+          .split('.')
+          .map((part, idx) => (idx > 0 ? part.padStart(2, '0') : part))
+          .join('-')
+      : '';
+    setPeDate(isoDate || ev.dateLabel);
+    const knownEras = ['Interim Era', 'Caratime Era', 'Daliatime Era'];
+    if (!ev.era) {
+      setPeEraSelect('Daliatime Era');
+      setPeCustomEra('');
+    } else if (knownEras.includes(ev.era)) {
+      setPeEraSelect(ev.era);
+      setPeCustomEra('');
+    } else {
+      setPeEraSelect('custom');
+      setPeCustomEra(ev.era);
+    }
+    if (ev.scheduledFor) {
+      const tz = ev.scheduledTimeZone || DEFAULT_TIME_ZONE;
+      setPeScheduleEnabled(true);
+      setPeScheduledTz(tz);
+      setPeScheduledAt(isoToWallClockInput(ev.scheduledFor, tz));
+    } else {
+      setPeScheduleEnabled(false);
+      setPeScheduledTz(DEFAULT_TIME_ZONE);
+      setPeScheduledAt('');
+    }
+    setPeStatusMsg('');
+    setPeErrorMsg('');
+  };
+
+  const handleSavePlayEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!peTitle.trim() || !peUrl.trim() || peSaving) return;
+    setPeErrorMsg('');
+    setPeStatusMsg('');
+
+    const parsedLink = parsePlayEventLink(peUrl);
+    if (!parsedLink) {
+      setPeErrorMsg(
+        'Please enter a valid YouTube playlist link (containing ?list=...) or YouTube video URL.'
+      );
+      return;
+    }
+
+    if (peEraSelect === 'custom' && !peCustomEra.trim()) {
+      setPeErrorMsg('Please enter a name for the new Era.');
+      return;
+    }
+
+    if (peScheduleEnabled && !peScheduledAt.trim()) {
+      setPeErrorMsg('Please choose a scheduled publish date & time, or turn off Schedule.');
+      return;
+    }
+
+    const rawDate = peDate.trim();
+    let dateLabel = rawDate;
+    let year = 'Archive';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      const [y, m, d] = rawDate.split('-');
+      dateLabel = `${y}.${m}.${d}`;
+      year = y;
+    } else if (/^\d{4}\.\d{1,2}\.\d{1,2}$/.test(rawDate)) {
+      year = rawDate.split('.')[0];
+    } else {
+      const ym = rawDate.match(/(20\d{2}|19\d{2})/);
+      if (ym) year = ym[1];
+      if (!dateLabel) dateLabel = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
+      if (year === 'Archive' && !rawDate) year = String(new Date().getFullYear());
+    }
+
+    const resolvedEra =
+      peEraSelect === 'custom' ? peCustomEra.trim() : peEraSelect;
+
+    const scheduledFor =
+      peScheduleEnabled && peScheduledAt.trim()
+        ? wallClockToIso(peScheduledAt, peScheduledTz)
+        : null;
+    const scheduledTimeZone =
+      peScheduleEnabled && scheduledFor ? peScheduledTz : null;
+
+    setPeSaving(true);
+    try {
+      const payload: Omit<PlayEventRecord, 'id'> = {
+        title: peTitle.trim(),
+        url: parsedLink.normalizedUrl,
+        kind: parsedLink.kind,
+        mediaId: parsedLink.mediaId,
+        dateLabel,
+        year,
+        era: resolvedEra,
+        scheduledFor,
+        scheduledTimeZone,
+      };
+      const isFutureSchedule = Boolean(
+        scheduledFor && new Date(scheduledFor).getTime() > Date.now()
+      );
+      if (editingPlayEventId && onUpdatePlayEvent) {
+        await onUpdatePlayEvent(editingPlayEventId, payload);
+        setPeStatusMsg(
+          isFutureSchedule
+            ? 'Playlist scheduled for Live → Play Event.'
+            : 'Playlist updated in Live → Play Event.'
+        );
+      } else if (onAddPlayEvent) {
+        await onAddPlayEvent(payload);
+        setPeStatusMsg(
+          isFutureSchedule
+            ? 'Playlist scheduled for Live → Play Event.'
+            : 'Playlist added to Live → Play Event.'
+        );
+      }
+      resetPlayEventForm();
+    } catch (err) {
+      setPeErrorMsg(formatActionError(err, 'Could not save playlist.'));
+    } finally {
+      setPeSaving(false);
+    }
+  };
+
   const handleCustomThemeBackdropUpload = async (file: File | undefined) => {
     if (!file) return;
     setIsUploadingCustomThemeBg(true);
@@ -583,8 +810,12 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     e.preventDefault();
     if (!ctName.trim()) return;
     setUploadError('');
+    const themes = design.customThemes || [];
+    let nextList: CustomThemePreset[];
+    let resolvedThemeId = editingCustomThemeId || `custom-${Date.now()}`;
+
     const newTheme: CustomThemePreset = {
-      id: `custom-${Date.now()}`,
+      id: resolvedThemeId,
       name: ctName.trim(),
       isDark: ctIsDark,
       canvasBg: ctCanvasBg,
@@ -593,19 +824,38 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       accentEnd: ctAccentEnd,
       backdropImageUrl: ctBackdropUrl.trim() || undefined,
     };
-    const nextList = [...(design.customThemes || []), newTheme];
+
+    if (editingCustomThemeId) {
+      nextList = themes.map((t) => (t.id === editingCustomThemeId ? newTheme : t));
+    } else {
+      nextList = [...themes, newTheme];
+    }
+
     try {
       await onUpdateDesign({
         customThemes: nextList,
-        theme: newTheme.id,
+        theme: resolvedThemeId,
         surfaceStyle: newTheme.surfaceStyle,
       });
       setCtName('');
       setCtBackdropUrl('');
+      setEditingCustomThemeId(null);
       setShowCustomThemeBuilder(false);
     } catch (err) {
       setUploadError(formatActionError(err, 'Failed to save custom theme.'));
     }
+  };
+
+  const handleStartEditCustomTheme = (ct: CustomThemePreset) => {
+    setEditingCustomThemeId(ct.id);
+    setCtName(ct.name);
+    setCtIsDark(ct.isDark);
+    setCtSurface(ct.surfaceStyle || 'aero-glass');
+    setCtCanvasBg(ct.canvasBg || '#f0f9ff');
+    setCtAccentStart(ct.accentStart || '#38bdf8');
+    setCtAccentEnd(ct.accentEnd || '#0284c7');
+    setCtBackdropUrl(ct.backdropImageUrl || '');
+    setShowCustomThemeBuilder(true);
   };
 
   const handleDeleteCustomTheme = async (id: string) => {
@@ -803,7 +1053,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     badge?: number;
   }[] = [
     { id: 'compose', label: 'Timeline', icon: Send },
-    { id: 'countdowns', label: 'Countdown', icon: CalendarClock },
+    { id: 'countdowns', label: 'Events', icon: CalendarClock },
     { id: 'tags', label: 'Hashtags', icon: Hash },
     { id: 'banners', label: 'Banner', icon: ImageIcon },
     {
@@ -1229,12 +1479,13 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
                     Date & Time
                   </label>
-                  <input
-                    type="datetime-local"
-                    required
+                  <YmdDateTimeInput
+                    id="countdown-target-input"
+                    ariaLabel="Countdown Date & Time"
                     value={cdTarget}
-                    onChange={(e) => setCdTarget(e.target.value)}
-                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    onChange={setCdTarget}
+                    className="mt-1.5"
+                    inputClassName="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                   />
                 </div>
 
@@ -1260,7 +1511,6 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     <option value="full">Full Timer (00 : 00 : 00 : 00)</option>
                     <option value="days-only">Adaptive Remaining (e.g. 2 months, 2 weeks, 3 days)</option>
                     <option value="d-day">Days Remaining (D-# / D-DAY / D+#)</option>
-                    <option value="compact">Compact Clock (HH:MM:SS)</option>
                     <option value="date-only">Target Date Only</option>
                   </select>
                 </div>
@@ -1334,16 +1584,13 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     <Upload className="h-3.5 w-3.5" />
                     <span>{cdUploading ? 'Uploading...' : 'Upload Media'}</span>
                   </button>
-                  <select
+                  <FontSelect
+                    id="cd-font-select"
                     value={cdFont}
-                    onChange={(e) => setCdFont(e.target.value as DiaryFont)}
-                    className="ml-auto rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                  >
-                    <option value="sans">DM Sans</option>
-                    <option value="serif">Fraunces Serif</option>
-                    <option value="mono">JetBrains Mono</option>
-                    <option value="hand">Caveat Journal</option>
-                  </select>
+                    onChange={setCdFont}
+                    ariaLabel="Countdown Typeface"
+                    className="ml-auto"
+                  />
                 </div>
 
                 <div
@@ -1628,6 +1875,307 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </section>
+
+          {/* Add Event Playlist (Live Tab) */}
+          <section className="aero-glass rounded-3xl p-6 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="flex items-center gap-2 font-display text-base font-bold text-slate-900 dark:text-white">
+                <ListVideo className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+                {editingPlayEventId ? 'Edit Event Playlist' : 'Add Event Playlist'}
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowManagePlaylistsDrawer(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-sky-500/50 bg-sky-50 px-3.5 py-1.5 text-xs font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-500/50 dark:bg-sky-950/60 dark:text-sky-200 cursor-pointer"
+                >
+                  <ListVideo className="h-3.5 w-3.5" />
+                  Manage Playlists
+                </button>
+                {editingPlayEventId && (
+                  <button
+                    type="button"
+                    onClick={resetPlayEventForm}
+                    className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Cancel Edit
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {peStatusMsg && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-medium text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-200">
+                <span>{peStatusMsg}</span>
+                <button
+                  type="button"
+                  onClick={() => setPeStatusMsg('')}
+                  className="font-semibold hover:underline cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {peErrorMsg && (
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-medium text-rose-800 dark:border-rose-800/60 dark:bg-rose-950/50 dark:text-rose-200">
+                <span>{peErrorMsg}</span>
+                <button
+                  type="button"
+                  onClick={() => setPeErrorMsg('')}
+                  className="font-semibold hover:underline cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            <form onSubmit={handleSavePlayEvent} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Playlist Link
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={peUrl}
+                    onChange={(e) => setPeUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/playlist?list=..."
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Title
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={peTitle}
+                    onChange={(e) => setPeTitle(e.target.value)}
+                    placeholder="Event or playlist title"
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Date
+                  </label>
+                  <YmdDateInput
+                    id="pe-date-input"
+                    ariaLabel="Playlist Date"
+                    value={peDate}
+                    onChange={setPeDate}
+                    className="mt-1.5"
+                    inputClassName="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div className={peEraSelect === 'custom' ? 'sm:col-span-1' : 'sm:col-span-2'}>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                    Era
+                  </label>
+                  <select
+                    value={peEraSelect}
+                    onChange={(e) => setPeEraSelect(e.target.value)}
+                    className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                  >
+                    <option value="Interim Era">Interim Era</option>
+                    <option value="Caratime Era">Caratime Era</option>
+                    <option value="Daliatime Era">Daliatime Era</option>
+                    <option value="custom">Add New Era</option>
+                  </select>
+                </div>
+
+                {peEraSelect === 'custom' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                      New Era Name
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={peCustomEra}
+                      onChange={(e) => setPeCustomEra(e.target.value)}
+                      placeholder="Enter new era name"
+                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                    />
+                  </div>
+                )}
+
+                <div className="sm:col-span-2 rounded-2xl border border-slate-200/80 bg-white/60 p-3.5 dark:border-slate-700/70 dark:bg-slate-900/50 space-y-3">
+                  <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={peScheduleEnabled}
+                      onChange={(e) => setPeScheduleEnabled(e.target.checked)}
+                      className="h-4 w-4 rounded accent-sky-600"
+                    />
+                    <CalendarClock className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+                    <span>Schedule Playlist</span>
+                  </label>
+
+                  {peScheduleEnabled && (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
+                          Publish Date &amp; Time
+                        </label>
+                        <YmdDateTimeInput
+                          id="pe-scheduled-at-input"
+                          ariaLabel="Publish Date and Time"
+                          value={peScheduledAt}
+                          onChange={setPeScheduledAt}
+                          className="mt-1"
+                          inputClassName="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        />
+                      </div>
+                      <TimeZoneSelect
+                        id="pe-schedule-tz"
+                        compact
+                        label="Time Zone"
+                        value={peScheduledTz}
+                        onChange={setPeScheduledTz}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {editingPlayEventId && (
+                  <button
+                    type="button"
+                    onClick={resetPlayEventForm}
+                    disabled={peSaving}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 cursor-pointer"
+                  >
+                    <X className="h-4 w-4" />
+                    Cancel
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  disabled={peSaving}
+                  className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 cursor-pointer"
+                >
+                  {editingPlayEventId ? (
+                    <>
+                      <Check className="h-4 w-4" />
+                      {peSaving ? 'Saving...' : 'Save Playlist'}
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4" />
+                      {peSaving
+                        ? 'Saving...'
+                        : peScheduleEnabled
+                        ? 'Schedule Playlist'
+                        : 'Add Playlist'}
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+
+            {customPlayEvents.length > 0 && (
+              <div className="pt-3 border-t border-slate-200/70 dark:border-slate-700/60">
+                <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white mb-2">
+                  Custom Play Event Playlists ({customPlayEvents.length})
+                </h4>
+                <div className="divide-y divide-slate-200/70 dark:divide-slate-700/60">
+                  {customPlayEvents.map((ev) => {
+                    const isEditingThis = editingPlayEventId === ev.id;
+                    const isScheduledPending = Boolean(
+                      ev.scheduledFor &&
+                        new Date(ev.scheduledFor).getTime() > now.getTime()
+                    );
+                    return (
+                      <div
+                        key={ev.id}
+                        className={`flex flex-wrap items-center justify-between gap-3 py-3 ${
+                          isEditingThis
+                            ? 'rounded-2xl bg-sky-50/70 px-3 dark:bg-sky-950/30'
+                            : ''
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-display text-sm font-bold text-slate-900 dark:text-white truncate">
+                              {ev.title}
+                            </span>
+                            {isScheduledPending && ev.scheduledFor && (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-800 dark:bg-amber-950/70 dark:text-amber-300">
+                                <Clock3 className="h-3 w-3" />
+                                Scheduled: {formatPostTimestamp(ev.scheduledFor)}
+                                {ev.scheduledTimeZone
+                                  ? ` (${getTimeZoneAbbr(ev.scheduledTimeZone)})`
+                                  : ''}
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums truncate">
+                            {ev.dateLabel}
+                            {ev.era ? ` · ${ev.era}` : ''}
+                            {` · ${ev.kind === 'youtube-video' ? 'Video' : 'Playlist'}`}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {isScheduledPending && onUpdatePlayEvent && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onUpdatePlayEvent(ev.id, {
+                                  title: ev.title,
+                                  url: ev.url,
+                                  kind: ev.kind,
+                                  mediaId: ev.mediaId,
+                                  dateLabel: ev.dateLabel,
+                                  year: ev.year,
+                                  era: ev.era,
+                                  scheduledFor: null,
+                                  scheduledTimeZone: null,
+                                })
+                              }
+                              className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 cursor-pointer"
+                            >
+                              <Send className="h-3.5 w-3.5" />
+                              Publish Now
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleStartEditPlayEvent(ev)}
+                            className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-50 dark:border-slate-700 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-slate-700/80 cursor-pointer"
+                          >
+                            <Edit3 className="h-3.5 w-3.5" />
+                            {isEditingThis ? 'Editing' : 'Edit'}
+                          </button>
+                          {onDeletePlayEvent && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isEditingThis) resetPlayEventForm();
+                                onDeletePlayEvent(ev.id);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </section>
@@ -1933,24 +2481,26 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
                       Start At
                     </label>
-                    <input
-                      type="datetime-local"
-                      required
+                    <YmdDateTimeInput
+                      id="banner-start-at"
+                      ariaLabel="Banner Start At"
                       value={bannerStartAt}
-                      onChange={(e) => setBannerStartAt(e.target.value)}
-                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      onChange={setBannerStartAt}
+                      className="mt-1.5"
+                      inputClassName="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200">
                       End At
                     </label>
-                    <input
-                      type="datetime-local"
-                      required
+                    <YmdDateTimeInput
+                      id="banner-end-at"
+                      ariaLabel="Banner End At"
                       value={bannerEndAt}
-                      onChange={(e) => setBannerEndAt(e.target.value)}
-                      className="mt-1.5 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                      onChange={setBannerEndAt}
+                      className="mt-1.5"
+                      inputClassName="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                     />
                   </div>
                   <TimeZoneSelect
@@ -2707,14 +3257,26 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                           )}
                         </div>
                         {isAdmin && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteCustomTheme(ct.id)}
-                            aria-label={`Delete theme ${ct.name}`}
-                            className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditCustomTheme(ct)}
+                              aria-label={`Edit theme ${ct.name}`}
+                              className="rounded-lg p-1.5 text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer"
+                              title="Edit custom theme"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCustomTheme(ct.id)}
+                              aria-label={`Delete theme ${ct.name}`}
+                              className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                              title="Delete custom theme"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>

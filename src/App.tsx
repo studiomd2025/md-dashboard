@@ -30,6 +30,7 @@ import type {
   EventCountdown,
   IntranetState,
   MediaAttachment,
+  PlayEventRecord,
   Post,
 } from './types';
 import { onAuthStateChanged, type User } from 'firebase/auth';
@@ -53,10 +54,12 @@ import {
   approveAccessRequestDoc,
   createBannerDoc,
   createCountdownDoc,
+  createPlayEventDoc,
   createPostDoc,
   declineAccessRequestDoc,
   deleteBannerDoc,
   deleteCountdownDoc,
+  deletePlayEventDoc,
   deletePostDoc,
   deleteTagBatch,
   ensureSelfCollaboratorDoc,
@@ -71,6 +74,7 @@ import {
   subscribeTeamManagement,
   updateBannerDoc,
   updateCountdownDoc,
+  updatePlayEventDoc,
   updatePostDoc,
   withdrawAccessRequestDoc,
 } from './lib/firestoreStore';
@@ -91,6 +95,7 @@ import {
 import { MobileWidgetStudioView } from './components/MobileWidgetStudioView';
 import { OfflineIndicator } from './components/PWAInstallButton';
 import { useFlipLayout, useSystemAnimationGuard } from './hooks/useFlipLayout';
+import { useMobileDrawerSwipe } from './hooks/useMobileDrawerSwipe';
 
 const getInitialDesignState = (): DesignSettings => {
   const fallback: DesignSettings = {
@@ -122,6 +127,8 @@ export default function App() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [banners, setBanners] = useState<BannerSchedule[]>([]);
   const [countdowns, setCountdowns] = useState<EventCountdown[]>([]);
+  const [customPlayEvents, setCustomPlayEvents] = useState<PlayEventRecord[]>([]);
+  const [scrollToPlayEventNonce, setScrollToPlayEventNonce] = useState(0);
   const [design, setDesign] = useState<DesignSettings>(getInitialDesignState);
   const serverDesignRef = useRef<{
     theme: DesignSettings['theme'];
@@ -173,6 +180,17 @@ export default function App() {
   });
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobileDateSearchOpen, setIsMobileDateSearchOpen] = useState(false);
+  const [isMobileSplitVisible, setIsMobileSplitVisible] = useState(false);
+
+  const {
+    isDraggingDrawer,
+    dragOffsetPx,
+    backdropOpacity,
+  } = useMobileDrawerSwipe({
+    isOpen: isMobileSidebarOpen,
+    onOpen: () => setIsMobileSidebarOpen(true),
+    onClose: () => setIsMobileSidebarOpen(false),
+  });
   const [selectedPostId, setSelectedPostId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
     return new URLSearchParams(window.location.search).get('post');
@@ -183,14 +201,7 @@ export default function App() {
   });
   const [activeStation, setActiveStation] = useState<BroadcastChannel>(STATIONS[0]);
   const [activeEvent, setActiveEvent] = useState<PlayEventItem | null>(null);
-  const [floatingPlayerEnabled, setFloatingPlayerEnabled] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return true;
-    const saved = window.localStorage.getItem('md_floating_player');
-    return saved === null ? true : saved === 'true';
-  });
-  const [hasVisitedLive, setHasVisitedLive] = useState<boolean>(
-    () => activeView === 'live'
-  );
+  const [floatingPlayerEnabled, setFloatingPlayerEnabled] = useState(false);
   const [settingsTab, setSettingsTab] = useState<BackendTab>('compose');
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFrom, setDateFrom] = useState('');
@@ -216,6 +227,7 @@ export default function App() {
   );
 
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const pendingPlayEventScrollRef = useRef(false);
 
   const { containerRef: timelineFlipRef, captureFlip: captureTimelineFlip } =
     useFlipLayout(`${timelineLayout}-${isSidebarCollapsed}-${isTwoColViewport}`);
@@ -225,12 +237,30 @@ export default function App() {
     [design.customThemes, design.theme]
   );
 
+  const [systemPrefersDark, setSystemPrefersDark] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return false;
+    }
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const syncPref = () => setSystemPrefersDark(mq.matches);
+    syncPref();
+    mq.addEventListener('change', syncPref);
+    return () => mq.removeEventListener('change', syncPref);
+  }, []);
+
   useEffect(() => {
     const root = document.documentElement;
     root.setAttribute('data-theme', design.theme);
     root.setAttribute('data-surface', design.surfaceStyle);
 
-    const isDark = getThemeIsDark(design);
+    const isDark = getThemeIsDark(design, systemPrefersDark);
     root.classList.toggle('dark', isDark);
 
     if (activeCustomTheme) {
@@ -247,7 +277,7 @@ export default function App() {
       root.style.removeProperty('--countdown-ink');
       root.style.removeProperty('--theme-link');
     }
-  }, [design, activeCustomTheme]);
+  }, [design, activeCustomTheme, systemPrefersDark]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -291,11 +321,17 @@ export default function App() {
     if (typeof window === 'undefined') return;
     const onHashChange = () => {
       const hash = window.location.hash;
+      const shouldPreserve = hash === '#/live' && pendingPlayEventScrollRef.current;
       if (hash === '#/live') setActiveView('live');
       else if (hash === '#/settings') setActiveView('settings');
       else if (hash === '#/install') setActiveView('install');
       else if (hash === '#/next') setActiveView('next');
       else if (hash === '#/timeline') setActiveView('timeline');
+      else return;
+
+      if (!shouldPreserve) {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
     };
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
@@ -306,16 +342,7 @@ export default function App() {
     window.localStorage.setItem('md_sidebar_collapsed', String(isSidebarCollapsed));
   }, [isSidebarCollapsed]);
 
-  useEffect(() => {
-    if (activeView === 'live') {
-      setHasVisitedLive(true);
-    }
-  }, [activeView]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    window.localStorage.setItem('md_floating_player', String(floatingPlayerEnabled));
-  }, [floatingPlayerEnabled]);
+  // Floating/split mode is strictly user-initiated and never restored until user clicks Restore/Close.
 
   useEffect(() => {
     if (!isMobileSidebarOpen) return;
@@ -489,6 +516,10 @@ export default function App() {
           setCountdowns(rows);
         }
       },
+      onPlayEvents: (rows) => {
+        if (cancelled) return;
+        setCustomPlayEvents(rows);
+      },
       onDesign: (nextDesign, existsInFirestore) => {
         if (cancelled) return;
         sawDesignInFirestore = existsInFirestore;
@@ -621,6 +652,16 @@ export default function App() {
 
     return { livePosts: live, scheduledPosts: scheduled, draftPosts: drafts };
   }, [posts, nowMs]);
+
+  const liveCustomPlayEvents = useMemo(
+    () =>
+      customPlayEvents.filter((ev) => {
+        if (!ev.scheduledFor) return true;
+        const ts = new Date(ev.scheduledFor).getTime();
+        return Number.isNaN(ts) || ts <= nowMs;
+      }),
+    [customPlayEvents, nowMs]
+  );
 
   const { tagCounts, monthCounts, allTagNames } = useMemo(() => {
     const tagMap = new Map<string, { tag: string; count: number }>();
@@ -834,6 +875,24 @@ export default function App() {
     await deleteCountdownDoc(id);
   };
 
+  const handleAddPlayEvent = async (payload: Omit<PlayEventRecord, 'id'>) => {
+    if (!user || !isAdmin) return;
+    await createPlayEventDoc(user.uid, payload);
+  };
+
+  const handleUpdatePlayEvent = async (
+    id: string,
+    payload: Omit<PlayEventRecord, 'id'>
+  ) => {
+    if (!user || !isAdmin) return;
+    await updatePlayEventDoc(id, payload);
+  };
+
+  const handleDeletePlayEvent = async (id: string) => {
+    if (!isAdmin) return;
+    await deletePlayEventDoc(id);
+  };
+
   const handleUpdateDesign = async (next: Partial<DesignSettings>) => {
     const merged: DesignSettings = { ...design, ...next };
     setDesign(merged);
@@ -933,6 +992,10 @@ export default function App() {
   };
 
   const handleNavigateView = (view: ActiveView) => {
+    const shouldPreserveScrollForPlayEvent =
+      view === 'live' && pendingPlayEventScrollRef.current;
+    pendingPlayEventScrollRef.current = false;
+
     setSelectedPostId(null);
     if (view !== 'next') {
       setSelectedCountdownId(null);
@@ -958,6 +1021,9 @@ export default function App() {
     if (typeof window !== 'undefined') {
       window.location.hash = view === 'timeline' ? '#/timeline' : `#/${view}`;
       window.localStorage.setItem('md_active_view', view);
+      if (!shouldPreserveScrollForPlayEvent) {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
     }
   };
 
@@ -972,6 +1038,7 @@ export default function App() {
       }
       window.location.hash = '#/timeline';
       window.localStorage.setItem('md_active_view', 'timeline');
+      window.scrollTo({ top: 0, behavior: 'auto' });
     }
     setActiveTag((prev) =>
       tag && prev?.toLowerCase() === tag.toLowerCase() ? null : tag
@@ -990,6 +1057,7 @@ export default function App() {
       }
       window.location.hash = '#/timeline';
       window.localStorage.setItem('md_active_view', 'timeline');
+      window.scrollTo({ top: 0, behavior: 'auto' });
     }
     setActiveMonth((prev) => (prev === month ? null : month));
     setActiveView('timeline');
@@ -1004,7 +1072,7 @@ export default function App() {
 
   const effectiveBackdropUrl =
     design.customBackdropUrl || activeCustomTheme?.backdropImageUrl || '';
-  const isEffectiveDark = getThemeIsDark(design);
+  const isEffectiveDark = getThemeIsDark(design, systemPrefersDark);
 
   const wrapperStyle: React.CSSProperties | undefined = effectiveBackdropUrl
     ? {
@@ -1025,7 +1093,12 @@ export default function App() {
     : undefined;
 
   return (
-    <div style={wrapperStyle} className="min-h-screen pb-20 lg:pb-12">
+    <div
+      style={wrapperStyle}
+      className={`min-h-screen lg:pb-12 ${
+        isMobileSplitVisible ? 'pb-80 sm:pb-20' : 'pb-20'
+      }`}
+    >
       <Header
         activeView={activeView}
         onSelectView={handleNavigateView}
@@ -1066,7 +1139,9 @@ export default function App() {
         />
       )}
 
-      <main className="mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8">
+      <main className={`mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8 ${
+        (floatingPlayerEnabled || isMobileSplitVisible) ? 'pb-[140px] sm:pb-[160px]' : 'pb-16'
+      }`}>
         {authError && (
           <div
             role="alert"
@@ -1490,6 +1565,10 @@ export default function App() {
                 onAddCountdown={handleAddCountdown}
                 onUpdateCountdown={handleUpdateCountdown}
                 onDeleteCountdown={handleDeleteCountdown}
+                customPlayEvents={customPlayEvents}
+                onAddPlayEvent={handleAddPlayEvent}
+                onUpdatePlayEvent={handleUpdatePlayEvent}
+                onDeletePlayEvent={handleDeletePlayEvent}
                 onRenameTag={handleRenameTag}
                 onDeleteTag={handleDeleteTag}
                 onFilterByTag={(tag) => handleSelectTag(tag)}
@@ -1518,6 +1597,11 @@ export default function App() {
                 posts={livePosts}
                 countdowns={countdowns}
                 nowMs={nowMs}
+                design={design}
+                activeStation={activeStation}
+                onOpenTimeline={() => handleNavigateView('timeline')}
+                onOpenLive={() => handleNavigateView('live')}
+                onOpenCountdown={openCountdownPage}
               />
             )}
 
@@ -1538,10 +1622,11 @@ export default function App() {
               />
             )}
 
-            {(activeView === 'live' || (floatingPlayerEnabled && hasVisitedLive)) && (
+            {(activeView === 'live' || floatingPlayerEnabled) && (
               <LiveTvView
                 activeStation={activeStation}
                 activeEvent={activeEvent}
+                customPlayEvents={liveCustomPlayEvents}
                 onSelectStation={(station) => {
                   setActiveEvent(null);
                   setActiveStation(station);
@@ -1552,6 +1637,14 @@ export default function App() {
                 onToggleFloating={() =>
                   setFloatingPlayerEnabled((prev) => !prev)
                 }
+                onGoToLive={() => handleNavigateView('live')}
+                onGoToPlayEvent={() => {
+                  pendingPlayEventScrollRef.current = true;
+                  handleNavigateView('live');
+                  setScrollToPlayEventNonce((n) => n + 1);
+                }}
+                scrollToPlayEventNonce={scrollToPlayEventNonce}
+                onMobileSplitVisibilityChange={setIsMobileSplitVisible}
                 isSidebarCollapsed={isSidebarCollapsed}
               />
             )}
@@ -1579,7 +1672,7 @@ export default function App() {
                 onUpdateDesign={handleUpdateDesign}
                 onOpenDesignSettings={() => {
                   setSettingsTab('design');
-                  setActiveView('settings');
+                  handleNavigateView('settings');
                 }}
                 countdowns={countdowns}
                 onOpenCountdown={openCountdownPage}
@@ -1595,13 +1688,21 @@ export default function App() {
         </div>
       </main>
 
-      {/* Mobile Hamburger Slide-In Sidebar Drawer (always mounted on lg:hidden for smooth open/close slide) */}
+      {/* Mobile Hamburger & Swipe-Right Slide-In Sidebar Drawer (always mounted on lg:hidden for smooth open/close slide) */}
       {typeof document !== 'undefined' &&
         createPortal(
           <div
-            aria-hidden={!isMobileSidebarOpen}
+            aria-hidden={!isMobileSidebarOpen && !isDraggingDrawer}
+            style={
+              isDraggingDrawer && backdropOpacity !== null
+                ? {
+                    backgroundColor: `rgba(0, 0, 0, ${0.65 * backdropOpacity})`,
+                    transition: 'none',
+                  }
+                : undefined
+            }
             className={`fixed inset-0 z-50 flex lg:hidden bg-black/65 backdrop-blur-sm transition-[opacity,visibility] duration-300 ease-out ${
-              isMobileSidebarOpen
+              isMobileSidebarOpen || isDraggingDrawer
                 ? 'opacity-100 visible pointer-events-auto'
                 : 'opacity-0 invisible pointer-events-none'
             }`}
@@ -1611,6 +1712,14 @@ export default function App() {
               role="dialog"
               aria-modal="true"
               aria-label="Sidebar Menu"
+              style={
+                isDraggingDrawer && dragOffsetPx !== null
+                  ? {
+                      transform: `translate3d(${dragOffsetPx}px, 0, 0)`,
+                      transition: 'none',
+                    }
+                  : undefined
+              }
               className={`mobile-drawer-solid relative flex h-full w-[86vw] max-w-sm flex-col border-r border-slate-200/90 dark:border-slate-800 shadow-2xl overflow-hidden transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                 isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'
               }`}

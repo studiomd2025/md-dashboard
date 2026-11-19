@@ -119,11 +119,26 @@ export interface DesignSettings {
   customThemes?: CustomThemePreset[];
 }
 
+export interface PlayEventRecord {
+  id: string;
+  era: string;
+  year: string;
+  dateLabel: string;
+  title: string;
+  url: string;
+  kind: 'youtube-playlist' | 'youtube-video';
+  mediaId: string;
+  scheduledFor?: string | null;
+  scheduledTimeZone?: string | null;
+  isDeleted?: boolean;
+}
+
 export interface IntranetState {
   posts: Post[];
   banners: BannerSchedule[];
   countdowns: EventCountdown[];
   design: DesignSettings;
+  playEvents?: PlayEventRecord[];
   serverTime: string;
 }
 

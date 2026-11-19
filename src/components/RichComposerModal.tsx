@@ -38,6 +38,8 @@ import {
   wallClockToIso,
 } from '../lib/timeZones';
 import { TimeZoneSelect } from './TimeZoneSelect';
+import { FontSelect } from './FontSelect';
+import { YmdDateTimeInput } from './YmdDateInputs';
 
 interface RichComposerModalProps {
   isOpen: boolean;
@@ -69,12 +71,7 @@ const TEXT_COLORS = [
   { label: 'Indigo', value: '#4f46e5' },
 ];
 
-const FONT_OPTIONS: { id: DiaryFont; label: string }[] = [
-  { id: 'sans', label: 'DM Sans (Clean)' },
-  { id: 'serif', label: 'Fraunces (Editorial)' },
-  { id: 'mono', label: 'JetBrains (Mono)' },
-  { id: 'hand', label: 'Caveat (Journal)' },
-];
+
 
 export const RichComposerModal: React.FC<RichComposerModalProps> = ({
   isOpen,
@@ -474,18 +471,12 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
                 <label htmlFor="post-font-select" className="sr-only">
                   Entry Typeface
                 </label>
-                <select
+                <FontSelect
                   id="post-font-select"
                   value={font}
-                  onChange={(e) => setFont(e.target.value as DiaryFont)}
-                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                >
-                  {FONT_OPTIONS.map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.label}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setFont}
+                  ariaLabel="Entry Typeface"
+                />
               </div>
             </div>
 
@@ -695,12 +686,13 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
                 <CalendarClock className="h-3.5 w-3.5 text-sky-600" />
                 Schedule Post
               </label>
-              <input
+              <YmdDateTimeInput
                 id="schedule-datetime"
-                type="datetime-local"
+                ariaLabel="Schedule Post"
                 value={scheduledLocal}
-                onChange={(e) => setScheduledLocal(e.target.value)}
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                onChange={setScheduledLocal}
+                className="mt-2"
+                inputClassName="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
               />
               <TimeZoneSelect
                 id="schedule-timezone"
@@ -728,12 +720,13 @@ export const RichComposerModal: React.FC<RichComposerModalProps> = ({
                 <Pin className="h-3.5 w-3.5 text-sky-600" />
                 Pin to Top Until (optional)
               </label>
-              <input
+              <YmdDateTimeInput
                 id="pin-until-datetime"
-                type="datetime-local"
+                ariaLabel="Pin to Top Until"
                 value={pinnedUntilLocal}
-                onChange={(e) => setPinnedUntilLocal(e.target.value)}
-                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                onChange={setPinnedUntilLocal}
+                className="mt-2"
+                inputClassName="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
               />
               <TimeZoneSelect
                 id="pin-timezone"

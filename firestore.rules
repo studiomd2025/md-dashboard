@@ -225,6 +225,46 @@ service cloud.firestore {
         data.serverUpdatedAt == request.time;
     }
 
+    function isValidPlayEvent(data) {
+      return data.keys().hasAll([
+          'title',
+          'url',
+          'kind',
+          'mediaId',
+          'dateLabel',
+          'year',
+          'era',
+          'authorId',
+          'serverUpdatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'title',
+          'url',
+          'kind',
+          'mediaId',
+          'dateLabel',
+          'year',
+          'era',
+          'scheduledFor',
+          'scheduledTimeZone',
+          'isDeleted',
+          'authorId',
+          'serverUpdatedAt'
+        ]) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+        data.url is string && data.url.size() >= 1 && data.url.size() <= 2000 &&
+        data.kind in ['youtube-playlist', 'youtube-video'] &&
+        data.mediaId is string && data.mediaId.size() >= 1 && data.mediaId.size() <= 200 &&
+        data.dateLabel is string && data.dateLabel.size() <= 64 &&
+        data.year is string && data.year.size() <= 32 &&
+        data.era is string && data.era.size() <= 80 &&
+        isOptionalStr(data, 'scheduledFor', 64) &&
+        isOptionalStr(data, 'scheduledTimeZone', 64) &&
+        (!('isDeleted' in data) || data.isDeleted == null || data.isDeleted is bool) &&
+        data.authorId is string && data.authorId.size() <= 128 &&
+        data.serverUpdatedAt == request.time;
+    }
+
     match /test/{docId} {
       allow get: if docId == 'connection';
     }
@@ -289,6 +329,24 @@ service cloud.firestore {
           'milestoneFont', 'milestoneAttachments', 'serverUpdatedAt'
         ]);
       allow delete: if isAdmin() && isValidId(countdownId);
+    }
+
+    match /play_events/{eventId} {
+      allow get: if isValidId(eventId);
+      allow list: if true;
+      allow create: if isAdmin() &&
+        isValidId(eventId) &&
+        isValidPlayEvent(incoming()) &&
+        incoming().authorId == request.auth.uid;
+      allow update: if isAdmin() &&
+        isValidId(eventId) &&
+        isValidPlayEvent(incoming()) &&
+        incoming().authorId == existing().authorId &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'title', 'url', 'kind', 'mediaId', 'dateLabel', 'year', 'era',
+          'scheduledFor', 'scheduledTimeZone', 'isDeleted', 'serverUpdatedAt'
+        ]);
+      allow delete: if isAdmin() && isValidId(eventId);
     }
 
     match /config/{configId} {

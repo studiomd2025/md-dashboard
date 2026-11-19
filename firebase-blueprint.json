@@ -131,6 +131,26 @@
         "requestedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "status", "requestedAt"]
+    },
+    "PlayEvent": {
+      "title": "PlayEvent",
+      "description": "Custom YouTube playlist or video added to Play Event in Live TV.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "url": { "type": "string", "maxLength": 2000 },
+        "kind": { "type": "string", "enum": ["youtube-playlist", "youtube-video"] },
+        "mediaId": { "type": "string", "maxLength": 200 },
+        "dateLabel": { "type": "string", "maxLength": 64 },
+        "year": { "type": "string", "maxLength": 32 },
+        "era": { "type": "string", "maxLength": 80 },
+        "scheduledFor": { "type": "string", "maxLength": 64 },
+        "scheduledTimeZone": { "type": "string", "maxLength": 64 },
+        "isDeleted": { "type": "boolean" },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "serverUpdatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "url", "kind", "mediaId", "dateLabel", "year", "era", "authorId", "serverUpdatedAt"]
     }
   },
   "firestore": {
@@ -145,6 +165,10 @@
     "/countdowns/{countdownId}": {
       "schema": { "$ref": "#/entities/EventCountdown" },
       "description": "Next on MD upcoming event countdowns."
+    },
+    "/play_events/{eventId}": {
+      "schema": { "$ref": "#/entities/PlayEvent" },
+      "description": "Custom playlists added to Play Event directory in Live TV."
     },
     "/config/{configId}": {
       "schema": { "$ref": "#/entities/DesignConfig" },

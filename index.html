@@ -55,10 +55,13 @@
             'metro-ipod-electric',
             'y2k-phosphor-grid',
           ];
+          var prefersDark =
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches;
           var root = document.documentElement;
           root.setAttribute('data-theme', theme);
           root.setAttribute('data-surface', surface);
-          if (darkThemes.indexOf(theme) !== -1) {
+          if (darkThemes.indexOf(theme) !== -1 || (theme === 'default' && prefersDark)) {
             root.classList.add('dark');
           }
         } catch (e) {

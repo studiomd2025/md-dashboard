@@ -49,7 +49,17 @@ export function mixHex(hexA: string, hexB: string, ratioB: number): string {
   return `#${[r, g, bl].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function getThemeIsDark(design: DesignSettings): boolean {
+export function getThemeIsDark(
+  design: DesignSettings,
+  systemPrefersDark?: boolean
+): boolean {
+  if (design.theme === 'default') {
+    if (typeof systemPrefersDark === 'boolean') return systemPrefersDark;
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      return window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    return false;
+  }
   const custom = (design.customThemes || []).find((t) => t.id === design.theme);
   if (custom) {
     if (!custom.backdropImageUrl && !design.customBackdropUrl) {

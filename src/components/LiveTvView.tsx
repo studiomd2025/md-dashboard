@@ -2,8 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   ExternalLink,
   Folder,
   FolderOpen,
@@ -11,16 +13,41 @@ import {
   ListVideo,
   Loader2,
   Maximize2,
+  PanelBottom,
   PictureInPicture2,
   Play,
   RefreshCw,
   RotateCcw,
   Rows3,
   Search,
+  Settings,
   Tv,
   X,
 } from 'lucide-react';
 import { normalizeShortsToWatchUrl } from '../lib/mediaUtils';
+import type { PlayEventRecord } from '../types';
+
+const RemoteIcon: React.FC<{ className?: string }> = ({
+  className = 'h-3.5 w-3.5',
+}) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <rect x="7" y="2" width="10" height="20" rx="3" />
+    <circle cx="12" cy="7" r="1" fill="currentColor" stroke="none" />
+    <path d="M12 11v4" />
+    <path d="M10 13h4" />
+    <circle cx="10.5" cy="18" r="0.8" fill="currentColor" stroke="none" />
+    <circle cx="13.5" cy="18" r="0.8" fill="currentColor" stroke="none" />
+  </svg>
+);
 
 interface TwitchStatusInfo {
   isLive: boolean;
@@ -60,7 +87,7 @@ export interface BroadcastChannel {
 
 export interface PlayEventItem {
   id: string;
-  era: 'Interim Era' | 'Caratime Era' | 'Daliatime Era' | 'Year End Collection';
+  era: string;
   year: string;
   dateLabel: string;
   title: string;
@@ -368,44 +395,90 @@ export const PLAY_EVENTS: PlayEventItem[] = [
     mediaId: 'PLsosZDdrwfcUBO2SD_U_zlCoDFhlUO7SG',
   },
 
-  // Year End Collection
+  // MD Wrapped
   {
     id: 'ev-yearend',
-    era: 'Year End Collection',
-    year: 'Archive',
-    dateLabel: 'Year End',
-    title: 'Year End Playlist',
+    era: 'Standalone',
+    year: '',
+    dateLabel: '',
+    title: 'MD Wrapped',
     url: 'https://youtube.com/playlist?list=PLFh_M_vWUiZzL7HYbbSiCiRaH7V_m0Z46&si=s3nj8WrkSivvPlo3',
     kind: 'youtube-playlist',
     mediaId: 'PLFh_M_vWUiZzL7HYbbSiCiRaH7V_m0Z46',
   },
 ];
 
-const ERA_FOLDERS: Exclude<PlayEventItem['era'], 'Year End Collection'>[] = [
+const ERA_FOLDERS: string[] = [
   'Interim Era',
   'Caratime Era',
   'Daliatime Era',
 ];
 
+export function mergePlayEvents(
+  builtIn: PlayEventItem[],
+  overrides: PlayEventRecord[] = [],
+  filterNowMs?: number
+): PlayEventRecord[] {
+  const overrideMap = new Map<string, PlayEventRecord>();
+  for (const ov of overrides) {
+    overrideMap.set(ov.id, ov);
+  }
+  const merged: PlayEventRecord[] = [];
+  for (const item of builtIn) {
+    const ov = overrideMap.get(item.id);
+    if (ov) {
+      if (!ov.isDeleted) merged.push(ov);
+      overrideMap.delete(item.id);
+    } else {
+      merged.push(item);
+    }
+  }
+  for (const remaining of overrideMap.values()) {
+    if (!remaining.isDeleted) {
+      merged.push(remaining);
+    }
+  }
+  if (filterNowMs !== undefined) {
+    return merged.filter((ev) => {
+      if (!ev.scheduledFor) return true;
+      const ts = new Date(ev.scheduledFor).getTime();
+      return Number.isNaN(ts) || ts <= filterNowMs;
+    });
+  }
+  return merged;
+}
+
 interface LiveTvViewProps {
   activeStation: BroadcastChannel;
   activeEvent: PlayEventItem | null;
+  customPlayEvents?: PlayEventRecord[];
+  nowMs?: number;
   onSelectStation: (station: BroadcastChannel) => void;
   onSelectEvent: (event: PlayEventItem) => void;
   isActiveTab?: boolean;
   floatingEnabled?: boolean;
   onToggleFloating?: () => void;
+  onGoToLive?: () => void;
+  onGoToPlayEvent?: () => void;
+  scrollToPlayEventNonce?: number;
+  onMobileSplitVisibilityChange?: (visible: boolean) => void;
   isSidebarCollapsed?: boolean;
 }
 
 export const LiveTvView: React.FC<LiveTvViewProps> = ({
   activeStation,
   activeEvent,
+  customPlayEvents = [],
+  nowMs,
   onSelectStation,
   onSelectEvent,
   isActiveTab = true,
   floatingEnabled = true,
   onToggleFloating,
+  onGoToLive,
+  onGoToPlayEvent,
+  scrollToPlayEventNonce = 0,
+  onMobileSplitVisibilityChange,
   isSidebarCollapsed = false,
 }) => {
   const parentHost = useMemo(() => {
@@ -413,22 +486,35 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     return window.location.hostname || 'localhost';
   }, []);
 
-  const [currentEra, setCurrentEra] = useState<
-    Exclude<PlayEventItem['era'], 'Year End Collection'> | null
-  >(() =>
-    activeEvent && activeEvent.era !== 'Year End Collection'
+  const allPlayEvents = useMemo(
+    () => mergePlayEvents(PLAY_EVENTS, customPlayEvents, nowMs),
+    [customPlayEvents, nowMs]
+  );
+
+  const [currentEra, setCurrentEra] = useState<string | null>(() =>
+    activeEvent &&
+    activeEvent.era &&
+    activeEvent.era !== 'Year End Collection' &&
+    activeEvent.era !== 'Standalone'
       ? activeEvent.era
       : null
   );
   const [currentYear, setCurrentYear] = useState<string | null>(() =>
-    activeEvent && activeEvent.era !== 'Year End Collection'
+    activeEvent &&
+    activeEvent.era &&
+    activeEvent.era !== 'Year End Collection' &&
+    activeEvent.era !== 'Standalone'
       ? activeEvent.year
       : null
   );
 
   useEffect(() => {
     if (!activeEvent) return;
-    if (activeEvent.era === 'Year End Collection') {
+    if (
+      !activeEvent.era ||
+      activeEvent.era === 'Year End Collection' ||
+      activeEvent.era === 'Standalone'
+    ) {
       setCurrentEra(null);
       setCurrentYear(null);
     } else {
@@ -437,10 +523,73 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     }
   }, [activeEvent]);
 
-  const [floatOnLiveTab, setFloatOnLiveTab] = useState(false);
+  const lastHandledPlayEventNonceRef = useRef(scrollToPlayEventNonce);
+  const [activeMiniDrawer, setActiveMiniDrawer] = useState<
+    'none' | 'remote' | 'playlist' | 'settings'
+  >('none');
+  const [remoteBrowsePlayEvents, setRemoteBrowsePlayEvents] = useState(false);
+  const miniDrawerRef = useRef<HTMLElement>(null);
+  const [miniDrawerDims, setMiniDrawerDims] = useState<{
+    width: number;
+    height: number;
+  }>({ width: 148, height: 200 });
+
+  useEffect(() => {
+    if (!floatingEnabled) {
+      setActiveMiniDrawer('none');
+      setRemoteBrowsePlayEvents(false);
+    }
+  }, [floatingEnabled]);
+
+  useEffect(() => {
+    const el = miniDrawerRef.current;
+    if (
+      !el ||
+      typeof ResizeObserver === 'undefined' ||
+      !floatingEnabled ||
+      activeMiniDrawer === 'none'
+    ) {
+      return;
+    }
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const w = Math.round(entry.contentRect.width);
+        const h = Math.round(entry.contentRect.height);
+        if (w > 0 && h > 0) {
+          setMiniDrawerDims((prev) =>
+            prev.width === w && prev.height === h ? prev : { width: w, height: h }
+          );
+        }
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [floatingEnabled, activeMiniDrawer]);
+
+  const toggleMiniDrawer = (target: 'remote' | 'playlist' | 'settings') => {
+    setActiveMiniDrawer((prev) => (prev === target ? 'none' : target));
+  };
+  const [isDesktopOrTablet, setIsDesktopOrTablet] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia('(min-width: 640px)').matches;
+  });
+  const [mobileSplitCompact, setMobileSplitCompact] = useState(false);
   const [dockedHeight, setDockedHeight] = useState<number | null>(null);
   const dockedSectionRef = useRef<HTMLElement>(null);
   const miniHeaderRef = useRef<HTMLDivElement>(null);
+  const floatingContainerRef = useRef<HTMLElement>(null);
+  const playEventSectionRef = useRef<HTMLElement>(null);
+  const miniSwipeRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    fromRightEdge: boolean;
+  }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    fromRightEdge: false,
+  });
 
   const [autoplayEnabled, setAutoplayEnabled] = useState(false);
   const [eventViewMode, setEventViewMode] = useState<'list' | 'tiles'>('list');
@@ -450,11 +599,20 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const [floatSize, setFloatSize] = useState<{ width: number; height: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [resizeCorner, setResizeCorner] = useState<'nw' | 'ne' | 'sw' | 'se' | null>(null);
-  const dragStartRef = useRef<{ startX: number; startY: number; posX: number; posY: number }>({
+  const dragStartRef = useRef<{
+    startX: number;
+    startY: number;
+    posX: number;
+    posY: number;
+    boxW: number;
+    boxH: number;
+  }>({
     startX: 0,
     startY: 0,
     posX: 0,
     posY: 0,
+    boxW: 340,
+    boxH: 225,
   });
   const resizeStartRef = useRef<{
     startX: number;
@@ -478,28 +636,127 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const [ch4PlaybackStarted, setCh4PlaybackStarted] = useState(false);
 
   useEffect(() => {
-    if (!floatingEnabled) {
-      setFloatOnLiveTab(false);
-    }
-  }, [floatingEnabled]);
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 640px)');
+    const syncViewport = () => setIsDesktopOrTablet(mq.matches);
+    syncViewport();
+    mq.addEventListener('change', syncViewport);
+    return () => mq.removeEventListener('change', syncViewport);
+  }, []);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (!floatingEnabled && !floatOnLiveTab) return;
-    setIsDragging(true);
-    const rect = (e.currentTarget as HTMLElement).closest('.fixed')?.getBoundingClientRect();
-    const posX = rect ? rect.left : window.innerWidth - 380;
-    const posY = rect ? rect.top : window.innerHeight - 260;
-    dragStartRef.current = { startX: e.clientX, startY: e.clientY, posX, posY };
+  const isMobileSplitActive = !isDesktopOrTablet && floatingEnabled;
+
+  useEffect(() => {
+    onMobileSplitVisibilityChange?.(isMobileSplitActive);
+  }, [isMobileSplitActive, onMobileSplitVisibilityChange]);
+
+  useEffect(() => {
+    if (!isActiveTab) return;
+    if (scrollToPlayEventNonce > lastHandledPlayEventNonceRef.current) {
+      lastHandledPlayEventNonceRef.current = scrollToPlayEventNonce;
+      const timer = window.setTimeout(() => {
+        playEventSectionRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      }, 90);
+      return () => window.clearTimeout(timer);
+    }
+  }, [scrollToPlayEventNonce, isActiveTab]);
+
+  const handleMiniSwipeStart = (
+    clientX: number,
+    clientY: number,
+    containerEl: HTMLElement | null,
+    forceRightEdge = false
+  ) => {
+    const rect = containerEl?.getBoundingClientRect();
+    const fromRightEdge =
+      forceRightEdge ||
+      (rect ? clientX >= rect.right - 72 : false);
+    miniSwipeRef.current = {
+      active: true,
+      startX: clientX,
+      startY: clientY,
+      fromRightEdge,
+    };
   };
 
-  const handleResizeStart = (corner: 'nw' | 'ne' | 'sw' | 'se', e: React.MouseEvent) => {
+  const handleMiniSwipeMove = (
+    clientX: number,
+    clientY: number,
+    mode: 'floating' | 'mobile-split'
+  ) => {
+    const st = miniSwipeRef.current;
+    if (!st.active) return;
+    const dx = clientX - st.startX;
+    const dy = clientY - st.startY;
+    if (Math.abs(dy) > Math.abs(dx) * 1.25 && Math.abs(dy) > 18) {
+      st.active = false;
+      return;
+    }
+    if (mode === 'floating') {
+      // Float mode: swipe right to expand remote control; swipe left to collapse
+      if (dx > 28) {
+        setActiveMiniDrawer('remote');
+        st.active = false;
+      } else if (dx < -28) {
+        setActiveMiniDrawer('none');
+        st.active = false;
+      }
+    } else {
+      // Mobile split mode: swipe left from right edge to expand remote drawer; swipe right to collapse
+      if (st.fromRightEdge && dx < -26) {
+        setActiveMiniDrawer('remote');
+        st.active = false;
+      } else if (dx > 28) {
+        setActiveMiniDrawer('none');
+        st.active = false;
+      }
+    }
+  };
+
+  const handleMiniSwipeEnd = () => {
+    miniSwipeRef.current.active = false;
+  };
+
+  const handleFloatingDragPointerDown = (e: React.PointerEvent) => {
+    if (!isDesktopOrTablet) return;
+    if (!floatingEnabled) return;
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+    e.stopPropagation();
+    setIsDragging(true);
+    const rect =
+      floatingContainerRef.current?.getBoundingClientRect() ||
+      (e.currentTarget as HTMLElement).closest('.fixed')?.getBoundingClientRect();
+    const boxW = rect ? rect.width : 340;
+    const boxH = rect ? rect.height : 225;
+    const posX = rect ? rect.left : Math.max(12, window.innerWidth - boxW - 20);
+    const posY = rect ? rect.top : Math.max(12, window.innerHeight - boxH - 80);
+    dragStartRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      posX,
+      posY,
+      boxW,
+      boxH,
+    };
+  };
+
+  const handleResizePointerDown = (
+    corner: 'nw' | 'ne' | 'sw' | 'se',
+    e: React.PointerEvent
+  ) => {
+    if (!isDesktopOrTablet) return;
     e.stopPropagation();
     e.preventDefault();
     setResizeCorner(corner);
-    const rect = (e.currentTarget as HTMLElement).closest('.fixed')?.getBoundingClientRect();
-    const startW = rect ? rect.width : 380;
-    const startH = rect ? rect.height : 247;
-    const startXPos = rect ? rect.left : window.innerWidth - 400;
+    const rect =
+      floatingContainerRef.current?.getBoundingClientRect() ||
+      (e.currentTarget as HTMLElement).closest('.fixed')?.getBoundingClientRect();
+    const startW = rect ? rect.width : 360;
+    const startH = rect ? rect.height : 236;
+    const startXPos = rect ? rect.left : window.innerWidth - 380;
     const startYPos = rect ? rect.top : window.innerHeight - 260;
     const headerH =
       miniHeaderRef.current?.offsetHeight ||
@@ -517,35 +774,39 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
 
   useEffect(() => {
     if (!isDragging) return;
-    const onMouseMove = (e: MouseEvent) => {
+    const onPointerMove = (e: PointerEvent) => {
       const dx = e.clientX - dragStartRef.current.startX;
       const dy = e.clientY - dragStartRef.current.startY;
+      const maxX = Math.max(8, window.innerWidth - dragStartRef.current.boxW - 8);
+      const maxY = Math.max(8, window.innerHeight - dragStartRef.current.boxH - 8);
       setFloatPos({
-        x: Math.max(10, Math.min(window.innerWidth - 200, dragStartRef.current.posX + dx)),
-        y: Math.max(10, Math.min(window.innerHeight - 120, dragStartRef.current.posY + dy)),
+        x: Math.max(8, Math.min(maxX, dragStartRef.current.posX + dx)),
+        y: Math.max(8, Math.min(maxY, dragStartRef.current.posY + dy)),
       });
     };
-    const onMouseUp = () => setIsDragging(false);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    const onPointerUp = () => setIsDragging(false);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
     return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
     };
   }, [isDragging]);
 
   useEffect(() => {
     if (!resizeCorner) return;
-    const onMouseMove = (e: MouseEvent) => {
+    const onPointerMove = (e: PointerEvent) => {
       const dx = e.clientX - resizeStartRef.current.startX;
       let newW = resizeStartRef.current.startW;
       let newX = resizeStartRef.current.startXPos;
       let newY = resizeStartRef.current.startYPos;
 
       if (resizeCorner === 'se' || resizeCorner === 'ne') {
-        newW = Math.max(260, Math.min(window.innerWidth - 40, resizeStartRef.current.startW + dx));
+        newW = Math.max(260, Math.min(window.innerWidth - 24, resizeStartRef.current.startW + dx));
       } else {
-        newW = Math.max(260, Math.min(window.innerWidth - 40, resizeStartRef.current.startW - dx));
+        newW = Math.max(260, Math.min(window.innerWidth - 24, resizeStartRef.current.startW - dx));
         newX = resizeStartRef.current.startXPos + (resizeStartRef.current.startW - newW);
       }
 
@@ -556,16 +817,23 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
         newY = resizeStartRef.current.startYPos + (resizeStartRef.current.startH - newH);
       }
 
+      const maxX = Math.max(8, window.innerWidth - newW - 8);
+      const maxY = Math.max(8, window.innerHeight - newH - 8);
       setFloatSize({ width: newW, height: newH });
-      setFloatPos({ x: newX, y: newY });
+      setFloatPos({
+        x: Math.max(8, Math.min(maxX, newX)),
+        y: Math.max(8, Math.min(maxY, newY)),
+      });
     };
 
-    const onMouseUp = () => setResizeCorner(null);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    const onPointerUp = () => setResizeCorner(null);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
     return () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
     };
   }, [resizeCorner]);
 
@@ -626,6 +894,18 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   };
 
   const isTwitch = !activeEvent && activeStation.kind === 'twitch';
+
+  useEffect(() => {
+    if (
+      activeMiniDrawer === 'playlist' &&
+      (isTwitch ||
+        (activeEvent
+          ? activeEvent.kind !== 'youtube-playlist'
+          : activeStation.kind !== 'youtube-playlist'))
+    ) {
+      setActiveMiniDrawer('none');
+    }
+  }, [activeMiniDrawer, isTwitch, activeEvent, activeStation.kind]);
   const ytAutoplay = autoplayEnabled ? '1' : '0';
   const playerOrigin = useMemo(() => {
     if (typeof window === 'undefined') return '';
@@ -888,7 +1168,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   }, [activeEvent, activeStation]);
 
   const isChannel4Station = !activeEvent && activeStation.number === 4;
-  const shouldFetchPlaylist = showPlaylistDrawer || isChannel4Station;
+  const shouldFetchPlaylist =
+    showPlaylistDrawer ||
+    activeMiniDrawer === 'playlist' ||
+    isChannel4Station ||
+    (floatingEnabled && Boolean(activePlaylistId));
 
   useEffect(() => {
     if (!activePlaylistId) {
@@ -1004,53 +1288,77 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const externalLabel = isTwitch && !selectedTrack && !activeEvent ? 'twitch' : 'youtube';
 
   const activeEventIndex = activeEvent
-    ? PLAY_EVENTS.findIndex((e) => e.id === activeEvent.id)
+    ? allPlayEvents.findIndex((e) => e.id === activeEvent.id)
     : -1;
 
-  const yearEndItem = useMemo(
-    () => PLAY_EVENTS.find((e) => e.era === 'Year End Collection') || null,
-    []
+  const yearEndItems = useMemo(
+    () =>
+      allPlayEvents.filter(
+        (e) =>
+          e.era === 'Year End Collection' ||
+          e.era === 'Standalone' ||
+          !e.era
+      ),
+    [allPlayEvents]
   );
 
   const eraSummaries = useMemo(() => {
-    return ERA_FOLDERS.map((era) => {
-      const items = PLAY_EVENTS.filter((e) => e.era === era);
-      const years = Array.from(new Set(items.map((e) => e.year)));
-      const yearLabel =
-        years.length === 1 ? years[0] : `${years[0]}–${years[years.length - 1]}`;
-      return {
-        era,
-        count: items.length,
-        years,
-        yearLabel,
-      };
-    });
-  }, []);
+    const folderEras = Array.from(
+      new Set([
+        ...ERA_FOLDERS,
+        ...allPlayEvents
+          .map((e) => e.era)
+          .filter(
+            (era) =>
+              Boolean(era) &&
+              era !== 'Year End Collection' &&
+              era !== 'Standalone'
+          ),
+      ])
+    );
+    return folderEras
+      .map((era) => {
+        const items = allPlayEvents.filter((e) => e.era === era);
+        if (items.length === 0) return null;
+        const years = Array.from(new Set(items.map((e) => e.year)));
+        const yearLabel =
+          years.length === 1 ? years[0] : `${years[0]}–${years[years.length - 1]}`;
+        return {
+          era,
+          count: items.length,
+          years,
+          yearLabel,
+        };
+      })
+      .filter((x): x is { era: string; count: number; years: string[]; yearLabel: string } => Boolean(x));
+  }, [allPlayEvents]);
 
   const yearsInCurrentEra = useMemo(() => {
     if (!currentEra) return [];
-    const items = PLAY_EVENTS.filter((e) => e.era === currentEra);
+    const items = allPlayEvents.filter((e) => e.era === currentEra);
     const years = Array.from(new Set(items.map((e) => e.year)));
     return years.map((yr) => ({
       year: yr,
       items: items.filter((e) => e.year === yr),
     }));
-  }, [currentEra]);
+  }, [currentEra, allPlayEvents]);
 
   const eventsInCurrentYear = useMemo(() => {
     if (!currentEra || !currentYear) return [];
-    return PLAY_EVENTS.filter(
+    return allPlayEvents.filter(
       (e) => e.era === currentEra && e.year === currentYear
     );
-  }, [currentEra, currentYear]);
+  }, [currentEra, currentYear, allPlayEvents]);
 
   const handleStepEvent = (delta: number) => {
+    if (allPlayEvents.length === 0) return;
     if (activeEventIndex === -1) {
-      onSelectEvent(PLAY_EVENTS[0]);
+      onSelectEvent(allPlayEvents[0]);
       return;
     }
-    const nextIdx = (activeEventIndex + delta + PLAY_EVENTS.length) % PLAY_EVENTS.length;
-    onSelectEvent(PLAY_EVENTS[nextIdx]);
+    const nextIdx =
+      (activeEventIndex + delta + allPlayEvents.length) % allPlayEvents.length;
+    onSelectEvent(allPlayEvents[nextIdx]);
   };
 
   const handleGoUp = () => {
@@ -1061,9 +1369,57 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     }
   };
 
-  const renderPlayerInner = (isFloatingMini: boolean) => (
+  const renderPlayerInner = (mode: 'docked' | 'floating' | 'mobile-split') => {
+    const isFloatingMini = mode === 'floating';
+    const isMobileSplit = mode === 'mobile-split';
+    const isCompactOverlay = isFloatingMini || isMobileSplit;
+
+    const isMiniCompactHeight = miniDrawerDims.height < 168;
+    const hideMiniCallsigns =
+      miniDrawerDims.height < 186 ||
+      miniDrawerDims.width < 134 ||
+      (isMobileSplit && mobileSplitCompact);
+    const isMiniWide = miniDrawerDims.width >= 165;
+    const showFloatingPlaylistBtn = !isTwitch && Boolean(activePlaylistId);
+    const miniExternalText =
+      isTwitch && !selectedTrack && !activeEvent ? 'Open Twitch' : 'Open YouTube';
+
+    return (
     <section
-      ref={!isFloatingMini ? dockedSectionRef : undefined}
+      ref={
+        isFloatingMini
+          ? floatingContainerRef
+          : !isCompactOverlay
+          ? dockedSectionRef
+          : undefined
+      }
+      data-no-drawer-swipe={isCompactOverlay ? 'true' : undefined}
+      onTouchStart={
+        isCompactOverlay
+          ? (e) => {
+              const t = e.touches[0];
+              if (t) {
+                handleMiniSwipeStart(t.clientX, t.clientY, e.currentTarget);
+              }
+            }
+          : undefined
+      }
+      onTouchMove={
+        isCompactOverlay
+          ? (e) => {
+              const t = e.touches[0];
+              if (t && isCompactOverlay) {
+                handleMiniSwipeMove(
+                  t.clientX,
+                  t.clientY,
+                  isFloatingMini ? 'floating' : 'mobile-split'
+                );
+              }
+            }
+          : undefined
+      }
+      onTouchEnd={isCompactOverlay ? handleMiniSwipeEnd : undefined}
+      onTouchCancel={isCompactOverlay ? handleMiniSwipeEnd : undefined}
       style={
         isFloatingMini
           ? {
@@ -1074,57 +1430,62 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 ? { width: `${floatSize.width}px`, height: `${floatSize.height}px` }
                 : {}),
               overflow: 'hidden',
-              minWidth: '260px',
+              minWidth: '280px',
               minHeight: '179px',
-              maxWidth: '90vw',
+              maxWidth: '92vw',
               maxHeight: '90vh',
             }
           : undefined
       }
       className={
         isFloatingMini
-          ? `fixed z-40 w-[320px] sm:w-[380px] h-[213px] sm:h-[247px] rounded-2xl border border-slate-700/80 bg-slate-950/95 text-white shadow-2xl backdrop-blur-xl flex flex-col ${
-              !floatPos ? 'bottom-5 right-5' : ''
+          ? `fixed z-40 w-[340px] md:w-[400px] h-[222px] md:h-[258px] rounded-2xl border border-slate-700/80 bg-slate-950/95 text-white shadow-2xl backdrop-blur-xl flex flex-col ${
+              !floatPos ? 'bottom-20 lg:bottom-5 right-5' : ''
             }`
+          : isMobileSplit
+          ? 'fixed inset-x-0 bottom-14 z-35 border-t border-slate-700/90 bg-slate-950/98 text-white shadow-[0_-12px_32px_rgba(2,6,23,0.45)] backdrop-blur-xl flex flex-col'
           : 'aero-glass overflow-hidden rounded-3xl p-3 sm:p-4'
       }
     >
-      {/* 4 Corner Resize Handles preserving 16:9 (invisible, no blue corners) */}
+      {/* 4 Corner Resize Handles preserving 16:9 (desktop & tablet floating player only) */}
       {isFloatingMini && (
         <>
           <div
-            onMouseDown={(e) => handleResizeStart('nw', e)}
+            onPointerDown={(e) => handleResizePointerDown('nw', e)}
             aria-hidden="true"
-            className="absolute top-0 left-0 w-4 h-4 cursor-nwse-resize z-50 bg-transparent border-0 outline-none select-none"
+            className="absolute top-0 left-0 w-3.5 h-3.5 cursor-nwse-resize z-50 bg-transparent border-0 outline-none select-none touch-none"
           />
           <div
-            onMouseDown={(e) => handleResizeStart('ne', e)}
+            onPointerDown={(e) => handleResizePointerDown('ne', e)}
             aria-hidden="true"
-            className="absolute top-0 right-0 w-4 h-4 cursor-nesw-resize z-50 bg-transparent border-0 outline-none select-none"
+            className="absolute top-0 right-0 w-3.5 h-3.5 cursor-nesw-resize z-50 bg-transparent border-0 outline-none select-none touch-none"
           />
           <div
-            onMouseDown={(e) => handleResizeStart('sw', e)}
+            onPointerDown={(e) => handleResizePointerDown('sw', e)}
             aria-hidden="true"
-            className="absolute bottom-0 left-0 w-4 h-4 cursor-nesw-resize z-50 bg-transparent border-0 outline-none select-none"
+            className="absolute bottom-0 left-0 w-3.5 h-3.5 cursor-nesw-resize z-50 bg-transparent border-0 outline-none select-none touch-none"
           />
           <div
-            onMouseDown={(e) => handleResizeStart('se', e)}
+            onPointerDown={(e) => handleResizePointerDown('se', e)}
             aria-hidden="true"
-            className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize z-50 bg-transparent border-0 outline-none select-none"
+            className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-nwse-resize z-50 bg-transparent border-0 outline-none select-none touch-none"
           />
         </>
       )}
 
-      {/* Compact Floating Mini-Player Bar (Draggable) */}
+      {/* Compact Floating / Mobile Split Bar */}
       <div
         ref={miniHeaderRef}
-        onMouseDown={handleMouseDown}
+        onPointerDown={isFloatingMini ? handleFloatingDragPointerDown : undefined}
         className={
-          isFloatingMini
-            ? 'flex items-center justify-between gap-2 px-3 py-2 text-[11px] bg-slate-900/95 border-b border-white/10 cursor-move select-none shrink-0'
+          isCompactOverlay
+            ? `relative z-40 flex items-center justify-between gap-2 px-2.5 py-1.5 text-[11px] bg-slate-900/95 border-b border-white/10 select-none shrink-0 ${
+                isFloatingMini ? 'cursor-move touch-none' : ''
+              }`
             : 'hidden'
         }
       >
+        {/* Top-left corner: Channel / Callsign / Playlist */}
         <div className="flex items-center gap-1.5 min-w-0">
           <span
             className={`h-2 w-2 rounded-full shrink-0 ${
@@ -1140,22 +1501,131 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               : `CH 0${activeStation.number} · ${activeStation.callsign}`}
           </span>
         </div>
+
+        {/* Top-right corner (from left): Remote, Playlist (YouTube only), Settings, Close/Restore */}
         <div className="flex items-center gap-1 shrink-0">
+          {isMobileSplit && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setMobileSplitCompact((prev) => !prev)}
+              title={mobileSplitCompact ? 'Expand split player' : 'Compact split player'}
+              aria-label={mobileSplitCompact ? 'Expand split player' : 'Compact split player'}
+              className="relative group inline-flex h-7 w-7 items-center justify-center rounded-lg text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
+            >
+              {mobileSplitCompact ? (
+                <ChevronUp className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" />
+              )}
+              <span
+                role="tooltip"
+                className="pointer-events-none absolute top-full right-0 z-50 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg border border-white/10 opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100"
+              >
+                {mobileSplitCompact ? 'Expand' : 'Compact'}
+              </span>
+            </button>
+          )}
+
+          {/* Remote Control Drawer Toggle (includes CH 1-4 + Play Event list navigation) */}
           <button
             type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={() => {
-              if (isActiveTab && floatOnLiveTab) {
-                setFloatOnLiveTab(false);
-              } else {
-                onToggleFloating?.();
-              }
-            }}
-            title={isActiveTab && floatOnLiveTab ? 'Restore' : 'Close floating player'}
-            aria-label={isActiveTab && floatOnLiveTab ? 'Restore' : 'Close floating player'}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => toggleMiniDrawer('remote')}
+            aria-pressed={activeMiniDrawer === 'remote'}
+            title={activeMiniDrawer === 'remote' ? 'Hide Remote' : 'Remote'}
+            aria-label={activeMiniDrawer === 'remote' ? 'Hide Remote' : 'Remote'}
+            className={`relative group inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
+              activeMiniDrawer === 'remote'
+                ? 'bg-sky-500 text-white shadow-sm'
+                : 'bg-white/10 text-slate-200 hover:bg-white/20 hover:text-white'
+            }`}
+          >
+            <RemoteIcon className="h-3.5 w-3.5 shrink-0" />
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute top-full right-0 z-50 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg border border-white/10 opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100"
+            >
+              {activeMiniDrawer === 'remote' ? 'Hide Remote' : 'Remote'}
+            </span>
+          </button>
+
+          {/* Playlist Drawer Toggle (YouTube playlists only; hidden on Twitch) */}
+          {showFloatingPlaylistBtn && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => toggleMiniDrawer('playlist')}
+              aria-pressed={activeMiniDrawer === 'playlist'}
+              title={activeMiniDrawer === 'playlist' ? 'Hide Playlist' : 'Playlist'}
+              aria-label={activeMiniDrawer === 'playlist' ? 'Hide Playlist' : 'Playlist'}
+              className={`relative group inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
+                activeMiniDrawer === 'playlist'
+                  ? 'bg-sky-500 text-white shadow-sm'
+                  : 'bg-white/10 text-slate-200 hover:bg-white/20 hover:text-white'
+              }`}
+            >
+              <ListVideo className="h-3.5 w-3.5 shrink-0" />
+              <span
+                role="tooltip"
+                className="pointer-events-none absolute top-full right-0 z-50 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg border border-white/10 opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100"
+              >
+                {activeMiniDrawer === 'playlist' ? 'Hide Playlist' : 'Playlist'}
+              </span>
+            </button>
+          )}
+
+          {/* Player Settings Drawer Toggle (Restore, Fullscreen, Open Twitch/YouTube) */}
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => toggleMiniDrawer('settings')}
+            aria-pressed={activeMiniDrawer === 'settings'}
+            title={activeMiniDrawer === 'settings' ? 'Hide Settings' : 'Settings'}
+            aria-label={activeMiniDrawer === 'settings' ? 'Hide Settings' : 'Settings'}
+            className={`relative group inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
+              activeMiniDrawer === 'settings'
+                ? 'bg-sky-500 text-white shadow-sm'
+                : 'bg-white/10 text-slate-200 hover:bg-white/20 hover:text-white'
+            }`}
+          >
+            <Settings className="h-3.5 w-3.5 shrink-0" />
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute top-full right-0 z-50 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg border border-white/10 opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100"
+            >
+              {activeMiniDrawer === 'settings' ? 'Hide Settings' : 'Settings'}
+            </span>
+          </button>
+
+          {/* Close / Restore */}
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => onToggleFloating?.()}
+            title={
+              isActiveTab && floatingEnabled
+                ? 'Restore'
+                : isMobileSplit
+                ? 'Close split player'
+                : 'Close floating player'
+            }
+            aria-label={
+              isActiveTab && floatingEnabled
+                ? 'Restore'
+                : isMobileSplit
+                ? 'Close split player'
+                : 'Close floating player'
+            }
+            className="relative group inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/5 text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
           >
             <X className="h-3.5 w-3.5" />
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute top-full right-0 z-50 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg border border-white/10 opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100"
+            >
+              {isActiveTab && floatingEnabled ? 'Restore' : 'Close'}
+            </span>
           </button>
         </div>
       </div>
@@ -1163,7 +1633,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       {/* Full Player Toolbar (shown on Live tab) */}
       <div
         className={
-          isFloatingMini
+          isCompactOverlay
             ? 'hidden'
             : 'mb-3 flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-slate-600 dark:text-slate-300'
         }
@@ -1305,7 +1775,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             </button>
           )}
 
-          {/* Floating Player (icon only) */}
+          {/* Floating Player (Desktop/Tablet) / Bottom Split View (Mobile) */}
           <button
             type="button"
             onClick={() => {
@@ -1315,18 +1785,21 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               if (!floatingEnabled && onToggleFloating) {
                 onToggleFloating();
               }
-              setFloatOnLiveTab(true);
             }}
-            aria-label="Floating Player"
-            title="Floating Player"
+            aria-label={isDesktopOrTablet ? 'Floating Player' : 'Bottom Split View'}
+            title={isDesktopOrTablet ? 'Floating Player' : 'Bottom Split View'}
             className="relative group inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white/80 text-sky-600 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-sky-400 shrink-0 cursor-pointer"
           >
-            <PictureInPicture2 className="h-4 w-4" />
+            {isDesktopOrTablet ? (
+              <PictureInPicture2 className="h-4 w-4" />
+            ) : (
+              <PanelBottom className="h-4 w-4" />
+            )}
             <span
               role="tooltip"
               className="pointer-events-none absolute top-full left-1/2 z-30 mt-1.5 -translate-x-1/2 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100 dark:bg-slate-800"
             >
-              Floating Player
+              {isDesktopOrTablet ? 'Floating Player' : 'Bottom Split View'}
             </span>
           </button>
 
@@ -1386,108 +1859,678 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
         </div>
       </div>
 
-      {/* Player Surface */}
+      {/* Player Surface + Optional Right-Side Remote Control Drawer */}
       <div
         ref={playerContainerRef}
-        className={`relative overflow-hidden bg-slate-950 flex items-center justify-center ${
+        className={`relative overflow-hidden bg-slate-950 flex flex-row items-stretch ${
           isFloatingMini
             ? 'flex-1 w-full min-h-0'
+            : isMobileSplit
+            ? mobileSplitCompact
+              ? 'w-full h-[126px] transition-[height] duration-200'
+              : 'w-full aspect-video max-h-[34dvh] transition-[height] duration-200'
             : isFullscreen
             ? 'h-full w-full'
             : 'w-full rounded-2xl border border-slate-200/80 dark:border-slate-800 aspect-video lg:aspect-auto lg:h-[calc((100vw_-_442px)_*_9_/_16)] xl:h-[calc((min(100vw,1380px)_-_538px)_*_9_/_16)]'
         }`}
       >
-        {isCheckingTwitch ? (
-          <div className="flex h-full w-full items-center justify-center bg-slate-950">
-            <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
-          </div>
-        ) : (
-          <div
-            style={{ containerType: 'size' }}
-            className="absolute inset-0 flex items-center justify-center"
-          >
+        {/* Video Viewport (automatically scales down when Remote Control opens on right side) */}
+        <div className="relative flex-1 min-w-0 h-full overflow-hidden bg-slate-950 flex items-center justify-center">
+          {/* Left-edge swipe-right strip on Floating Player to expand Remote Control without iframe touch interception */}
+          {isFloatingMini && (
             <div
-              className="relative flex items-center justify-center overflow-hidden bg-black"
-              style={
-                isTwitch && !selectedTrack && currentTwitchInfo?.isLive
-                  ? {
-                      width: 'min(100cqw, calc(100cqh * 16 / 9))',
-                      height: 'min(100cqh, calc(100cqw * 9 / 16))',
-                    }
-                  : isTwitch && !selectedTrack
-                  ? { width: '100%', height: '100%' }
-                  : activeEvent && !selectedTrack && cleanYt.isShorts
-                  ? {
-                      width: 'min(100cqw, calc(100cqh * 9 / 16))',
-                      height: 'min(100cqh, calc(100cqw * 16 / 9))',
-                    }
-                  : {
-                      width: 'min(100cqw, calc(100cqh * 16 / 9))',
-                      height: 'min(100cqh, calc(100cqw * 9 / 16))',
-                    }
-              }
-            >
-              {showTwitchOfflineBanner && (
-                <div className="absolute top-3 right-3 z-20 pointer-events-none rounded bg-black/85 px-2.5 py-1 text-right font-mono text-[11px] font-extrabold uppercase tracking-widest text-amber-400 border border-amber-500/50 shadow-xl backdrop-blur-md">
-                  <div className="text-white">{activeStation.callsign}</div>
-                  <div className="text-[10px] text-rose-500 animate-pulse tracking-wider">OFFLINE</div>
-                </div>
-              )}
+              aria-hidden="true"
+              onTouchStart={(e) => {
+                const t = e.touches[0];
+                if (t) handleMiniSwipeStart(t.clientX, t.clientY, null, true);
+              }}
+              onTouchMove={(e) => {
+                const t = e.touches[0];
+                if (t) handleMiniSwipeMove(t.clientX, t.clientY, 'floating');
+              }}
+              onTouchEnd={handleMiniSwipeEnd}
+              className="absolute inset-y-0 left-0 w-5 z-25 bg-transparent touch-pan-y"
+            />
+          )}
 
-              {showChannel4Indicator && (
-                <div className="pointer-events-none absolute top-3 right-3 z-20">
-                  <div
-                    className={`shrink-0 rounded bg-black/85 text-right font-mono font-extrabold uppercase tracking-widest text-sky-400 border border-sky-400/50 shadow-xl backdrop-blur-md ${
-                      isFloatingMini ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
-                    }`}
-                  >
-                    <div className="text-white">VOD_CH4</div>
+          {/* Right-edge swipe-left handle strip on Mobile Split View & Floating Player */}
+          {isCompactOverlay && (
+            <div
+              aria-hidden="true"
+              onTouchStart={(e) => {
+                const t = e.touches[0];
+                if (t) handleMiniSwipeStart(t.clientX, t.clientY, null, true);
+              }}
+              onTouchMove={(e) => {
+                const t = e.touches[0];
+                if (t) {
+                  handleMiniSwipeMove(
+                    t.clientX,
+                    t.clientY,
+                    isFloatingMini ? 'floating' : 'mobile-split'
+                  );
+                }
+              }}
+              onTouchEnd={handleMiniSwipeEnd}
+              className="absolute inset-y-0 right-0 w-6 z-25 flex items-center justify-end pr-0.5 touch-pan-y"
+            >
+              <span className="h-8 w-1 rounded-full bg-white/30" />
+            </div>
+          )}
+
+          {isCheckingTwitch ? (
+            <div className="flex h-full w-full items-center justify-center bg-slate-950">
+              <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+            </div>
+          ) : (
+            <div
+              style={{ containerType: 'size' }}
+              className="absolute inset-0 flex items-center justify-center"
+            >
+              <div
+                className="relative flex items-center justify-center overflow-hidden bg-black"
+                style={
+                  isTwitch && !selectedTrack && currentTwitchInfo?.isLive
+                    ? {
+                        width: 'min(100cqw, calc(100cqh * 16 / 9))',
+                        height: 'min(100cqh, calc(100cqw * 9 / 16))',
+                      }
+                    : isTwitch && !selectedTrack
+                    ? { width: '100%', height: '100%' }
+                    : activeEvent && !selectedTrack && cleanYt.isShorts
+                    ? {
+                        width: 'min(100cqw, calc(100cqh * 9 / 16))',
+                        height: 'min(100cqh, calc(100cqw * 16 / 9))',
+                      }
+                    : {
+                        width: 'min(100cqw, calc(100cqh * 16 / 9))',
+                        height: 'min(100cqh, calc(100cqw * 9 / 16))',
+                      }
+                }
+              >
+                {showTwitchOfflineBanner && (
+                  <div className="absolute top-3 right-3 z-20 pointer-events-none rounded bg-black/85 px-2.5 py-1 text-right font-mono text-[11px] font-extrabold uppercase tracking-widest text-amber-400 border border-amber-500/50 shadow-xl backdrop-blur-md">
+                    <div className="text-white">{activeStation.callsign}</div>
+                    <div className="text-[10px] text-rose-500 animate-pulse tracking-wider">OFFLINE</div>
+                  </div>
+                )}
+
+                {showChannel4Indicator && (
+                  <div className="pointer-events-none absolute top-3 right-3 z-20">
                     <div
-                      className={`text-emerald-400 tracking-wider ${
-                        isFloatingMini ? 'text-[9px]' : 'text-[10px]'
+                      className={`shrink-0 rounded bg-black/85 text-right font-mono font-extrabold uppercase tracking-widest text-sky-400 border border-sky-400/50 shadow-xl backdrop-blur-md ${
+                        isCompactOverlay ? 'px-2 py-0.5 text-[10px]' : 'px-2.5 py-1 text-[11px]'
                       }`}
                     >
-                      ON DEMAND
+                      <div className="text-white">VOD_CH4</div>
+                      <div
+                        className={`text-emerald-400 tracking-wider ${
+                          isCompactOverlay ? 'text-[9px]' : 'text-[10px]'
+                        }`}
+                      >
+                        ON DEMAND
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {showTwitchOfflineBanner && twitchProfileBanner ? (
-                <img
-                  src={twitchProfileBanner}
-                  alt={`${activeStation.callsign} profile banner`}
-                  referrerPolicy="no-referrer"
-                  className="h-full w-full object-cover object-center"
-                />
-              ) : (
-                <iframe
-                  ref={playerIframeRef}
-                  key={playerSrc}
-                  src={playerSrc}
-                  onLoad={() => {
-                    if (!isTwitch) {
-                      sendYtListeningHandshake();
-                      window.setTimeout(sendYtListeningHandshake, 250);
-                      window.setTimeout(sendYtListeningHandshake, 800);
+                {showTwitchOfflineBanner && twitchProfileBanner ? (
+                  <img
+                    src={twitchProfileBanner}
+                    alt={`${activeStation.callsign} profile banner`}
+                    referrerPolicy="no-referrer"
+                    className="h-full w-full object-cover object-center"
+                  />
+                ) : (
+                  <iframe
+                    ref={playerIframeRef}
+                    key={playerSrc}
+                    src={playerSrc}
+                    onLoad={() => {
+                      if (!isTwitch) {
+                        sendYtListeningHandshake();
+                        window.setTimeout(sendYtListeningHandshake, 250);
+                        window.setTimeout(sendYtListeningHandshake, 800);
+                      }
+                    }}
+                    title={
+                      selectedTrack
+                        ? selectedTrack.title
+                        : activeEvent
+                        ? activeEvent.title
+                        : `${activeStation.label} (${activeStation.callsign})`
                     }
-                  }}
-                  title={
-                    selectedTrack
-                      ? selectedTrack.title
-                      : activeEvent
-                      ? activeEvent.title
-                      : `${activeStation.label} (${activeStation.callsign})`
-                  }
-                  allowFullScreen
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-                  className={`h-full w-full border-0 relative z-0 ${
-                    isDragging || resizeCorner !== null ? 'pointer-events-none' : ''
-                  }`}
-                />
-              )}
+                    allowFullScreen
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                    className={`h-full w-full border-0 relative z-0 ${
+                      isDragging || resizeCorner !== null ? 'pointer-events-none' : ''
+                    }`}
+                  />
+                )}
+              </div>
             </div>
-          </div>
+          )}
+        </div>
+
+        {/* Responsive Right-Side Drawer inside Floating / Mobile Split Player */}
+        {isCompactOverlay && (
+          <aside
+            ref={miniDrawerRef}
+            aria-label={
+              activeMiniDrawer === 'playlist'
+                ? 'Floating Playlist Drawer'
+                : activeMiniDrawer === 'settings'
+                ? 'Floating Player Settings Drawer'
+                : 'Remote Control Drawer'
+            }
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              width:
+                activeMiniDrawer === 'remote'
+                  ? remoteBrowsePlayEvents
+                    ? 'clamp(146px, 44%, 270px)'
+                    : 'clamp(112px, 36%, 220px)'
+                  : activeMiniDrawer === 'settings'
+                  ? 'clamp(124px, 38%, 220px)'
+                  : activeMiniDrawer === 'playlist'
+                  ? 'clamp(144px, 44%, 280px)'
+                  : '0px',
+            }}
+            className={`shrink-0 overflow-hidden bg-slate-900/95 transition-[width,padding,opacity] duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              activeMiniDrawer !== 'none'
+                ? `${isMiniCompactHeight ? 'p-1.5' : 'p-2'} border-l border-white/10 opacity-100`
+                : 'border-l-0 p-0 opacity-0 pointer-events-none'
+            }`}
+          >
+            {activeMiniDrawer === 'remote' && !remoteBrowsePlayEvents && (
+              <div className="flex h-full w-full items-center justify-center">
+                <div
+                  className={`grid h-full max-h-[248px] w-full max-w-[216px] grid-cols-2 grid-rows-3 ${
+                    isMiniCompactHeight ? 'gap-1' : 'gap-1.5'
+                  }`}
+                >
+                  {STATIONS.map((station) => {
+                    const isSelected =
+                      !activeEvent && activeStation.callsign === station.callsign;
+                    return (
+                      <button
+                        key={`mini-remote-${station.callsign}`}
+                        type="button"
+                        onClick={() => onSelectStation(station)}
+                        aria-label={`${station.label} — ${station.callsign}`}
+                        className={`flex h-full w-full flex-col items-center justify-center rounded-xl border px-1.5 py-1 text-center transition-colors cursor-pointer min-w-0 min-h-0 ${
+                          isSelected
+                            ? 'aero-button-primary border-transparent text-white shadow-sm'
+                            : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/15'
+                        }`}
+                      >
+                        <span
+                          className={`font-display font-bold leading-none tabular-nums ${
+                            isMiniWide ? 'text-sm sm:text-base' : 'text-xs sm:text-sm'
+                          }`}
+                        >
+                          {station.number}
+                        </span>
+                        {!hideMiniCallsigns && (
+                          <span
+                            className={`mt-1 max-w-full truncate font-mono text-[8.5px] sm:text-[9.5px] font-semibold leading-none ${
+                              isSelected ? 'text-sky-100' : 'text-slate-400'
+                            }`}
+                          >
+                            {station.callsign}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  {/* 5th Button below Channel 4: Play Event (opens List View playlist navigation inside drawer) */}
+                  <button
+                    type="button"
+                    onClick={() => setRemoteBrowsePlayEvents(true)}
+                    aria-label="Play Event Playlists"
+                    title="Browse Play Event playlists"
+                    className={`col-span-2 flex h-full w-full items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer min-w-0 min-h-0 ${
+                      activeEvent
+                        ? 'aero-button-primary border-transparent text-white shadow-sm'
+                        : 'border-sky-400/35 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25'
+                    }`}
+                  >
+                    <ListVideo className="h-3.5 w-3.5 shrink-0" />
+                    <span
+                      className={`font-display font-bold truncate leading-none ${
+                        isMiniCompactHeight ? 'text-[10.5px]' : 'text-[11px] sm:text-xs'
+                      }`}
+                    >
+                      Play Event
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {activeMiniDrawer === 'remote' && remoteBrowsePlayEvents && (
+              <div className="flex h-full flex-col gap-1 min-h-0 text-[11px]">
+                {/* Folder Navigation Header inside Remote Control */}
+                <div className="flex items-center justify-between gap-1 border-b border-white/10 pb-1 shrink-0">
+                  <div className="flex items-center gap-1 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (currentYear) {
+                          setCurrentYear(null);
+                        } else if (currentEra) {
+                          setCurrentEra(null);
+                        } else {
+                          setRemoteBrowsePlayEvents(false);
+                        }
+                      }}
+                      title={
+                        currentEra || currentYear
+                          ? 'Up one folder'
+                          : 'Back to Channels'
+                      }
+                      aria-label={
+                        currentEra || currentYear
+                          ? 'Up one folder'
+                          : 'Back to Channels'
+                      }
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-slate-200 hover:bg-white/20 cursor-pointer"
+                    >
+                      <ArrowLeft className="h-3 w-3" />
+                    </button>
+                    <span className="truncate font-mono text-[10px] font-bold text-white">
+                      {currentYear
+                        ? `${currentEra} / ${currentYear}`
+                        : currentEra || 'Play Event'}
+                    </span>
+                  </div>
+
+                  {(currentEra || currentYear) && (
+                    <button
+                      type="button"
+                      onClick={() => setRemoteBrowsePlayEvents(false)}
+                      title="Back to Channels 1–4"
+                      aria-label="Back to Channels 1–4"
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-sky-300 hover:bg-white/20 cursor-pointer"
+                    >
+                      <RemoteIcon className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Play Event List View inside Remote Drawer */}
+                <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain divide-y divide-white/10 pr-0.5">
+                  {!currentEra && (
+                    <>
+                      {eraSummaries.map((folder) => {
+                        const hasActiveInside = activeEvent?.era === folder.era;
+                        return (
+                          <button
+                            key={`mini-era-${folder.era}`}
+                            type="button"
+                            onClick={() => {
+                              setCurrentEra(folder.era);
+                              setCurrentYear(null);
+                            }}
+                            className={`flex w-full items-center justify-between gap-1.5 text-left transition-colors cursor-pointer ${
+                              isMiniCompactHeight ? 'px-1.5 py-1' : 'px-2 py-1.5'
+                            } ${
+                              hasActiveInside
+                                ? 'bg-sky-500/20 text-sky-100'
+                                : 'text-slate-200 hover:bg-white/10'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Folder className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                              <div className="min-w-0">
+                                <div className="truncate font-display text-[10.5px] font-bold leading-tight">
+                                  {folder.era}
+                                </div>
+                                {!isMiniCompactHeight && (
+                                  <div className="font-mono text-[8.5px] text-slate-400 tabular-nums truncate">
+                                    {folder.yearLabel} · {folder.count}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <ChevronRight className="h-3 w-3 shrink-0 text-slate-400" />
+                          </button>
+                        );
+                      })}
+
+                      {yearEndItems.map((rootEv) => {
+                        const isSelected = activeEvent?.id === rootEv.id;
+                        return (
+                          <button
+                            key={`mini-root-${rootEv.id}`}
+                            type="button"
+                            onClick={() => onSelectEvent(rootEv)}
+                            className={`flex w-full items-center justify-between gap-1.5 text-left transition-colors cursor-pointer ${
+                              isMiniCompactHeight ? 'px-1.5 py-1' : 'px-2 py-1.5'
+                            } ${
+                              isSelected
+                                ? 'aero-button-primary text-white'
+                                : 'text-slate-200 hover:bg-white/10'
+                            }`}
+                          >
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <ListVideo
+                                className={`h-3.5 w-3.5 shrink-0 ${
+                                  isSelected ? 'text-white' : 'text-sky-400'
+                                }`}
+                              />
+                              <div className="min-w-0">
+                                <div className="truncate font-display text-[10.5px] font-bold leading-tight">
+                                  {rootEv.title}
+                                </div>
+                                {!isMiniCompactHeight && (
+                                  <div
+                                    className={`font-mono text-[8.5px] truncate ${
+                                      isSelected ? 'text-sky-100' : 'text-slate-400'
+                                    }`}
+                                  >
+                                    {rootEv.era === 'Year End Collection'
+                                      ? 'Archive Playlist'
+                                      : rootEv.dateLabel || rootEv.year}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <Play className="h-2.5 w-2.5 shrink-0 opacity-85" />
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {currentEra &&
+                    !currentYear &&
+                    yearsInCurrentEra.map((yrGroup) => {
+                      const hasActiveInside =
+                        activeEvent?.era === currentEra &&
+                        activeEvent?.year === yrGroup.year;
+                      return (
+                        <button
+                          key={`mini-yr-${yrGroup.year}`}
+                          type="button"
+                          onClick={() => setCurrentYear(yrGroup.year)}
+                          className={`flex w-full items-center justify-between gap-1.5 text-left transition-colors cursor-pointer ${
+                            isMiniCompactHeight ? 'px-1.5 py-1' : 'px-2 py-1.5'
+                          } ${
+                            hasActiveInside
+                              ? 'bg-sky-500/20 text-sky-100'
+                              : 'text-slate-200 hover:bg-white/10'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+                            <div className="min-w-0">
+                              <div className="font-mono text-[11px] font-bold tabular-nums leading-tight">
+                                {yrGroup.year}
+                              </div>
+                              {!isMiniCompactHeight && (
+                                <div className="text-[8.5px] text-slate-400 tabular-nums">
+                                  {yrGroup.items.length}{' '}
+                                  {yrGroup.items.length === 1 ? 'event' : 'events'}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <ChevronRight className="h-3 w-3 shrink-0 text-slate-400" />
+                        </button>
+                      );
+                    })}
+
+                  {currentEra &&
+                    currentYear &&
+                    eventsInCurrentYear.map((ev) => {
+                      const isSelected = activeEvent?.id === ev.id;
+                      return (
+                        <button
+                          key={`mini-ev-${ev.id}`}
+                          type="button"
+                          onClick={() => onSelectEvent(ev)}
+                          className={`flex w-full items-center justify-between gap-1.5 text-left transition-colors cursor-pointer ${
+                            isMiniCompactHeight ? 'px-1.5 py-1' : 'px-2 py-1.5'
+                          } ${
+                            isSelected
+                              ? 'aero-button-primary text-white'
+                              : 'text-slate-200 hover:bg-white/10'
+                          }`}
+                        >
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <ListVideo
+                              className={`h-3.5 w-3.5 shrink-0 ${
+                                isSelected ? 'text-white' : 'text-sky-400'
+                              }`}
+                            />
+                            <div className="min-w-0">
+                              <div className="truncate font-display text-[10.5px] font-bold leading-tight">
+                                {ev.title}
+                              </div>
+                              {!isMiniCompactHeight && (
+                                <div
+                                  className={`font-mono text-[8.5px] tabular-nums truncate ${
+                                    isSelected ? 'text-sky-100' : 'text-slate-400'
+                                  }`}
+                                >
+                                  {ev.dateLabel} ·{' '}
+                                  {ev.kind === 'youtube-video' ? 'Video' : 'Playlist'}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <Play className="h-2.5 w-2.5 shrink-0 opacity-85" />
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            {activeMiniDrawer === 'settings' && (
+              <div className="flex h-full flex-col justify-center overflow-y-auto text-[11px]">
+                <div className={isMiniCompactHeight ? 'space-y-1' : 'space-y-1.5'}>
+                  {!isMiniCompactHeight && (
+                    <div className="px-1 font-mono text-[9.5px] font-bold uppercase tracking-wider text-slate-400">
+                      Settings
+                    </div>
+                  )}
+
+                  {/* Restore */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveMiniDrawer('none');
+                      onToggleFloating?.();
+                      if (!isActiveTab) {
+                        onGoToLive?.();
+                      }
+                    }}
+                    className={`flex w-full items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 text-left font-semibold text-slate-100 hover:bg-white/15 cursor-pointer ${
+                      isMiniCompactHeight ? 'px-2 py-1 text-[10.5px]' : 'px-2.5 py-2 text-[11px]'
+                    }`}
+                  >
+                    {isDesktopOrTablet ? (
+                      <PictureInPicture2 className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                    ) : (
+                      <PanelBottom className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+                    )}
+                    <span className="truncate">Restore</span>
+                  </button>
+
+                  {/* Fullscreen */}
+                  <button
+                    type="button"
+                    onClick={handleToggleFullscreen}
+                    className={`flex w-full items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 text-left font-semibold text-slate-100 hover:bg-white/15 cursor-pointer ${
+                      isMiniCompactHeight ? 'px-2 py-1 text-[10.5px]' : 'px-2.5 py-2 text-[11px]'
+                    }`}
+                  >
+                    <Maximize2 className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                    <span className="truncate">
+                      {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                    </span>
+                  </button>
+
+                  {/* Open Twitch / Open YouTube */}
+                  <a
+                    href={externalUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`flex w-full items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 text-left font-semibold text-slate-100 hover:bg-white/15 ${
+                      isMiniCompactHeight ? 'px-2 py-1 text-[10.5px]' : 'px-2.5 py-2 text-[11px]'
+                    }`}
+                  >
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-300" />
+                    <span className="truncate">{miniExternalText}</span>
+                  </a>
+                </div>
+              </div>
+            )}
+
+            {activeMiniDrawer === 'playlist' && showFloatingPlaylistBtn && (
+              <div className="flex h-full flex-col gap-1.5 min-h-0 text-[11px]">
+                <div className="flex items-center justify-between gap-1 border-b border-white/10 pb-1 shrink-0">
+                  <div className="min-w-0">
+                    {activePlaylistId ? (
+                      <a
+                        href={`https://www.youtube.com/playlist?list=${encodeURIComponent(activePlaylistId)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="truncate font-display text-[11px] font-bold text-white hover:text-sky-300 hover:underline block"
+                        title="Open full playlist on YouTube"
+                      >
+                        {activePlaylistTitle || 'Playlist'}
+                      </a>
+                    ) : (
+                      <div className="truncate font-display text-[11px] font-bold text-white">
+                        {activePlaylistTitle || 'Playlist'}
+                      </div>
+                    )}
+                    {!isMiniCompactHeight && (
+                      <div className="font-mono text-[9px] text-slate-400 tabular-nums">
+                        {playlistLoading
+                          ? 'Syncing...'
+                          : `${playlistTracks.length} tracks`}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {selectedTrack && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTrack(null)}
+                        title="Return to full playlist"
+                        aria-label="Return to full playlist"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-sky-300 hover:bg-white/20 cursor-pointer"
+                      >
+                        <RotateCcw className="h-3 w-3" />
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPlaylistSyncNonce((n) => n + 1)}
+                      disabled={playlistLoading}
+                      title="Sync YouTube playlist"
+                      aria-label="Sync YouTube playlist"
+                      className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-white/10 text-slate-200 hover:bg-white/20 disabled:opacity-50 cursor-pointer"
+                    >
+                      <RefreshCw
+                        className={`h-3 w-3 ${playlistLoading ? 'animate-spin' : ''}`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                {playlistLoading && playlistTracks.length === 0 ? (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-1.5 text-slate-300">
+                    <Loader2 className="h-4 w-4 animate-spin text-sky-400" />
+                    <span className="text-[10px]">Syncing playlist...</span>
+                  </div>
+                ) : playlistError && playlistTracks.length === 0 ? (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-1.5 text-center px-1">
+                    <p className="text-[10px] text-rose-300">{playlistError}</p>
+                    <button
+                      type="button"
+                      onClick={() => setPlaylistSyncNonce((n) => n + 1)}
+                      className="rounded-lg bg-white/10 px-2 py-1 text-[10px] font-semibold text-white hover:bg-white/20 cursor-pointer"
+                    >
+                      Retry Sync
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1 pr-0.5">
+                      {playlistTracks.map((item, idx) => {
+                        const isCurrent = selectedTrack?.videoId === item.videoId;
+                        return (
+                          <button
+                            key={`mini-pl-${item.videoId}`}
+                            type="button"
+                            onClick={() =>
+                              setSelectedTrack({
+                                videoId: item.videoId,
+                                title: item.title,
+                                index: idx,
+                                total: playlistTracks.length,
+                              })
+                            }
+                            className={`flex w-full items-start gap-1.5 rounded-lg text-left transition-colors cursor-pointer ${
+                              isMiniCompactHeight ? 'px-1.5 py-0.5' : 'px-1.5 py-1'
+                            } ${
+                              isCurrent
+                                ? 'aero-button-primary text-white shadow-sm'
+                                : 'bg-white/5 text-slate-200 hover:bg-white/15'
+                            }`}
+                          >
+                            <span
+                              className={`font-mono text-[9.5px] font-bold shrink-0 pt-0.5 tabular-nums ${
+                                isCurrent ? 'text-sky-100' : 'text-slate-400'
+                              }`}
+                            >
+                              {idx + 1}.
+                            </span>
+                            <span
+                              className={`line-clamp-2 font-medium leading-tight min-w-0 ${
+                                isMiniWide ? 'text-[10.5px]' : 'text-[10px]'
+                              }`}
+                            >
+                              {item.title}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {selectedTrack && playlistTracks.length > 1 && (
+                      <div className="flex items-center justify-between gap-1 border-t border-white/10 pt-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleStepTrack(-1)}
+                          aria-label="Previous video"
+                          className="inline-flex flex-1 items-center justify-center gap-0.5 rounded-md bg-white/10 py-1 text-[10px] font-semibold text-white hover:bg-white/20 cursor-pointer"
+                        >
+                          <ChevronLeft className="h-3 w-3" />
+                          <span>Prev</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStepTrack(1)}
+                          aria-label="Next video"
+                          className="inline-flex flex-1 items-center justify-center gap-0.5 rounded-md bg-white/10 py-1 text-[10px] font-semibold text-white hover:bg-white/20 cursor-pointer"
+                        >
+                          <span>Next</span>
+                          <ChevronRight className="h-3 w-3" />
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </aside>
         )}
       </div>
 
@@ -1520,9 +2563,21 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     <ListVideo className="h-4 w-4 sm:h-5 sm:w-5" />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="font-display text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
-                      {activePlaylistTitle || 'Playlist Videos'}
-                    </h3>
+                    {activePlaylistId ? (
+                      <a
+                        href={`https://www.youtube.com/playlist?list=${encodeURIComponent(activePlaylistId)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-display text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate hover:text-sky-600 dark:hover:text-sky-300 hover:underline block"
+                        title="Open full playlist on YouTube"
+                      >
+                        {activePlaylistTitle || 'Playlist Videos'}
+                      </a>
+                    ) : (
+                      <h3 className="font-display text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
+                        {activePlaylistTitle || 'Playlist Videos'}
+                      </h3>
+                    )}
                     <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
                       {playlistTracks.length > 0
                         ? `${playlistTracks.length} individual videos`
@@ -1596,16 +2651,18 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     >
                       Switch to Channel 4 (VOD_ch4)
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        onSelectEvent(PLAY_EVENTS[0]);
-                        setShowPlaylistDrawer(true);
-                      }}
-                      className="rounded-xl border border-slate-200 bg-white/90 px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 cursor-pointer"
-                    >
-                      Browse {PLAY_EVENTS[0].title}
-                    </button>
+                    {allPlayEvents[0] && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSelectEvent(allPlayEvents[0]);
+                          setShowPlaylistDrawer(true);
+                        }}
+                        className="rounded-xl border border-slate-200 bg-white/90 px-3.5 py-2 text-xs font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 cursor-pointer"
+                      >
+                        Browse {allPlayEvents[0].title}
+                      </button>
+                    )}
                   </div>
                 </div>
               ) : activeEvent?.kind === 'youtube-video' && !activePlaylistId ? (
@@ -1622,8 +2679,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const nextEvent = PLAY_EVENTS.find((e) => e.kind === 'youtube-playlist') || PLAY_EVENTS[0];
-                      onSelectEvent(nextEvent);
+                      const nextEvent =
+                        allPlayEvents.find((e) => e.kind === 'youtube-playlist') ||
+                        allPlayEvents[0];
+                      if (nextEvent) onSelectEvent(nextEvent);
                       setShowPlaylistDrawer(true);
                     }}
                     className="aero-button-primary rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
@@ -1799,7 +2858,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
         role="tablist"
         aria-label="Remote Control"
         className={
-          isFloatingMini
+          isCompactOverlay
             ? 'hidden'
             : isSidebarCollapsed
             ? 'mt-3 grid grid-cols-4 gap-2'
@@ -1837,78 +2896,119 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
         })}
       </div>
     </section>
-  );
+    );
+  };
 
-  // If we are NOT on the live tab, render ONLY the floating mini-player overlay
-  if (!isActiveTab) {
-    if (!floatingEnabled) return null;
-    return renderPlayerInner(true);
+  if (!isActiveTab && !floatingEnabled) {
+    return null;
   }
 
+  const compactOverlayMode: 'floating' | 'mobile-split' = isDesktopOrTablet
+    ? 'floating'
+    : 'mobile-split';
+  const currentPlayerMode: 'docked' | 'floating' | 'mobile-split' =
+    floatingEnabled ? compactOverlayMode : 'docked';
+
   return (
-    <div className="space-y-6">
-      {/* If floating on the Live tab, render the floating player + exact-height void placeholder in original position */}
-      {floatOnLiveTab ? (
-        <>
-          {renderPlayerInner(true)}
-          <section
-            style={dockedHeight ? { minHeight: `${dockedHeight}px` } : undefined}
-            className="aero-glass overflow-hidden rounded-3xl p-3 sm:p-4 flex flex-col"
+    <div className={isActiveTab ? 'flex flex-col gap-6' : ''}>
+      {/* Persistent Player Node (never changes React position across float/split toggles or tab navigation) */}
+      {renderPlayerInner(currentPlayerMode)}
+
+      {/* Placeholder Void Card (shown on Live tab while player is floating or split) */}
+      <section
+        aria-hidden={!(isActiveTab && floatingEnabled)}
+        style={
+          isActiveTab && floatingEnabled && dockedHeight
+            ? { minHeight: `${dockedHeight}px` }
+            : undefined
+        }
+        className={
+          isActiveTab && floatingEnabled
+            ? 'aero-glass overflow-hidden rounded-3xl p-3 sm:p-4 flex flex-col'
+            : 'hidden'
+        }
+      >
+        <div
+          aria-hidden="true"
+          className="mb-3 flex min-h-8 items-center justify-between gap-2 px-1 text-xs invisible pointer-events-none select-none"
+        >
+          <span className="h-8" />
+        </div>
+
+        <div className="w-full flex-1 rounded-2xl border border-dashed border-sky-400/40 bg-sky-500/5 flex flex-col justify-center items-center text-center space-y-3 p-4 aspect-video lg:aspect-auto lg:h-[calc((100vw_-_442px)_*_9_/_16)] xl:h-[calc((min(100vw,1380px)_-_538px)_*_9_/_16)]">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300">
+            {isDesktopOrTablet ? (
+              <PictureInPicture2 className="h-6 w-6" />
+            ) : (
+              <PanelBottom className="h-6 w-6" />
+            )}
+          </div>
+          <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
+            {isDesktopOrTablet
+              ? 'Video currently playing in floating player'
+              : 'Video pinned to bottom split view'}
+          </h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+            {isDesktopOrTablet
+              ? 'You can drag or resize the floating player anywhere on desktop or tablet screens. It keeps playing when you navigate other tabs.'
+              : 'The live player is docked at the bottom of your screen so you can scroll events or other tabs above it.'}
+          </p>
+          <button
+            type="button"
+            onClick={() => onToggleFloating?.()}
+            className="aero-button-primary rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer shadow-sm"
           >
-            <div
-              aria-hidden="true"
-              className="mb-3 flex min-h-8 items-center justify-between gap-2 px-1 text-xs invisible pointer-events-none select-none"
-            >
-              <span className="h-8" />
-            </div>
+            Restore
+          </button>
+        </div>
 
-            <div className="w-full flex-1 rounded-2xl border border-dashed border-sky-400/40 bg-sky-500/5 flex flex-col justify-center items-center text-center space-y-3 p-4 aspect-video lg:aspect-auto lg:h-[calc((100vw_-_442px)_*_9_/_16)] xl:h-[calc((min(100vw,1380px)_-_538px)_*_9_/_16)]">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300 animate-pulse">
-                <PictureInPicture2 className="h-6 w-6" />
-              </div>
-              <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
-                Video currently playing in floating player
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
-                You can drag or resize the floating player anywhere on screen. It will keep playing even when you navigate other tabs.
-              </p>
+        <div
+          role="tablist"
+          aria-label="Remote Control"
+          className={
+            isSidebarCollapsed
+              ? 'mt-3 grid grid-cols-4 gap-2'
+              : 'mt-3 grid grid-cols-4 gap-2 lg:hidden'
+          }
+        >
+          {STATIONS.map((station) => {
+            const isSelected = !activeEvent && activeStation.callsign === station.callsign;
+            return (
               <button
+                key={`void-remote-${station.callsign}`}
                 type="button"
-                onClick={() => setFloatOnLiveTab(false)}
-                className="aero-button-primary rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer shadow-sm"
+                role="tab"
+                aria-selected={isSelected}
+                aria-label={`${station.label} — ${station.callsign}`}
+                onClick={() => onSelectStation(station)}
+                className={`flex flex-col items-center justify-center gap-2 rounded-xl border px-1.5 py-2.5 text-center transition-colors cursor-pointer min-w-0 ${
+                  isSelected
+                    ? 'aero-button-primary border-transparent text-white'
+                    : 'border-slate-200/90 bg-white/80 text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-100'
+                }`}
               >
-                Restore
-              </button>
-            </div>
-
-            <div
-              aria-hidden="true"
-              className={`${
-                isSidebarCollapsed ? 'mt-3 grid grid-cols-4 gap-2' : 'mt-3 grid grid-cols-4 gap-2 lg:hidden'
-              } invisible pointer-events-none select-none`}
-            >
-              {STATIONS.map((station) => (
-                <div
-                  key={`void-spacer-${station.callsign}`}
-                  className="flex flex-col items-center justify-center gap-2 rounded-xl border border-transparent px-1.5 py-2.5"
+                <span className="font-display text-lg sm:text-xl font-bold leading-none tabular-nums">
+                  {station.number}
+                </span>
+                <span
+                  className={`max-w-full truncate font-mono text-[10px] sm:text-xs font-semibold leading-tight ${
+                    isSelected ? 'text-sky-100' : 'text-slate-600 dark:text-slate-300'
+                  }`}
                 >
-                  <span className="font-display text-lg sm:text-xl font-bold leading-none">
-                    {station.number}
-                  </span>
-                  <span className="font-mono text-[10px] sm:text-xs font-semibold leading-tight">
-                    {station.callsign}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-        </>
-      ) : (
-        renderPlayerInner(false)
-      )}
+                  {station.callsign}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       {/* Play Event Folder Directory inside a Scrollable Container */}
-      <section className="aero-glass rounded-3xl p-5 sm:p-6 space-y-4">
+      <section
+        ref={playEventSectionRef}
+        aria-hidden={!isActiveTab}
+        className={isActiveTab ? 'aero-glass rounded-3xl p-5 sm:p-6 space-y-4' : 'hidden'}
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
@@ -1950,14 +3050,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={() => onSelectEvent(PLAY_EVENTS[0])}
-            className="aero-button-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
-          >
-            <Play className="h-3.5 w-3.5" />
-            Load From 2018
-          </button>
+          {allPlayEvents[0] && (
+            <button
+              type="button"
+              onClick={() => onSelectEvent(allPlayEvents[0])}
+              className="aero-button-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Play className="h-3.5 w-3.5" />
+              Load From {allPlayEvents[0].year || '2018'}
+            </button>
+          )}
         </div>
 
         {/* File Explorer Frame */}
@@ -2095,21 +3197,21 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                   );
                 })}
 
-                {yearEndItem && (
+                {yearEndItems.map((rootEv) =>
                   eventViewMode === 'tiles' ? (
                     <button
-                      key={yearEndItem.id}
+                      key={rootEv.id}
                       type="button"
-                      onClick={() => onSelectEvent(yearEndItem)}
+                      onClick={() => onSelectEvent(rootEv)}
                       className={`group flex flex-col items-center justify-center rounded-2xl border p-4 text-center transition-all cursor-pointer ${
-                        activeEvent?.id === yearEndItem.id
+                        activeEvent?.id === rootEv.id
                           ? 'aero-button-primary border-transparent text-white shadow-md'
                           : 'border-slate-200/80 bg-white/70 hover:bg-white hover:shadow-md dark:border-slate-700/70 dark:bg-slate-900/60 dark:hover:bg-slate-800/80'
                       }`}
                     >
                       <div
                         className={`flex h-12 w-12 items-center justify-center rounded-2xl transition-transform group-hover:scale-105 ${
-                          activeEvent?.id === yearEndItem.id
+                          activeEvent?.id === rootEv.id
                             ? 'bg-white/20 text-white'
                             : 'bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300'
                         }`}
@@ -2118,26 +3220,28 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                       </div>
                       <div
                         className={`mt-2.5 truncate font-display text-xs sm:text-sm font-bold max-w-full ${
-                          activeEvent?.id === yearEndItem.id ? 'text-white' : 'text-slate-900 dark:text-white'
+                          activeEvent?.id === rootEv.id ? 'text-white' : 'text-slate-900 dark:text-white'
                         }`}
                       >
-                        {yearEndItem.title}
+                        {rootEv.title}
                       </div>
                       <div
                         className={`mt-0.5 font-mono text-[10px] sm:text-[11px] tabular-nums ${
-                          activeEvent?.id === yearEndItem.id ? 'text-sky-100' : 'text-slate-500 dark:text-slate-400'
+                          activeEvent?.id === rootEv.id ? 'text-sky-100' : 'text-slate-500 dark:text-slate-400'
                         }`}
                       >
-                        Archive Playlist
+                        {rootEv.era === 'Year End Collection'
+                          ? 'Archive Playlist'
+                          : `${rootEv.dateLabel || rootEv.year} · ${rootEv.kind === 'youtube-video' ? 'Video' : 'Playlist'}`}
                       </div>
                     </button>
                   ) : (
                     <button
-                      key={yearEndItem.id}
+                      key={rootEv.id}
                       type="button"
-                      onClick={() => onSelectEvent(yearEndItem)}
+                      onClick={() => onSelectEvent(rootEv)}
                       className={`flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors cursor-pointer ${
-                        activeEvent?.id === yearEndItem.id
+                        activeEvent?.id === rootEv.id
                           ? 'aero-button-primary text-white'
                           : 'hover:bg-slate-50/90 dark:hover:bg-slate-800/60'
                       }`}
@@ -2145,29 +3249,31 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                       <div className="flex min-w-0 items-center gap-3">
                         <ListVideo
                           className={`h-4 w-4 shrink-0 ${
-                            activeEvent?.id === yearEndItem.id
+                            activeEvent?.id === rootEv.id
                               ? 'text-white'
                               : 'text-sky-600 dark:text-sky-400'
                           }`}
                         />
                         <div className="min-w-0">
                           <div className="truncate font-display text-sm font-bold">
-                            {yearEndItem.title}
+                            {rootEv.title}
                           </div>
                           <div
                             className={`font-mono text-[11px] ${
-                              activeEvent?.id === yearEndItem.id
+                              activeEvent?.id === rootEv.id
                                 ? 'text-sky-100'
                                 : 'text-slate-500 dark:text-slate-400'
                             }`}
                           >
-                            Archive Playlist
+                            {rootEv.era === 'Year End Collection'
+                              ? 'Archive Playlist'
+                              : `${rootEv.dateLabel || rootEv.year} · ${rootEv.kind === 'youtube-video' ? 'Video' : 'Playlist'}`}
                           </div>
                         </div>
                       </div>
                       <Play
                         className={`h-3.5 w-3.5 shrink-0 ${
-                          activeEvent?.id === yearEndItem.id
+                          activeEvent?.id === rootEv.id
                             ? 'text-white'
                             : 'text-sky-600 dark:text-sky-400'
                         }`}

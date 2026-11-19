@@ -22,6 +22,7 @@ import type {
   EventCountdown,
   IntranetState,
   MediaAttachment,
+  PlayEventRecord,
   Post,
 } from '../types';
 import { db, handleFirestoreError, OperationType } from './firebase';
@@ -103,6 +104,7 @@ export interface DashboardSubscriptions {
   onPosts: (posts: Post[], initialized: boolean) => void;
   onBanners: (banners: BannerSchedule[]) => void;
   onCountdowns: (countdowns: EventCountdown[]) => void;
+  onPlayEvents?: (events: PlayEventRecord[]) => void;
   onDesign: (design: DesignSettings, existsInFirestore: boolean) => void;
   onError: (err: Error) => void;
 }
@@ -112,6 +114,7 @@ export function subscribeDashboardData({
   onPosts,
   onBanners,
   onCountdowns,
+  onPlayEvents,
   onDesign,
   onError,
 }: DashboardSubscriptions): () => void {
@@ -274,6 +277,44 @@ export function subscribeDashboardData({
       }
     )
   );
+
+  if (onPlayEvents) {
+    unsubs.push(
+      onSnapshot(
+        collection(db, 'play_events'),
+        (snap) => {
+          const rows: PlayEventRecord[] = snap.docs.map((d) => {
+            const raw = d.data();
+            return {
+              id: d.id,
+              title: String(raw.title || ''),
+              url: String(raw.url || ''),
+              kind:
+                raw.kind === 'youtube-video'
+                  ? 'youtube-video'
+                  : 'youtube-playlist',
+              mediaId: String(raw.mediaId || ''),
+              dateLabel: String(raw.dateLabel || ''),
+              year: String(raw.year || ''),
+              era: String(raw.era || ''),
+              scheduledFor: raw.scheduledFor ?? null,
+              scheduledTimeZone: raw.scheduledTimeZone ?? null,
+              isDeleted: Boolean(raw.isDeleted),
+            };
+          });
+          rows.sort((a, b) => a.dateLabel.localeCompare(b.dateLabel));
+          onPlayEvents(rows);
+        },
+        (err) => {
+          try {
+            handleFirestoreError(err, OperationType.LIST, 'play_events');
+          } catch (wrapped) {
+            onError(wrapped instanceof Error ? wrapped : new Error(String(wrapped)));
+          }
+        }
+      )
+    );
+  }
 
   return () => {
     for (const unsub of unsubs) unsub();
@@ -835,6 +876,119 @@ export async function deleteCountdownDoc(countdownId: string): Promise<void> {
     await deleteDoc(doc(db, 'countdowns', countdownId));
   } catch (err) {
     handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+export async function createPlayEventDoc(
+  authorId: string,
+  payload: Omit<PlayEventRecord, 'id'>
+): Promise<void> {
+  const id = `ev-${crypto.randomUUID()}`;
+  const path = `play_events/${id}`;
+  try {
+    await setDoc(
+      doc(db, 'play_events', id),
+      stripUndefinedDeep({
+        title: String(payload.title || 'Play Event').slice(0, 200),
+        url: normalizeShortsToWatchUrl(String(payload.url || '')).slice(0, 2000),
+        kind:
+          payload.kind === 'youtube-video' ? 'youtube-video' : 'youtube-playlist',
+        mediaId: String(payload.mediaId || '').slice(0, 200),
+        dateLabel: String(payload.dateLabel || '').slice(0, 64),
+        year: String(payload.year || '').slice(0, 32),
+        era: String(payload.era || '').slice(0, 80),
+        scheduledFor: payload.scheduledFor
+          ? String(payload.scheduledFor).slice(0, 64)
+          : null,
+        scheduledTimeZone: payload.scheduledTimeZone
+          ? String(payload.scheduledTimeZone).slice(0, 64)
+          : null,
+        authorId,
+        serverUpdatedAt: serverTimestamp(),
+      })
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.CREATE, path);
+  }
+}
+
+export async function updatePlayEventDoc(
+  eventId: string,
+  payload: Omit<PlayEventRecord, 'id'>
+): Promise<void> {
+  const path = `play_events/${eventId}`;
+  try {
+    await updateDoc(
+      doc(db, 'play_events', eventId),
+      stripUndefinedDeep({
+        title: String(payload.title || 'Play Event').slice(0, 200),
+        url: normalizeShortsToWatchUrl(String(payload.url || '')).slice(0, 2000),
+        kind:
+          payload.kind === 'youtube-video' ? 'youtube-video' : 'youtube-playlist',
+        mediaId: String(payload.mediaId || '').slice(0, 200),
+        dateLabel: String(payload.dateLabel || '').slice(0, 64),
+        year: String(payload.year || '').slice(0, 32),
+        era: String(payload.era || '').slice(0, 80),
+        scheduledFor: payload.scheduledFor
+          ? String(payload.scheduledFor).slice(0, 64)
+          : null,
+        scheduledTimeZone: payload.scheduledTimeZone
+          ? String(payload.scheduledTimeZone).slice(0, 64)
+          : null,
+        serverUpdatedAt: serverTimestamp(),
+      })
+    );
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function deletePlayEventDoc(eventId: string): Promise<void> {
+  const path = `play_events/${eventId}`;
+  try {
+    await deleteDoc(doc(db, 'play_events', eventId));
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, path);
+  }
+}
+
+export async function upsertPlayEventWithIdDoc(
+  authorId: string,
+  eventId: string,
+  payload: Omit<PlayEventRecord, 'id'>
+): Promise<void> {
+  const path = `play_events/${eventId}`;
+  const ref = doc(db, 'play_events', eventId);
+  const fields = stripUndefinedDeep({
+    title: String(payload.title || 'Play Event').slice(0, 200),
+    url: normalizeShortsToWatchUrl(String(payload.url || '')).slice(0, 2000),
+    kind:
+      payload.kind === 'youtube-video' ? 'youtube-video' : 'youtube-playlist',
+    mediaId: String(payload.mediaId || '').slice(0, 200),
+    dateLabel: String(payload.dateLabel || '').slice(0, 64),
+    year: String(payload.year || '').slice(0, 32),
+    era: String(payload.era || '').slice(0, 80),
+    scheduledFor: payload.scheduledFor
+      ? String(payload.scheduledFor).slice(0, 64)
+      : null,
+    scheduledTimeZone: payload.scheduledTimeZone
+      ? String(payload.scheduledTimeZone).slice(0, 64)
+      : null,
+    isDeleted: Boolean(payload.isDeleted),
+    serverUpdatedAt: serverTimestamp(),
+  });
+  try {
+    const snap = await getDoc(ref);
+    if (snap.exists()) {
+      await updateDoc(ref, fields);
+    } else {
+      await setDoc(ref, {
+        ...fields,
+        authorId,
+      });
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
   }
 }
 

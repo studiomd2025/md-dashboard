@@ -851,6 +851,20 @@ async function startServer() {
     const seen = new Set<string>();
     let playlistTitle = 'YouTube Playlist';
 
+    const pushPlaylistItem = (rawId: unknown, rawTitle: unknown) => {
+      const videoId = typeof rawId === 'string' ? rawId.trim() : '';
+      const title = typeof rawTitle === 'string' ? rawTitle.trim() : '';
+      if (videoId && title && !seen.has(videoId)) {
+        seen.add(videoId);
+        items.push({
+          videoId,
+          title,
+          thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+          url: `https://www.youtube.com/watch?v=${videoId}`,
+        });
+      }
+    };
+
     try {
       const pageRes = await fetch(
         `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`,
@@ -875,19 +889,7 @@ async function startServer() {
           const data = JSON.parse(match[1]);
           let continuationToken: string | null = null;
 
-          const pushPlaylistItem = (rawId: unknown, rawTitle: unknown) => {
-            const videoId = typeof rawId === 'string' ? rawId.trim() : '';
-            const title = typeof rawTitle === 'string' ? rawTitle.trim() : '';
-            if (videoId && title && !seen.has(videoId)) {
-              seen.add(videoId);
-              items.push({
-                videoId,
-                title,
-                thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-                url: `https://www.youtube.com/watch?v=${videoId}`,
-              });
-            }
-          };
+
 
           const extractFromObject = (obj: any) => {
             if (!obj || typeof obj !== 'object') return;
@@ -901,41 +903,8 @@ async function startServer() {
               pushPlaylistItem(r.videoId, title);
             }
 
-            if (obj.lockupViewModel) {
-              const l = obj.lockupViewModel;
-              const title = l.metadata?.lockupMetadataViewModel?.title?.content;
-              pushPlaylistItem(l.contentId, title);
-            }
-
-            if (obj.shortsLockupViewModel) {
-              const s = obj.shortsLockupViewModel;
-              const navUrl: string =
-                s.onTap?.innertubeCommand?.commandMetadata?.webCommandMetadata?.url ||
-                s.onTap?.innertubeCommand?.reelWatchEndpoint?.videoId ||
-                '';
-              const shortsIdMatch = navUrl.match(/\/shorts\/([a-zA-Z0-9_-]+)/);
-              const videoId =
-                s.onTap?.innertubeCommand?.reelWatchEndpoint?.videoId ||
-                (shortsIdMatch ? shortsIdMatch[1] : '') ||
-                s.entityId?.replace(/^shorts-shelf-item-/, '');
-              const title =
-                s.overlayMetadata?.primaryText?.content ||
-                s.accessibilityText ||
-                '';
-              pushPlaylistItem(videoId, title);
-            }
-
-            if (obj.reelItemRenderer) {
-              const r = obj.reelItemRenderer;
-              const title =
-                r.headline?.simpleText ||
-                r.headline?.runs?.map((x: any) => x.text).join('') ||
-                '';
-              pushPlaylistItem(r.videoId, title);
-            }
-
-            if (obj.compactVideoRenderer || obj.gridVideoRenderer) {
-              const r = obj.compactVideoRenderer || obj.gridVideoRenderer;
+            if (obj.playlistPanelVideoRenderer) {
+              const r = obj.playlistPanelVideoRenderer;
               const title =
                 r.title?.runs?.map((x: any) => x.text).join('') ||
                 r.title?.simpleText ||
@@ -963,9 +932,9 @@ async function startServer() {
 
           extractFromObject(data);
 
-          // Fetch continuation pages so we get all videos without 15-item limits
+          // Fetch continuation pages so we get all videos without limits
           let pageCount = 0;
-          while (continuationToken && pageCount < 30) {
+          while (continuationToken && pageCount < 50) {
             pageCount++;
             const currentToken: string = continuationToken;
             continuationToken = null;
@@ -999,6 +968,12 @@ async function startServer() {
               break;
             }
           }
+        }
+
+        // Additional HTML sweep for any watch links in playlist page
+        const watchMatches = html.matchAll(/watch\?v=([a-zA-Z0-9_-]{11})/g);
+        for (const m of watchMatches) {
+          pushPlaylistItem(m[1], `Playlist Track ${m[1]}`);
         }
       }
     } catch (err) {
