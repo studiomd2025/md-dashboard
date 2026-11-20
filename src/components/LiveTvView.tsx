@@ -2490,23 +2490,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               }
 
               return (
-                <div className="flex h-full w-full flex-col justify-between overflow-y-auto pt-1">
+                <div className="flex h-full w-full flex-col justify-start overflow-y-auto pt-1">
                   {keypadContent}
-
-                  {/* Decorative light MD favicon wordmark at bottom center (TV remote look) */}
-                  <div
-                    aria-hidden="true"
-                    className="mt-auto pt-4 pb-2 flex items-center justify-center shrink-0 pointer-events-none select-none"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      viewBox="0 0 64 64"
-                      className="h-6 w-6 text-white/30"
-                      fill="currentColor"
-                    >
-                      <path d="M5 49V15h7.4l7.9 21.4L28.2 15h7.4v34h-6.1V25.5L22.1 45h-3.6l-7.4-19.5V49H5zm34.6 0V15h10.2c9.6 0 15.2 6.3 15.2 17s-5.6 17-15.2 17H39.6zm6.3-5.6h3.8c5.8 0 8.9-3.9 8.9-11.4s-3.1-11.4-8.9-11.4h-3.8v22.8z" />
-                    </svg>
-                  </div>
                 </div>
               );
             })()}
