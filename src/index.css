@@ -32,7 +32,7 @@
     color-scheme: light;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   html.dark {
@@ -46,7 +46,7 @@
     background-image: none;
     color: #111827;
     transition: background-color 200ms ease, color 200ms ease;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   html.dark[data-theme="default"] {

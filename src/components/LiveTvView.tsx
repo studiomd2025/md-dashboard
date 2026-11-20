@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Folder,
   FolderOpen,
+  Home,
   LayoutGrid,
   ListVideo,
   Loader2,
@@ -462,6 +463,7 @@ interface LiveTvViewProps {
   onGoToPlayEvent?: () => void;
   scrollToPlayEventNonce?: number;
   onMobileSplitVisibilityChange?: (visible: boolean) => void;
+  onMobileSplitHeightChange?: (height: number) => void;
   isSidebarCollapsed?: boolean;
 }
 
@@ -479,6 +481,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   onGoToPlayEvent,
   scrollToPlayEventNonce = 0,
   onMobileSplitVisibilityChange,
+  onMobileSplitHeightChange,
   isSidebarCollapsed = false,
 }) => {
   const parentHost = useMemo(() => {
@@ -508,6 +511,12 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       : null
   );
 
+  const [isDesktopOrTablet, setIsDesktopOrTablet] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia('(min-width: 640px)').matches;
+  });
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
   useEffect(() => {
     if (!activeEvent) return;
     if (
@@ -534,19 +543,46 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     height: number;
   }>({ width: 148, height: 200 });
 
+  const [fsDockOpen, setFsDockOpen] = useState(false);
+  const fsDockHideTimerRef = useRef<number | null>(null);
+
+  const clearFsDockTimer = () => {
+    if (fsDockHideTimerRef.current !== null) {
+      window.clearTimeout(fsDockHideTimerRef.current);
+      fsDockHideTimerRef.current = null;
+    }
+  };
+
+  const scheduleFsDockAutoHide = (delayMs: number) => {
+    clearFsDockTimer();
+    fsDockHideTimerRef.current = window.setTimeout(() => {
+      setFsDockOpen(false);
+      fsDockHideTimerRef.current = null;
+    }, delayMs);
+  };
+
   useEffect(() => {
-    if (!floatingEnabled) {
+    if (!floatingEnabled && !isFullscreen) {
       setActiveMiniDrawer('none');
       setRemoteBrowsePlayEvents(false);
     }
-  }, [floatingEnabled]);
+  }, [floatingEnabled, isFullscreen]);
+
+  useEffect(() => {
+    if (!isFullscreen || activeMiniDrawer !== 'none') {
+      clearFsDockTimer();
+      setFsDockOpen(false);
+    }
+  }, [isFullscreen, activeMiniDrawer]);
+
+  useEffect(() => () => clearFsDockTimer(), []);
 
   useEffect(() => {
     const el = miniDrawerRef.current;
     if (
       !el ||
       typeof ResizeObserver === 'undefined' ||
-      !floatingEnabled ||
+      (!floatingEnabled && !isFullscreen) ||
       activeMiniDrawer === 'none'
     ) {
       return;
@@ -564,21 +600,23 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [floatingEnabled, activeMiniDrawer]);
+  }, [floatingEnabled, isFullscreen, activeMiniDrawer]);
 
   const toggleMiniDrawer = (target: 'remote' | 'playlist' | 'settings') => {
     setActiveMiniDrawer((prev) => (prev === target ? 'none' : target));
   };
-  const [isDesktopOrTablet, setIsDesktopOrTablet] = useState(() => {
-    if (typeof window === 'undefined') return true;
-    return window.matchMedia('(min-width: 640px)').matches;
-  });
   const [mobileSplitCompact, setMobileSplitCompact] = useState(false);
   const [dockedHeight, setDockedHeight] = useState<number | null>(null);
   const dockedSectionRef = useRef<HTMLElement>(null);
+  const mobileSplitRef = useRef<HTMLElement>(null);
   const miniHeaderRef = useRef<HTMLDivElement>(null);
   const floatingContainerRef = useRef<HTMLElement>(null);
   const playEventSectionRef = useRef<HTMLElement>(null);
+  const miniPlaylistScrollRef = useRef<HTMLDivElement>(null);
+  const modalPlaylistScrollRef = useRef<HTMLDivElement>(null);
+  const wasMiniPlaylistOpenRef = useRef(false);
+  const wasModalPlaylistOpenRef = useRef(false);
+  const pendingStepScrollRef = useRef(false);
   const miniSwipeRef = useRef<{
     active: boolean;
     startX: number;
@@ -594,7 +632,6 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const [autoplayEnabled, setAutoplayEnabled] = useState(false);
   const [eventViewMode, setEventViewMode] = useState<'list' | 'tiles'>('list');
   const [showPlaylistDrawer, setShowPlaylistDrawer] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [floatPos, setFloatPos] = useState<{ x: number; y: number } | null>(null);
   const [floatSize, setFloatSize] = useState<{ width: number; height: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -648,7 +685,41 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
 
   useEffect(() => {
     onMobileSplitVisibilityChange?.(isMobileSplitActive);
+    return () => {
+      onMobileSplitVisibilityChange?.(false);
+    };
   }, [isMobileSplitActive, onMobileSplitVisibilityChange]);
+
+  useLayoutEffect(() => {
+    if (!isMobileSplitActive) {
+      onMobileSplitHeightChange?.(0);
+      return;
+    }
+    const el = mobileSplitRef.current;
+    if (!el) return;
+
+    const syncHeight = () => {
+      const h = Math.round(el.getBoundingClientRect().height);
+      onMobileSplitHeightChange?.(h);
+    };
+
+    syncHeight();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return () => onMobileSplitHeightChange?.(0);
+    }
+    const ro = new ResizeObserver(syncHeight);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      onMobileSplitHeightChange?.(0);
+    };
+  }, [
+    isMobileSplitActive,
+    mobileSplitCompact,
+    activeMiniDrawer,
+    onMobileSplitHeightChange,
+  ]);
 
   useEffect(() => {
     if (!isActiveTab) return;
@@ -851,6 +922,63 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const [activePlaylistTitle, setActivePlaylistTitle] = useState('Playlist');
   const [playlistSyncNonce, setPlaylistSyncNonce] = useState(0);
 
+  const scrollActiveTrackIntoContainer = (
+    container: HTMLDivElement | null,
+    behavior: ScrollBehavior = 'auto'
+  ) => {
+    if (!container) return;
+    const activeEl = container.querySelector<HTMLElement>('[data-active-track="true"]');
+    if (!activeEl) return;
+    let offsetTop = 0;
+    let node: HTMLElement | null = activeEl;
+    while (node && node !== container) {
+      offsetTop += node.offsetTop;
+      node = node.offsetParent as HTMLElement | null;
+    }
+    if (node !== container) {
+      const cRect = container.getBoundingClientRect();
+      const eRect = activeEl.getBoundingClientRect();
+      offsetTop = container.scrollTop + (eRect.top - cRect.top);
+    }
+    container.scrollTo({
+      top: Math.max(0, offsetTop - 4),
+      behavior,
+    });
+  };
+
+  useEffect(() => {
+    const isMiniPlaylistOpen = activeMiniDrawer === 'playlist' && !playlistLoading && playlistTracks.length > 0;
+    const justOpened = isMiniPlaylistOpen && !wasMiniPlaylistOpenRef.current;
+    wasMiniPlaylistOpenRef.current = isMiniPlaylistOpen;
+
+    if (!isMiniPlaylistOpen || !selectedTrack?.videoId) {
+      pendingStepScrollRef.current = false;
+      return;
+    }
+
+    if (justOpened || pendingStepScrollRef.current) {
+      const behavior: ScrollBehavior = pendingStepScrollRef.current ? 'smooth' : 'auto';
+      pendingStepScrollRef.current = false;
+      const raf = window.requestAnimationFrame(() => {
+        scrollActiveTrackIntoContainer(miniPlaylistScrollRef.current, behavior);
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+  }, [activeMiniDrawer, playlistLoading, playlistTracks, selectedTrack?.videoId]);
+
+  useEffect(() => {
+    const isModalReady = showPlaylistDrawer && !playlistLoading && playlistTracks.length > 0;
+    const justOpened = isModalReady && !wasModalPlaylistOpenRef.current;
+    wasModalPlaylistOpenRef.current = isModalReady;
+
+    if (!isModalReady || !selectedTrack?.videoId || !justOpened) return;
+
+    const raf = window.requestAnimationFrame(() => {
+      scrollActiveTrackIntoContainer(modalPlaylistScrollRef.current, 'auto');
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [showPlaylistDrawer, playlistLoading, playlistTracks, selectedTrack?.videoId]);
+
   useEffect(() => {
     const onFsChange = () => {
       setIsFullscreen(document.fullscreenElement === playerContainerRef.current);
@@ -1002,6 +1130,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             const nextIdx = (cur.index + 1) % tracks.length;
             const nextTrack = tracks[nextIdx];
             if (nextTrack) {
+              pendingStepScrollRef.current = true;
               setSelectedTrack({
                 videoId: nextTrack.videoId,
                 title: nextTrack.title,
@@ -1246,6 +1375,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       (selectedTrack.index + delta + playlistTracks.length) % playlistTracks.length;
     const nextTrack = playlistTracks[nextIdx];
     if (nextTrack) {
+      pendingStepScrollRef.current = true;
       setSelectedTrack({
         videoId: nextTrack.videoId,
         title: nextTrack.title,
@@ -1373,12 +1503,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     const isFloatingMini = mode === 'floating';
     const isMobileSplit = mode === 'mobile-split';
     const isCompactOverlay = isFloatingMini || isMobileSplit;
+    const showFullscreenSwipeDrawer = isFullscreen;
+    const canShowMiniDrawer = isCompactOverlay || showFullscreenSwipeDrawer;
+    const swipeGestureMode: 'floating' | 'mobile-split' =
+      isFloatingMini && !isFullscreen ? 'floating' : 'mobile-split';
 
     const isMiniCompactHeight = miniDrawerDims.height < 168;
     const hideMiniCallsigns =
       miniDrawerDims.height < 186 ||
       miniDrawerDims.width < 134 ||
-      (isMobileSplit && mobileSplitCompact);
+      (!isFullscreen && isMobileSplit && mobileSplitCompact);
     const isMiniWide = miniDrawerDims.width >= 165;
     const showFloatingPlaylistBtn = !isTwitch && Boolean(activePlaylistId);
     const miniExternalText =
@@ -1389,9 +1523,9 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       ref={
         isFloatingMini
           ? floatingContainerRef
-          : !isCompactOverlay
-          ? dockedSectionRef
-          : undefined
+          : isMobileSplit
+          ? mobileSplitRef
+          : dockedSectionRef
       }
       data-no-drawer-swipe={isCompactOverlay ? 'true' : undefined}
       onTouchStart={
@@ -1533,8 +1667,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => toggleMiniDrawer('remote')}
             aria-pressed={activeMiniDrawer === 'remote'}
-            title={activeMiniDrawer === 'remote' ? 'Hide Remote' : 'Remote'}
-            aria-label={activeMiniDrawer === 'remote' ? 'Hide Remote' : 'Remote'}
+            title="Remote"
+            aria-label="Remote"
             className={`relative group inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
               activeMiniDrawer === 'remote'
                 ? 'bg-sky-500 text-white shadow-sm'
@@ -1546,7 +1680,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               role="tooltip"
               className="pointer-events-none absolute top-full right-0 z-50 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg border border-white/10 opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100"
             >
-              {activeMiniDrawer === 'remote' ? 'Hide Remote' : 'Remote'}
+              Remote
             </span>
           </button>
 
@@ -1557,8 +1691,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               onPointerDown={(e) => e.stopPropagation()}
               onClick={() => toggleMiniDrawer('playlist')}
               aria-pressed={activeMiniDrawer === 'playlist'}
-              title={activeMiniDrawer === 'playlist' ? 'Hide Playlist' : 'Playlist'}
-              aria-label={activeMiniDrawer === 'playlist' ? 'Hide Playlist' : 'Playlist'}
+              title="Playlist"
+              aria-label="Playlist"
               className={`relative group inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
                 activeMiniDrawer === 'playlist'
                   ? 'bg-sky-500 text-white shadow-sm'
@@ -1570,7 +1704,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 role="tooltip"
                 className="pointer-events-none absolute top-full right-0 z-50 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg border border-white/10 opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100"
               >
-                {activeMiniDrawer === 'playlist' ? 'Hide Playlist' : 'Playlist'}
+                Playlist
               </span>
             </button>
           )}
@@ -1581,8 +1715,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => toggleMiniDrawer('settings')}
             aria-pressed={activeMiniDrawer === 'settings'}
-            title={activeMiniDrawer === 'settings' ? 'Hide Settings' : 'Settings'}
-            aria-label={activeMiniDrawer === 'settings' ? 'Hide Settings' : 'Settings'}
+            title="Settings"
+            aria-label="Settings"
             className={`relative group inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors shrink-0 cursor-pointer ${
               activeMiniDrawer === 'settings'
                 ? 'bg-sky-500 text-white shadow-sm'
@@ -1594,7 +1728,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               role="tooltip"
               className="pointer-events-none absolute top-full right-0 z-50 mt-1.5 whitespace-nowrap rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-medium text-white shadow-lg border border-white/10 opacity-0 scale-95 transition-all duration-150 group-hover:opacity-100 group-hover:scale-100 group-focus-visible:opacity-100 group-focus-visible:scale-100"
             >
-              {activeMiniDrawer === 'settings' ? 'Hide Settings' : 'Settings'}
+              Settings
             </span>
           </button>
 
@@ -1862,15 +1996,33 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       {/* Player Surface + Optional Right-Side Remote Control Drawer */}
       <div
         ref={playerContainerRef}
+        onTouchStart={
+          showFullscreenSwipeDrawer
+            ? (e) => {
+                const t = e.touches[0];
+                if (t) handleMiniSwipeStart(t.clientX, t.clientY, e.currentTarget);
+              }
+            : undefined
+        }
+        onTouchMove={
+          showFullscreenSwipeDrawer
+            ? (e) => {
+                const t = e.touches[0];
+                if (t) handleMiniSwipeMove(t.clientX, t.clientY, swipeGestureMode);
+              }
+            : undefined
+        }
+        onTouchEnd={showFullscreenSwipeDrawer ? handleMiniSwipeEnd : undefined}
+        onTouchCancel={showFullscreenSwipeDrawer ? handleMiniSwipeEnd : undefined}
         className={`relative overflow-hidden bg-slate-950 flex flex-row items-stretch ${
-          isFloatingMini
+          isFullscreen
+            ? 'h-full w-full'
+            : isFloatingMini
             ? 'flex-1 w-full min-h-0'
             : isMobileSplit
             ? mobileSplitCompact
               ? 'w-full h-[126px] transition-[height] duration-200'
               : 'w-full aspect-video max-h-[34dvh] transition-[height] duration-200'
-            : isFullscreen
-            ? 'h-full w-full'
             : 'w-full rounded-2xl border border-slate-200/80 dark:border-slate-800 aspect-video lg:aspect-auto lg:h-[calc((100vw_-_442px)_*_9_/_16)] xl:h-[calc((min(100vw,1380px)_-_538px)_*_9_/_16)]'
         }`}
       >
@@ -1893,8 +2045,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
             />
           )}
 
-          {/* Right-edge swipe-left handle strip on Mobile Split View & Floating Player */}
-          {isCompactOverlay && (
+          {/* Right-edge swipe-left handle strip on Compact Overlay (Floating / Mobile Split) */}
+          {isCompactOverlay && !isFullscreen && (
             <div
               aria-hidden="true"
               onTouchStart={(e) => {
@@ -1904,17 +2056,117 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               onTouchMove={(e) => {
                 const t = e.touches[0];
                 if (t) {
-                  handleMiniSwipeMove(
-                    t.clientX,
-                    t.clientY,
-                    isFloatingMini ? 'floating' : 'mobile-split'
-                  );
+                  handleMiniSwipeMove(t.clientX, t.clientY, swipeGestureMode);
                 }
               }}
               onTouchEnd={handleMiniSwipeEnd}
-              className="absolute inset-y-0 right-0 w-6 z-25 flex items-center justify-end pr-0.5 touch-pan-y"
+              onTouchCancel={handleMiniSwipeEnd}
+              className="absolute inset-y-4 right-0 w-7 z-25 flex items-center justify-end pr-0.5 touch-pan-y"
             >
               <span className="h-8 w-1 rounded-full bg-white/30" />
+            </div>
+          )}
+
+          {/* Fullscreen Drawer Launcher: Right-edge Hover (Desktop) & Tap / Swipe-Left Pull-Tab (Mobile/Touch) */}
+          {isFullscreen && activeMiniDrawer === 'none' && (
+            <div
+              onPointerEnter={(e) => {
+                if (e.pointerType !== 'touch') {
+                  clearFsDockTimer();
+                  setFsDockOpen(true);
+                }
+              }}
+              onPointerLeave={(e) => {
+                if (e.pointerType !== 'touch') {
+                  scheduleFsDockAutoHide(220);
+                }
+              }}
+              onTouchStart={(e) => {
+                const t = e.touches[0];
+                if (t) handleMiniSwipeStart(t.clientX, t.clientY, null, true);
+              }}
+              onTouchMove={(e) => {
+                const t = e.touches[0];
+                if (t) handleMiniSwipeMove(t.clientX, t.clientY, 'mobile-split');
+              }}
+              onTouchEnd={handleMiniSwipeEnd}
+              onTouchCancel={handleMiniSwipeEnd}
+              className="absolute top-16 bottom-16 right-0 z-30 flex items-center justify-end touch-pan-y"
+            >
+              {fsDockOpen ? (
+                <div
+                  role="toolbar"
+                  aria-label="Fullscreen drawer controls"
+                  className="flex flex-col items-center gap-1.5 rounded-l-2xl border border-r-0 border-white/15 bg-slate-950/90 p-1.5 shadow-2xl backdrop-blur-xl md-animate-fade-in"
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearFsDockTimer();
+                      setFsDockOpen(false);
+                      setActiveMiniDrawer('remote');
+                    }}
+                    title="Remote"
+                    aria-label="Remote"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-slate-100 hover:bg-sky-500 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <RemoteIcon className="h-4 w-4" />
+                  </button>
+                  {showFloatingPlaylistBtn && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearFsDockTimer();
+                        setFsDockOpen(false);
+                        setActiveMiniDrawer('playlist');
+                      }}
+                      title="Playlist"
+                      aria-label="Playlist"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-slate-100 hover:bg-sky-500 hover:text-white transition-colors cursor-pointer"
+                    >
+                      <ListVideo className="h-4 w-4" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearFsDockTimer();
+                      setFsDockOpen(false);
+                      setActiveMiniDrawer('settings');
+                    }}
+                    title="Settings"
+                    aria-label="Settings"
+                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-white/10 text-slate-100 hover:bg-sky-500 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <Settings className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearFsDockTimer();
+                      setFsDockOpen(false);
+                    }}
+                    title="Hide drawer dock"
+                    aria-label="Hide drawer dock"
+                    className="hidden [@media(hover:none)]:inline-flex h-7 w-9 items-center justify-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFsDockOpen(true);
+                    scheduleFsDockAutoHide(4000);
+                  }}
+                  title="Open Remote, Playlist & Settings drawer"
+                  aria-label="Open player drawer controls"
+                  className="group flex h-full w-6 items-center justify-end pr-1 bg-transparent cursor-pointer focus:outline-none"
+                >
+                  <span className="flex h-14 w-1.5 items-center justify-center rounded-full bg-white/35 shadow-[0_0_10px_rgba(0,0,0,0.65)] transition-all group-hover:h-16 group-hover:w-2 group-hover:bg-sky-400/90" />
+                </button>
+              )}
             </div>
           )}
 
@@ -2012,8 +2264,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
           )}
         </div>
 
-        {/* Responsive Right-Side Drawer inside Floating / Mobile Split Player */}
-        {isCompactOverlay && (
+        {/* Responsive Right-Side Drawer inside Floating / Mobile Split / Mobile Fullscreen Player */}
+        {canShowMiniDrawer && (
           <aside
             ref={miniDrawerRef}
             aria-label={
@@ -2024,41 +2276,143 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 : 'Remote Control Drawer'
             }
             onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => {
+              const t = e.touches[0];
+              if (t) handleMiniSwipeStart(t.clientX, t.clientY, e.currentTarget);
+            }}
+            onTouchMove={(e) => {
+              const t = e.touches[0];
+              if (t) handleMiniSwipeMove(t.clientX, t.clientY, swipeGestureMode);
+            }}
+            onTouchEnd={handleMiniSwipeEnd}
+            onTouchCancel={handleMiniSwipeEnd}
             style={{
               width:
                 activeMiniDrawer === 'remote'
                   ? remoteBrowsePlayEvents
-                    ? 'clamp(146px, 44%, 270px)'
+                    ? isFullscreen && isDesktopOrTablet
+                      ? 'clamp(180px, 32%, 310px)'
+                      : 'clamp(146px, 44%, 270px)'
+                    : isFullscreen && isDesktopOrTablet
+                    ? 'clamp(150px, 26%, 250px)'
                     : 'clamp(112px, 36%, 220px)'
                   : activeMiniDrawer === 'settings'
-                  ? 'clamp(124px, 38%, 220px)'
+                  ? isFullscreen && isDesktopOrTablet
+                    ? 'clamp(160px, 28%, 280px)'
+                    : 'clamp(124px, 38%, 260px)'
                   : activeMiniDrawer === 'playlist'
-                  ? 'clamp(144px, 44%, 280px)'
+                  ? isFullscreen && isDesktopOrTablet
+                    ? 'clamp(190px, 34%, 330px)'
+                    : 'clamp(144px, 44%, 280px)'
                   : '0px',
             }}
-            className={`shrink-0 overflow-hidden bg-slate-900/95 transition-[width,padding,opacity] duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+            className={`shrink-0 overflow-hidden bg-slate-900/95 flex flex-col transition-[width,padding,opacity] duration-250 ease-[cubic-bezier(0.22,1,0.36,1)] ${
               activeMiniDrawer !== 'none'
                 ? `${isMiniCompactHeight ? 'p-1.5' : 'p-2'} border-l border-white/10 opacity-100`
                 : 'border-l-0 p-0 opacity-0 pointer-events-none'
             }`}
           >
-            {activeMiniDrawer === 'remote' && !remoteBrowsePlayEvents && (
-              <div className="flex h-full w-full items-center justify-center">
+            {/* Fullscreen Drawer Switcher & Close Header (shown when top bar is outside fullscreen surface) */}
+            {isFullscreen && activeMiniDrawer !== 'none' && (
+              <div className="mb-1.5 flex items-center justify-between gap-1 border-b border-white/10 pb-1.5 shrink-0">
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setActiveMiniDrawer('remote')}
+                    aria-pressed={activeMiniDrawer === 'remote'}
+                    title="Remote"
+                    aria-label="Remote"
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                      activeMiniDrawer === 'remote'
+                        ? 'bg-sky-500 text-white shadow-sm'
+                        : 'bg-white/10 text-slate-200 hover:bg-white/20 hover:text-white'
+                    }`}
+                  >
+                    <RemoteIcon className="h-3.5 w-3.5" />
+                  </button>
+                  {showFloatingPlaylistBtn && (
+                    <button
+                      type="button"
+                      onClick={() => setActiveMiniDrawer('playlist')}
+                      aria-pressed={activeMiniDrawer === 'playlist'}
+                      title="Playlist"
+                      aria-label="Playlist"
+                      className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                        activeMiniDrawer === 'playlist'
+                          ? 'bg-sky-500 text-white shadow-sm'
+                          : 'bg-white/10 text-slate-200 hover:bg-white/20 hover:text-white'
+                      }`}
+                    >
+                      <ListVideo className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveMiniDrawer('settings')}
+                    aria-pressed={activeMiniDrawer === 'settings'}
+                    title="Settings"
+                    aria-label="Settings"
+                    className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors cursor-pointer ${
+                      activeMiniDrawer === 'settings'
+                        ? 'bg-sky-500 text-white shadow-sm'
+                        : 'bg-white/10 text-slate-200 hover:bg-white/20 hover:text-white'
+                    }`}
+                  >
+                    <Settings className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveMiniDrawer('none')}
+                  title="Close drawer"
+                  aria-label="Close drawer"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/5 text-slate-300 hover:bg-white/15 hover:text-white cursor-pointer"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+
+            <div className="flex-1 min-h-0">
+            {activeMiniDrawer === 'remote' && !remoteBrowsePlayEvents && (() => {
+              const fsChannelBtnHeight = isMiniCompactHeight
+                ? 42
+                : Math.min(82, Math.max(54, Math.round(miniDrawerDims.height * 0.12)));
+              const fsPlayEventBtnHeight = isMiniCompactHeight
+                ? 38
+                : Math.min(64, Math.max(46, Math.round(miniDrawerDims.height * 0.095)));
+
+              const keypadContent = (
                 <div
-                  className={`grid h-full max-h-[248px] w-full max-w-[216px] grid-cols-2 grid-rows-3 ${
-                    isMiniCompactHeight ? 'gap-1' : 'gap-1.5'
+                  className={`grid w-full grid-cols-2 min-w-0 ${
+                    isFullscreen ? 'shrink-0' : 'h-full grid-rows-3 min-h-0'
+                  } ${
+                    isMiniCompactHeight
+                      ? 'gap-1'
+                      : miniDrawerDims.height >= 300
+                      ? 'gap-2'
+                      : 'gap-1.5'
                   }`}
                 >
                   {STATIONS.map((station) => {
                     const isSelected =
                       !activeEvent && activeStation.callsign === station.callsign;
+                    const isMiniSpacious =
+                      miniDrawerDims.height >= 320 && miniDrawerDims.width >= 165;
                     return (
                       <button
                         key={`mini-remote-${station.callsign}`}
                         type="button"
                         onClick={() => onSelectStation(station)}
                         aria-label={`${station.label} — ${station.callsign}`}
-                        className={`flex h-full w-full flex-col items-center justify-center rounded-xl border px-1.5 py-1 text-center transition-colors cursor-pointer min-w-0 min-h-0 ${
+                        style={
+                          isFullscreen
+                            ? { height: `${fsChannelBtnHeight}px` }
+                            : undefined
+                        }
+                        className={`flex w-full flex-col items-center justify-center rounded-xl border px-1.5 py-1 text-center transition-colors cursor-pointer min-w-0 min-h-0 ${
+                          isFullscreen ? '' : 'h-full'
+                        } ${
                           isSelected
                             ? 'aero-button-primary border-transparent text-white shadow-sm'
                             : 'border-white/10 bg-white/5 text-slate-200 hover:bg-white/15'
@@ -2066,16 +2420,22 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                       >
                         <span
                           className={`font-display font-bold leading-none tabular-nums ${
-                            isMiniWide ? 'text-sm sm:text-base' : 'text-xs sm:text-sm'
+                            isMiniSpacious
+                              ? 'text-lg sm:text-xl'
+                              : isMiniWide
+                              ? 'text-sm sm:text-base'
+                              : 'text-xs sm:text-sm'
                           }`}
                         >
                           {station.number}
                         </span>
                         {!hideMiniCallsigns && (
                           <span
-                            className={`mt-1 max-w-full truncate font-mono text-[8.5px] sm:text-[9.5px] font-semibold leading-none ${
-                              isSelected ? 'text-sky-100' : 'text-slate-400'
-                            }`}
+                            className={`max-w-full truncate font-mono font-semibold leading-normal ${
+                              isMiniSpacious
+                                ? 'mt-1.5 text-[10px]'
+                                : 'mt-1 text-[8.5px] sm:text-[9.5px]'
+                            } ${isSelected ? 'text-sky-100' : 'text-slate-400'}`}
                           >
                             {station.callsign}
                           </span>
@@ -2090,24 +2450,66 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     onClick={() => setRemoteBrowsePlayEvents(true)}
                     aria-label="Play Event Playlists"
                     title="Browse Play Event playlists"
-                    className={`col-span-2 flex h-full w-full items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer min-w-0 min-h-0 ${
+                    style={
+                      isFullscreen
+                        ? { height: `${fsPlayEventBtnHeight}px` }
+                        : undefined
+                    }
+                    className={`col-span-2 flex w-full items-center justify-center gap-1.5 rounded-xl border px-2 py-1 text-center transition-colors cursor-pointer min-w-0 min-h-0 ${
+                      isFullscreen ? '' : 'h-full'
+                    } ${
                       activeEvent
                         ? 'aero-button-primary border-transparent text-white shadow-sm'
                         : 'border-sky-400/35 bg-sky-500/15 text-sky-100 hover:bg-sky-500/25'
                     }`}
                   >
-                    <ListVideo className="h-3.5 w-3.5 shrink-0" />
+                    <ListVideo
+                      className={`shrink-0 ${
+                        miniDrawerDims.height >= 320 && miniDrawerDims.width >= 165
+                          ? 'h-4 w-4'
+                          : 'h-3.5 w-3.5'
+                      }`}
+                    />
                     <span
-                      className={`font-display font-bold truncate leading-none ${
-                        isMiniCompactHeight ? 'text-[10.5px]' : 'text-[11px] sm:text-xs'
+                      className={`font-display font-bold leading-normal py-0.5 whitespace-nowrap ${
+                        isMiniCompactHeight
+                          ? 'text-[10.5px]'
+                          : miniDrawerDims.height >= 320 && miniDrawerDims.width >= 165
+                          ? 'text-xs sm:text-sm'
+                          : 'text-[11px] sm:text-xs'
                       }`}
                     >
                       Play Event
                     </span>
                   </button>
                 </div>
-              </div>
-            )}
+              );
+
+              if (!isFullscreen) {
+                return keypadContent;
+              }
+
+              return (
+                <div className="flex h-full w-full flex-col justify-between overflow-y-auto pt-1">
+                  {keypadContent}
+
+                  {/* Decorative light MD favicon wordmark at bottom center (TV remote look) */}
+                  <div
+                    aria-hidden="true"
+                    className="mt-auto pt-4 pb-2 flex items-center justify-center shrink-0 pointer-events-none select-none"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 64 64"
+                      className="h-6 w-6 text-white/30"
+                      fill="currentColor"
+                    >
+                      <path d="M5 49V15h7.4l7.9 21.4L28.2 15h7.4v34h-6.1V25.5L22.1 45h-3.6l-7.4-19.5V49H5zm34.6 0V15h10.2c9.6 0 15.2 6.3 15.2 17s-5.6 17-15.2 17H39.6zm6.3-5.6h3.8c5.8 0 8.9-3.9 8.9-11.4s-3.1-11.4-8.9-11.4h-3.8v22.8z" />
+                    </svg>
+                  </div>
+                </div>
+              );
+            })()}
 
             {activeMiniDrawer === 'remote' && remoteBrowsePlayEvents && (
               <div className="flex h-full flex-col gap-1 min-h-0 text-[11px]">
@@ -2146,7 +2548,21 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     </span>
                   </div>
 
-                  {(currentEra || currentYear) && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    {(currentEra || currentYear) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCurrentEra(null);
+                          setCurrentYear(null);
+                        }}
+                        title="Back to home"
+                        aria-label="Back to home"
+                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-slate-200 hover:bg-white/20 cursor-pointer"
+                      >
+                        <Home className="h-3 w-3" />
+                      </button>
+                    )}
                     <button
                       type="button"
                       onClick={() => setRemoteBrowsePlayEvents(false)}
@@ -2156,7 +2572,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     >
                       <RemoteIcon className="h-3 w-3" />
                     </button>
-                  )}
+                  </div>
                 </div>
 
                 {/* Play Event List View inside Remote Drawer */}
@@ -2221,18 +2637,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                                 }`}
                               />
                               <div className="min-w-0">
-                                <div className="truncate font-display text-[10.5px] font-bold leading-tight">
+                                <div className="truncate font-display text-[10.5px] font-bold leading-snug">
                                   {rootEv.title}
                                 </div>
-                                {!isMiniCompactHeight && (
+                                {!isMiniCompactHeight && (rootEv.dateLabel || rootEv.year) && (
                                   <div
                                     className={`font-mono text-[8.5px] truncate ${
                                       isSelected ? 'text-sky-100' : 'text-slate-400'
                                     }`}
                                   >
-                                    {rootEv.era === 'Year End Collection'
-                                      ? 'Archive Playlist'
-                                      : rootEv.dateLabel || rootEv.year}
+                                    {rootEv.dateLabel || rootEv.year}
                                   </div>
                                 )}
                               </div>
@@ -2266,7 +2680,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                           <div className="flex items-center gap-1.5 min-w-0">
                             <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-400" />
                             <div className="min-w-0">
-                              <div className="font-mono text-[11px] font-bold tabular-nums leading-tight">
+                              <div className="font-mono text-[11px] font-bold tabular-nums leading-snug">
                                 {yrGroup.year}
                               </div>
                               {!isMiniCompactHeight && (
@@ -2306,17 +2720,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                               }`}
                             />
                             <div className="min-w-0">
-                              <div className="truncate font-display text-[10.5px] font-bold leading-tight">
+                              <div className="truncate font-display text-[10.5px] font-bold leading-snug">
                                 {ev.title}
                               </div>
-                              {!isMiniCompactHeight && (
+                              {!isMiniCompactHeight && ev.dateLabel && (
                                 <div
                                   className={`font-mono text-[8.5px] tabular-nums truncate ${
                                     isSelected ? 'text-sky-100' : 'text-slate-400'
                                   }`}
                                 >
-                                  {ev.dateLabel} ·{' '}
-                                  {ev.kind === 'youtube-video' ? 'Video' : 'Playlist'}
+                                  {ev.dateLabel}
                                 </div>
                               )}
                             </div>
@@ -2329,66 +2742,153 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               </div>
             )}
 
-            {activeMiniDrawer === 'settings' && (
-              <div className="flex h-full flex-col justify-center overflow-y-auto text-[11px]">
-                <div className={isMiniCompactHeight ? 'space-y-1' : 'space-y-1.5'}>
-                  {!isMiniCompactHeight && (
-                    <div className="px-1 font-mono text-[9.5px] font-bold uppercase tracking-wider text-slate-400">
-                      Settings
-                    </div>
-                  )}
-
-                  {/* Restore */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveMiniDrawer('none');
-                      onToggleFloating?.();
-                      if (!isActiveTab) {
-                        onGoToLive?.();
-                      }
-                    }}
-                    className={`flex w-full items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 text-left font-semibold text-slate-100 hover:bg-white/15 cursor-pointer ${
-                      isMiniCompactHeight ? 'px-2 py-1 text-[10.5px]' : 'px-2.5 py-2 text-[11px]'
-                    }`}
-                  >
-                    {isDesktopOrTablet ? (
-                      <PictureInPicture2 className="h-3.5 w-3.5 shrink-0 text-sky-400" />
-                    ) : (
-                      <PanelBottom className="h-3.5 w-3.5 shrink-0 text-sky-400" />
+            {activeMiniDrawer === 'settings' && (() => {
+              const useTwoColSettings = miniDrawerDims.width >= 180;
+              const isSpaciousSettings = miniDrawerDims.height >= 260;
+              const tileMinHeight = isMiniCompactHeight
+                ? undefined
+                : useTwoColSettings
+                ? Math.min(88, Math.max(46, Math.round(miniDrawerDims.height * 0.25)))
+                : Math.min(56, Math.max(36, Math.round(miniDrawerDims.height * 0.17)));
+              return (
+                <div className="flex h-full flex-col justify-center overflow-y-auto text-[11px]">
+                  <div className="mx-auto w-full max-w-[260px]">
+                    {!isMiniCompactHeight && (
+                      <div
+                        className={`px-1 font-mono font-bold uppercase tracking-wider text-slate-400 ${
+                          isSpaciousSettings ? 'mb-2 text-[10px]' : 'mb-1.5 text-[9.5px]'
+                        }`}
+                      >
+                        Settings
+                      </div>
                     )}
-                    <span className="truncate">Restore</span>
-                  </button>
 
-                  {/* Fullscreen */}
-                  <button
-                    type="button"
-                    onClick={handleToggleFullscreen}
-                    className={`flex w-full items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 text-left font-semibold text-slate-100 hover:bg-white/15 cursor-pointer ${
-                      isMiniCompactHeight ? 'px-2 py-1 text-[10.5px]' : 'px-2.5 py-2 text-[11px]'
-                    }`}
-                  >
-                    <Maximize2 className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-                    <span className="truncate">
-                      {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
-                    </span>
-                  </button>
+                    <div
+                      className={`grid w-full ${
+                        useTwoColSettings ? 'grid-cols-2' : 'grid-cols-1'
+                      } ${
+                        isMiniCompactHeight
+                          ? 'gap-1'
+                          : isSpaciousSettings
+                          ? 'gap-2'
+                          : 'gap-1.5'
+                      }`}
+                    >
+                      {/* Restore */}
+                      {floatingEnabled && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveMiniDrawer('none');
+                            if (document.fullscreenElement) {
+                              document.exitFullscreen().catch(() => {});
+                            }
+                            onToggleFloating?.();
+                            if (!isActiveTab) {
+                              onGoToLive?.();
+                            }
+                          }}
+                          style={tileMinHeight ? { minHeight: `${tileMinHeight}px` } : undefined}
+                          className={`flex w-full items-center rounded-xl border border-white/10 bg-white/5 font-semibold text-slate-100 transition-colors hover:bg-white/15 cursor-pointer min-w-0 ${
+                            useTwoColSettings
+                              ? 'flex-col justify-center gap-1.5 px-2 py-2 text-center'
+                              : isMiniCompactHeight
+                              ? 'justify-start gap-1.5 px-2 py-1 text-left text-[10.5px]'
+                              : 'justify-start gap-2 px-2.5 py-2 text-left text-[11px]'
+                          }`}
+                        >
+                          {isDesktopOrTablet ? (
+                            <PictureInPicture2
+                              className={`shrink-0 text-sky-400 ${
+                                useTwoColSettings && isSpaciousSettings
+                                  ? 'h-4 w-4'
+                                  : 'h-3.5 w-3.5'
+                              }`}
+                            />
+                          ) : (
+                            <PanelBottom
+                              className={`shrink-0 text-sky-400 ${
+                                useTwoColSettings && isSpaciousSettings
+                                  ? 'h-4 w-4'
+                                  : 'h-3.5 w-3.5'
+                              }`}
+                            />
+                          )}
+                          <span
+                            className={`max-w-full truncate ${
+                              useTwoColSettings && isSpaciousSettings ? 'text-xs' : ''
+                            }`}
+                          >
+                            Restore
+                          </span>
+                        </button>
+                      )}
 
-                  {/* Open Twitch / Open YouTube */}
-                  <a
-                    href={externalUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`flex w-full items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 text-left font-semibold text-slate-100 hover:bg-white/15 ${
-                      isMiniCompactHeight ? 'px-2 py-1 text-[10.5px]' : 'px-2.5 py-2 text-[11px]'
-                    }`}
-                  >
-                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-                    <span className="truncate">{miniExternalText}</span>
-                  </a>
+                      {/* Fullscreen */}
+                      <button
+                        type="button"
+                        onClick={handleToggleFullscreen}
+                        style={tileMinHeight ? { minHeight: `${tileMinHeight}px` } : undefined}
+                        className={`flex w-full items-center rounded-xl border border-white/10 bg-white/5 font-semibold text-slate-100 transition-colors hover:bg-white/15 cursor-pointer min-w-0 ${
+                          useTwoColSettings
+                            ? 'flex-col justify-center gap-1.5 px-2 py-2 text-center'
+                            : isMiniCompactHeight
+                            ? 'justify-start gap-1.5 px-2 py-1 text-left text-[10.5px]'
+                            : 'justify-start gap-2 px-2.5 py-2 text-left text-[11px]'
+                        }`}
+                      >
+                        <Maximize2
+                          className={`shrink-0 text-slate-300 ${
+                            useTwoColSettings && isSpaciousSettings
+                              ? 'h-4 w-4'
+                              : 'h-3.5 w-3.5'
+                          }`}
+                        />
+                        <span
+                          className={`max-w-full truncate ${
+                            useTwoColSettings && isSpaciousSettings ? 'text-xs' : ''
+                          }`}
+                        >
+                          {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                        </span>
+                      </button>
+
+                      {/* Open Twitch / Open YouTube */}
+                      <a
+                        href={externalUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={tileMinHeight ? { minHeight: `${tileMinHeight}px` } : undefined}
+                        className={`flex w-full items-center rounded-xl border border-white/10 bg-white/5 font-semibold text-slate-100 transition-colors hover:bg-white/15 min-w-0 ${
+                          useTwoColSettings
+                            ? `${
+                                floatingEnabled ? 'col-span-2 flex-row' : 'flex-col'
+                              } justify-center gap-2 px-3 py-2 text-center`
+                            : isMiniCompactHeight
+                            ? 'justify-start gap-1.5 px-2 py-1 text-left text-[10.5px]'
+                            : 'justify-start gap-2 px-2.5 py-2 text-left text-[11px]'
+                        }`}
+                      >
+                        <ExternalLink
+                          className={`shrink-0 text-slate-300 ${
+                            useTwoColSettings && isSpaciousSettings
+                              ? 'h-4 w-4'
+                              : 'h-3.5 w-3.5'
+                          }`}
+                        />
+                        <span
+                          className={`max-w-full truncate ${
+                            useTwoColSettings && isSpaciousSettings ? 'text-xs' : ''
+                          }`}
+                        >
+                          {miniExternalText}
+                        </span>
+                      </a>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {activeMiniDrawer === 'playlist' && showFloatingPlaylistBtn && (
               <div className="flex h-full flex-col gap-1.5 min-h-0 text-[11px]">
@@ -2462,13 +2962,17 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                   </div>
                 ) : (
                   <>
-                    <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1 pr-0.5">
+                    <div
+                      ref={miniPlaylistScrollRef}
+                      className="relative flex-1 min-h-0 overflow-y-auto overscroll-contain space-y-1 pr-0.5"
+                    >
                       {playlistTracks.map((item, idx) => {
                         const isCurrent = selectedTrack?.videoId === item.videoId;
                         return (
                           <button
                             key={`mini-pl-${item.videoId}`}
                             type="button"
+                            data-active-track={isCurrent ? 'true' : undefined}
                             onClick={() =>
                               setSelectedTrack({
                                 videoId: item.videoId,
@@ -2493,7 +2997,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                               {idx + 1}.
                             </span>
                             <span
-                              className={`line-clamp-2 font-medium leading-tight min-w-0 ${
+                              className={`line-clamp-2 font-medium leading-snug min-w-0 ${
                                 isMiniWide ? 'text-[10.5px]' : 'text-[10px]'
                               }`}
                             >
@@ -2530,6 +3034,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 )}
               </div>
             )}
+            </div>
           </aside>
         )}
       </div>
@@ -2715,7 +3220,10 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-6 py-2 divide-y divide-slate-200/70 dark:divide-slate-800/80">
+                  <div
+                    ref={modalPlaylistScrollRef}
+                    className="relative flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-6 py-2 divide-y divide-slate-200/70 dark:divide-slate-800/80"
+                  >
                     {playlistLoading ? (
                       <div className="py-12 text-center space-y-3">
                         <Loader2 className="mx-auto h-7 w-7 animate-spin text-sky-600 dark:text-sky-400" />
@@ -2755,6 +3263,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                             <button
                               key={item.videoId}
                               type="button"
+                              data-active-track={isCurrentPlaying ? 'true' : undefined}
                               onClick={() => {
                                 setSelectedTrack({
                                   videoId: item.videoId,
@@ -3007,7 +3516,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       <section
         ref={playEventSectionRef}
         aria-hidden={!isActiveTab}
-        className={isActiveTab ? 'aero-glass rounded-3xl p-5 sm:p-6 space-y-4' : 'hidden'}
+        className={isActiveTab ? 'aero-glass scroll-mt-20 rounded-3xl p-5 sm:p-6 space-y-4' : 'hidden'}
       >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -3049,31 +3558,34 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               </button>
             </div>
           </div>
-
-          {allPlayEvents[0] && (
-            <button
-              type="button"
-              onClick={() => onSelectEvent(allPlayEvents[0])}
-              className="aero-button-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white whitespace-nowrap shrink-0 cursor-pointer"
-            >
-              <Play className="h-3.5 w-3.5" />
-              Load From {allPlayEvents[0].year || '2018'}
-            </button>
-          )}
         </div>
 
         {/* File Explorer Frame */}
         <div className="overflow-hidden rounded-2xl border border-slate-200/90 bg-white/75 dark:border-slate-700/80 dark:bg-slate-900/65">
           {/* Address / Breadcrumb Bar */}
-          <div className="flex items-center gap-2 border-b border-slate-200/80 bg-slate-100/70 px-3 py-2 text-xs dark:border-slate-700/80 dark:bg-slate-950/60">
+          <div className="flex items-center gap-1.5 border-b border-slate-200/80 bg-slate-100/70 px-3 py-2 text-xs dark:border-slate-700/80 dark:bg-slate-950/60">
             <button
               type="button"
               onClick={handleGoUp}
               disabled={!currentEra && !currentYear}
+              title="Up one folder"
               aria-label="Up one folder"
               className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer disabled:cursor-default"
             >
               <ArrowLeft className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCurrentEra(null);
+                setCurrentYear(null);
+              }}
+              disabled={!currentEra && !currentYear}
+              title="Back to home"
+              aria-label="Back to home"
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 cursor-pointer disabled:cursor-default"
+            >
+              <Home className="h-3.5 w-3.5" />
             </button>
 
             <nav
@@ -3225,15 +3737,15 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                       >
                         {rootEv.title}
                       </div>
-                      <div
-                        className={`mt-0.5 font-mono text-[10px] sm:text-[11px] tabular-nums ${
-                          activeEvent?.id === rootEv.id ? 'text-sky-100' : 'text-slate-500 dark:text-slate-400'
-                        }`}
-                      >
-                        {rootEv.era === 'Year End Collection'
-                          ? 'Archive Playlist'
-                          : `${rootEv.dateLabel || rootEv.year} · ${rootEv.kind === 'youtube-video' ? 'Video' : 'Playlist'}`}
-                      </div>
+                      {(rootEv.dateLabel || rootEv.year) && (
+                        <div
+                          className={`mt-0.5 font-mono text-[10px] sm:text-[11px] tabular-nums ${
+                            activeEvent?.id === rootEv.id ? 'text-sky-100' : 'text-slate-500 dark:text-slate-400'
+                          }`}
+                        >
+                          {rootEv.dateLabel || rootEv.year}
+                        </div>
+                      )}
                     </button>
                   ) : (
                     <button
@@ -3258,17 +3770,17 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                           <div className="truncate font-display text-sm font-bold">
                             {rootEv.title}
                           </div>
-                          <div
-                            className={`font-mono text-[11px] ${
-                              activeEvent?.id === rootEv.id
-                                ? 'text-sky-100'
-                                : 'text-slate-500 dark:text-slate-400'
-                            }`}
-                          >
-                            {rootEv.era === 'Year End Collection'
-                              ? 'Archive Playlist'
-                              : `${rootEv.dateLabel || rootEv.year} · ${rootEv.kind === 'youtube-video' ? 'Video' : 'Playlist'}`}
-                          </div>
+                          {(rootEv.dateLabel || rootEv.year) && (
+                            <div
+                              className={`font-mono text-[11px] ${
+                                activeEvent?.id === rootEv.id
+                                  ? 'text-sky-100'
+                                  : 'text-slate-500 dark:text-slate-400'
+                              }`}
+                            >
+                              {rootEv.dateLabel || rootEv.year}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <Play
@@ -3353,7 +3865,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                       key={ev.id}
                       type="button"
                       onClick={() => onSelectEvent(ev)}
-                      className={`group flex flex-col items-center justify-between rounded-2xl border p-3.5 text-center transition-all cursor-pointer ${
+                      className={`group flex flex-col items-center justify-center rounded-2xl border p-4 text-center transition-all cursor-pointer ${
                         isSelected
                           ? 'aero-button-primary border-transparent text-white shadow-md'
                           : 'border-slate-200/80 bg-white/70 hover:bg-white hover:shadow-md dark:border-slate-700/70 dark:bg-slate-900/60 dark:hover:bg-slate-800/80'
@@ -3368,7 +3880,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                       >
                         <ListVideo className="h-5 w-5" />
                       </div>
-                      <div className="mt-2 w-full">
+                      <div className="mt-2.5 w-full">
                         <div
                           className={`truncate font-display text-xs sm:text-sm font-bold ${
                             isSelected ? 'text-white' : 'text-slate-900 dark:text-white'
@@ -3377,24 +3889,15 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                         >
                           {ev.title}
                         </div>
-                        <div
-                          className={`mt-0.5 font-mono text-[10px] tabular-nums ${
-                            isSelected ? 'text-sky-100' : 'text-slate-500 dark:text-slate-400'
-                          }`}
-                        >
-                          {ev.dateLabel}
-                        </div>
-                      </div>
-                      <div className="mt-2 flex items-center justify-center gap-1">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                            isSelected
-                              ? 'bg-white/20 text-white'
-                              : 'bg-slate-200/80 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                          }`}
-                        >
-                          {ev.kind === 'youtube-video' ? 'Video' : 'Playlist'}
-                        </span>
+                        {ev.dateLabel && (
+                          <div
+                            className={`mt-0.5 font-mono text-[10px] sm:text-[11px] tabular-nums ${
+                              isSelected ? 'text-sky-100' : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            {ev.dateLabel}
+                          </div>
+                        )}
                       </div>
                     </button>
                   );
@@ -3423,16 +3926,17 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                         <div className="truncate font-display text-sm font-bold">
                           {ev.title}
                         </div>
-                        <div
-                          className={`font-mono text-[11px] tabular-nums ${
-                            isSelected
-                              ? 'text-sky-100'
-                              : 'text-slate-500 dark:text-slate-400'
-                          }`}
-                        >
-                          {ev.dateLabel} ·{' '}
-                          {ev.kind === 'youtube-video' ? 'Video' : 'Playlist'}
-                        </div>
+                        {ev.dateLabel && (
+                          <div
+                            className={`font-mono text-[11px] tabular-nums ${
+                              isSelected
+                                ? 'text-sky-100'
+                                : 'text-slate-500 dark:text-slate-400'
+                            }`}
+                          >
+                            {ev.dateLabel}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <Play

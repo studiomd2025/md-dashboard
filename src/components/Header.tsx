@@ -90,7 +90,7 @@ export const Header: React.FC<HeaderProps> = ({
   ];
 
   return (
-    <header className="sticky top-0 z-30 border-b border-white/70 bg-white/75 backdrop-blur-xl dark:border-slate-800/80 dark:bg-slate-950/75">
+    <header className="sticky top-0 z-[38] shrink-0 border-b border-white/70 bg-white/75 backdrop-blur-xl dark:border-slate-800/80 dark:bg-slate-950/75">
       <div className="mx-auto flex max-w-[1380px] items-center justify-between gap-3 sm:gap-6 lg:gap-14 px-3 sm:px-6 lg:px-8 py-3 sm:py-3.5">
         <div className="flex flex-1 min-w-0 lg:flex-initial lg:shrink-0 items-center gap-2 sm:gap-3">
           <button

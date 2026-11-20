@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Bold,
   CalendarClock,
@@ -6,6 +7,7 @@ import {
   CheckCircle2,
   Clock3,
   Edit3,
+  ExternalLink,
   FileText,
   Film,
   Hash,
@@ -21,6 +23,8 @@ import {
   Palette,
   Pin,
   Plus,
+  RotateCcw,
+  Search,
   Send,
   ShieldCheck,
   Trash2,
@@ -69,7 +73,7 @@ import { resolveActiveBanner } from './ScheduledBanner';
 import { TimeZoneSelect } from './TimeZoneSelect';
 import { FontSelect } from './FontSelect';
 import { YmdDateInput, YmdDateTimeInput } from './YmdDateInputs';
-import { PLAY_EVENTS, type PlayEventItem } from './LiveTvView';
+import { mergePlayEvents, PLAY_EVENTS, type PlayEventItem } from './LiveTvView';
 
 interface BackendConsoleViewProps {
   activeTab: BackendTab;
@@ -112,6 +116,7 @@ interface BackendConsoleViewProps {
     payload: Omit<PlayEventRecord, 'id'>
   ) => Promise<void>;
   onDeletePlayEvent?: (id: string) => Promise<void>;
+  onRestorePlayEvent?: (id: string) => Promise<void>;
   onRenameTag: (oldTag: string, newTag: string) => Promise<void>;
   onDeleteTag: (tag: string) => Promise<void>;
   onFilterByTag: (tag: string) => void;
@@ -258,6 +263,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   onAddPlayEvent,
   onUpdatePlayEvent,
   onDeletePlayEvent,
+  onRestorePlayEvent,
   collaborators,
   accessRequests,
   onAddCollaborator,
@@ -309,6 +315,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const [milestoneUploading, setMilestoneUploading] = useState(false);
 
   // Play Event playlist creator / editor state
+  const peFormRef = useRef<HTMLElement>(null);
   const [editingPlayEventId, setEditingPlayEventId] = useState<string | null>(null);
   const [peUrl, setPeUrl] = useState('');
   const [peTitle, setPeTitle] = useState('');
@@ -703,6 +710,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     }
     setPeStatusMsg('');
     setPeErrorMsg('');
+    peFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const handleSavePlayEvent = async (e: React.FormEvent) => {
@@ -1427,7 +1435,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       {/* Tab 2: Next on MD (Countdown Setup with RTF, Custom Format & Multimedia) */}
       {isAdmin && activeTab === 'countdowns' && (
         <div className="space-y-5">
-          <section ref={cdFormRef} className="aero-glass rounded-3xl p-6">
+          <section ref={cdFormRef} className="aero-glass scroll-mt-20 rounded-3xl p-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="font-display text-base font-bold text-slate-900 dark:text-white">
                 {editingCountdownId ? 'Edit Countdown' : 'Countdown'}
@@ -1707,16 +1715,13 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                       <Upload className="h-3.5 w-3.5" />
                       <span>{milestoneUploading ? 'Uploading...' : 'Upload Media'}</span>
                     </button>
-                    <select
+                    <FontSelect
+                      id="milestone-font-select"
                       value={milestoneFont}
-                      onChange={(e) => setMilestoneFont(e.target.value as DiaryFont)}
-                      className="ml-auto rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                    >
-                      <option value="sans">DM Sans</option>
-                      <option value="serif">Fraunces Serif</option>
-                      <option value="mono">JetBrains Mono</option>
-                      <option value="hand">Caveat Journal</option>
-                    </select>
+                      onChange={setMilestoneFont}
+                      ariaLabel="Milestone Typeface"
+                      className="ml-auto"
+                    />
                   </div>
 
                   <div
@@ -1880,7 +1885,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
           </section>
 
           {/* Add Event Playlist (Live Tab) */}
-          <section className="aero-glass rounded-3xl p-6 space-y-4">
+          <section ref={peFormRef} className="aero-glass scroll-mt-20 rounded-3xl p-6 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="flex items-center gap-2 font-display text-base font-bold text-slate-900 dark:text-white">
                 <ListVideo className="h-4 w-4 text-sky-600 dark:text-sky-400" />
@@ -1990,7 +1995,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     <option value="Interim Era">Interim Era</option>
                     <option value="Caratime Era">Caratime Era</option>
                     <option value="Daliatime Era">Daliatime Era</option>
-                    <option value="custom">Add New Era</option>
+                    <option value="custom">[New Era]</option>
                   </select>
                 </div>
 
@@ -2084,100 +2089,6 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 </button>
               </div>
             </form>
-
-            {customPlayEvents.length > 0 && (
-              <div className="pt-3 border-t border-slate-200/70 dark:border-slate-700/60">
-                <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white mb-2">
-                  Custom Play Event Playlists ({customPlayEvents.length})
-                </h4>
-                <div className="divide-y divide-slate-200/70 dark:divide-slate-700/60">
-                  {customPlayEvents.map((ev) => {
-                    const isEditingThis = editingPlayEventId === ev.id;
-                    const isScheduledPending = Boolean(
-                      ev.scheduledFor &&
-                        new Date(ev.scheduledFor).getTime() > now.getTime()
-                    );
-                    return (
-                      <div
-                        key={ev.id}
-                        className={`flex flex-wrap items-center justify-between gap-3 py-3 ${
-                          isEditingThis
-                            ? 'rounded-2xl bg-sky-50/70 px-3 dark:bg-sky-950/30'
-                            : ''
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-display text-sm font-bold text-slate-900 dark:text-white truncate">
-                              {ev.title}
-                            </span>
-                            {isScheduledPending && ev.scheduledFor && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-800 dark:bg-amber-950/70 dark:text-amber-300">
-                                <Clock3 className="h-3 w-3" />
-                                Scheduled: {formatPostTimestamp(ev.scheduledFor)}
-                                {ev.scheduledTimeZone
-                                  ? ` (${getTimeZoneAbbr(ev.scheduledTimeZone)})`
-                                  : ''}
-                              </span>
-                            )}
-                          </div>
-                          <div className="font-mono text-xs text-slate-500 dark:text-slate-400 tabular-nums truncate">
-                            {ev.dateLabel}
-                            {ev.era ? ` · ${ev.era}` : ''}
-                            {` · ${ev.kind === 'youtube-video' ? 'Video' : 'Playlist'}`}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          {isScheduledPending && onUpdatePlayEvent && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                onUpdatePlayEvent(ev.id, {
-                                  title: ev.title,
-                                  url: ev.url,
-                                  kind: ev.kind,
-                                  mediaId: ev.mediaId,
-                                  dateLabel: ev.dateLabel,
-                                  year: ev.year,
-                                  era: ev.era,
-                                  scheduledFor: null,
-                                  scheduledTimeZone: null,
-                                })
-                              }
-                              className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 cursor-pointer"
-                            >
-                              <Send className="h-3.5 w-3.5" />
-                              Publish Now
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleStartEditPlayEvent(ev)}
-                            className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-50 dark:border-slate-700 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-slate-700/80 cursor-pointer"
-                          >
-                            <Edit3 className="h-3.5 w-3.5" />
-                            {isEditingThis ? 'Editing' : 'Edit'}
-                          </button>
-                          {onDeletePlayEvent && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (isEditingThis) resetPlayEventForm();
-                                onDeletePlayEvent(ev.id);
-                              }}
-                              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                              Remove
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </section>
         </div>
       )}
@@ -3367,6 +3278,364 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
           )}
         </section>
       )}
+      {/* Manage Playlists Drawer Modal */}
+      {isAdmin &&
+        showManagePlaylistsDrawer &&
+        typeof document !== 'undefined' &&
+        createPortal(
+          <ManagePlaylistsModal
+            customPlayEvents={customPlayEvents}
+            now={now}
+            editingPlayEventId={editingPlayEventId}
+            searchQuery={manageSearchQuery}
+            onSearchChange={setManageSearchQuery}
+            eraFilter={manageEraFilter}
+            onEraFilterChange={setManageEraFilter}
+            onClose={() => setShowManagePlaylistsDrawer(false)}
+            onEdit={(ev) => {
+              setShowManagePlaylistsDrawer(false);
+              window.requestAnimationFrame(() => {
+                handleStartEditPlayEvent(ev);
+              });
+            }}
+            onPublishNow={
+              onUpdatePlayEvent
+                ? (ev) =>
+                    onUpdatePlayEvent(ev.id, {
+                      title: ev.title,
+                      url: ev.url,
+                      kind: ev.kind,
+                      mediaId: ev.mediaId,
+                      dateLabel: ev.dateLabel,
+                      year: ev.year,
+                      era: ev.era,
+                      scheduledFor: null,
+                      scheduledTimeZone: null,
+                    })
+                : undefined
+            }
+            onDelete={
+              onDeletePlayEvent
+                ? (id) => {
+                    if (editingPlayEventId === id) resetPlayEventForm();
+                    return onDeletePlayEvent(id);
+                  }
+                : undefined
+            }
+            onRestore={onRestorePlayEvent}
+          />,
+          document.body
+        )}
     </div>
   );
 };
+
+interface ManagePlaylistsModalProps {
+  customPlayEvents: PlayEventRecord[];
+  now: Date;
+  editingPlayEventId: string | null;
+  searchQuery: string;
+  onSearchChange: (q: string) => void;
+  eraFilter: string;
+  onEraFilterChange: (era: string) => void;
+  onClose: () => void;
+  onEdit: (ev: PlayEventRecord) => void;
+  onPublishNow?: (ev: PlayEventRecord) => Promise<void>;
+  onDelete?: (id: string) => Promise<void>;
+  onRestore?: (id: string) => Promise<void>;
+}
+
+const ManagePlaylistsModal: React.FC<ManagePlaylistsModalProps> = ({
+  customPlayEvents,
+  now,
+  editingPlayEventId,
+  searchQuery,
+  onSearchChange,
+  eraFilter,
+  onEraFilterChange,
+  onClose,
+  onEdit,
+  onPublishNow,
+  onDelete,
+  onRestore,
+}) => {
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  const builtInIdSet = useMemo(
+    () => new Set(PLAY_EVENTS.map((ev) => ev.id)),
+    []
+  );
+  const overrideMap = useMemo(
+    () => new Map(customPlayEvents.map((ev) => [ev.id, ev])),
+    [customPlayEvents]
+  );
+
+  const allMerged = useMemo(
+    () => mergePlayEvents(PLAY_EVENTS, customPlayEvents),
+    [customPlayEvents]
+  );
+
+  const deletedBuiltIns = useMemo(
+    () =>
+      PLAY_EVENTS.filter((item) => {
+        const ov = overrideMap.get(item.id);
+        return Boolean(ov?.isDeleted);
+      }),
+    [overrideMap]
+  );
+
+  const eraOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const ev of allMerged) {
+      const e = (ev.era || '').trim();
+      if (e && !seen.has(e)) {
+        seen.add(e);
+        list.push(e);
+      }
+    }
+    return list;
+  }, [allMerged]);
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return allMerged.filter((ev) => {
+      if (eraFilter !== 'all' && (ev.era || '') !== eraFilter) {
+        return false;
+      }
+      if (!q) return true;
+      return `${ev.title} ${ev.dateLabel} ${ev.year} ${ev.era} ${ev.url}`
+        .toLowerCase()
+        .includes(q);
+    });
+  }, [allMerged, eraFilter, searchQuery]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 p-0 sm:p-4 backdrop-blur-md"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Manage Event Playlists"
+        onClick={(e) => e.stopPropagation()}
+        className="aero-glass flex flex-col w-full max-w-3xl h-[85dvh] max-h-[85dvh] sm:h-[82vh] sm:max-h-[82vh] rounded-t-3xl sm:rounded-3xl border border-white/60 dark:border-slate-700/80 shadow-2xl overflow-hidden"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-slate-200/80 bg-white/80 px-5 py-3.5 backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-900/80 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-600 dark:bg-sky-400/20 dark:text-sky-300">
+              <ListVideo className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-display text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
+                Manage Playlists
+              </h3>
+              <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400">
+                {allMerged.length} active playlists · Edit, publish, or remove any Play Event
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close Manage Playlists"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer shrink-0"
+          >
+            <X className="h-3.5 w-3.5" />
+            <span>Close</span>
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200/60 bg-white/50 px-5 py-2.5 dark:border-slate-800/70 dark:bg-slate-900/50 shrink-0">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder={`Search ${allMerged.length} playlists...`}
+              className="w-full rounded-xl border border-slate-200/90 bg-white/90 py-1.5 pl-9 pr-8 text-xs text-slate-900 placeholder:text-slate-400 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/80 dark:text-white"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => onSearchChange('')}
+                aria-label="Clear playlist search"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          <select
+            aria-label="Filter by Era"
+            value={eraFilter}
+            onChange={(e) => onEraFilterChange(e.target.value)}
+            className="rounded-xl border border-slate-200/90 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-800 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100 cursor-pointer"
+          >
+            <option value="all">All Eras ({allMerged.length})</option>
+            {eraOptions.map((era) => (
+              <option key={era} value={era}>
+                {era}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 py-3 divide-y divide-slate-200/70 dark:divide-slate-800/80">
+          {filtered.length === 0 ? (
+            <div className="py-12 text-center text-xs text-slate-500 dark:text-slate-400">
+              No playlists matching your filter.
+            </div>
+          ) : (
+            filtered.map((ev) => {
+              const isBuiltIn = builtInIdSet.has(ev.id);
+              const isOverridden = isBuiltIn && overrideMap.has(ev.id);
+              const isEditingThis = editingPlayEventId === ev.id;
+              const isScheduledPending = Boolean(
+                ev.scheduledFor &&
+                  new Date(ev.scheduledFor).getTime() > now.getTime()
+              );
+
+              return (
+                <div
+                  key={ev.id}
+                  className={`flex flex-wrap items-center justify-between gap-3 py-3 ${
+                    isEditingThis
+                      ? 'rounded-2xl bg-sky-50/70 px-3 dark:bg-sky-950/30'
+                      : ''
+                  }`}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-display text-sm font-bold text-slate-900 dark:text-white truncate">
+                        {ev.title}
+                      </span>
+                      {ev.era && (
+                        <span className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          {ev.era}
+                        </span>
+                      )}
+                      {isBuiltIn ? (
+                        <span className="rounded-md bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:bg-sky-950/60 dark:text-sky-300">
+                          {isOverridden ? 'Built-in (Edited)' : 'Built-in'}
+                        </span>
+                      ) : (
+                        <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300">
+                          Custom
+                        </span>
+                      )}
+                      {isScheduledPending && ev.scheduledFor && (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-800 dark:bg-amber-950/70 dark:text-amber-300">
+                          <Clock3 className="h-3 w-3" />
+                          Scheduled: {formatPostTimestamp(ev.scheduledFor)}
+                          {ev.scheduledTimeZone
+                            ? ` (${getTimeZoneAbbr(ev.scheduledTimeZone)})`
+                            : ''}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 font-mono text-[11px] text-slate-500 dark:text-slate-400 tabular-nums truncate">
+                      {ev.dateLabel || ev.year || 'No date'}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <a
+                      href={ev.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open on YouTube"
+                      aria-label={`Open ${ev.title} on YouTube`}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+
+                    {isScheduledPending && onPublishNow && (
+                      <button
+                        type="button"
+                        onClick={() => onPublishNow(ev)}
+                        className="inline-flex items-center gap-1 rounded-xl bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500 cursor-pointer"
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        Publish Now
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => onEdit(ev)}
+                      className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-50 dark:border-slate-700 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-slate-700/80 cursor-pointer"
+                    >
+                      <Edit3 className="h-3.5 w-3.5" />
+                      Edit
+                    </button>
+
+                    {onDelete && (
+                      <button
+                        type="button"
+                        onClick={() => onDelete(ev.id)}
+                        className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:bg-slate-800 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+
+          {deletedBuiltIns.length > 0 && onRestore && (
+            <div className="pt-4 mt-2 space-y-2">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                Removed Built-in Playlists ({deletedBuiltIns.length})
+              </div>
+              {deletedBuiltIns.map((ev) => (
+                <div
+                  key={`deleted-${ev.id}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/70 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/50"
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-slate-600 dark:text-slate-300 truncate">
+                      {ev.title}
+                    </div>
+                    <div className="font-mono text-[10px] text-slate-400">
+                      {ev.dateLabel || ev.year} · {ev.era}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onRestore(ev.id)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-sky-200 bg-white px-2.5 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-50 dark:border-sky-800 dark:bg-slate-800 dark:text-sky-300 cursor-pointer"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Restore
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+

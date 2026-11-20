@@ -884,60 +884,150 @@ async function startServer() {
           playlistTitle = titleMatch[1].replace(/\s*-\s*YouTube\s*$/i, '').trim();
         }
 
-        const match = html.match(/var ytInitialData\s*=\s*({[\s\S]*?});<\/script>/);
+        const match =
+          html.match(/var ytInitialData\s*=\s*({[\s\S]*?});\s*<\/script>/) ||
+          html.match(/var ytInitialData\s*=\s*({[\s\S]*?});/);
         if (match) {
           const data = JSON.parse(match[1]);
-          let continuationToken: string | null = null;
+          const metaTitle =
+            data?.metadata?.playlistMetadataRenderer?.title;
+          if (typeof metaTitle === 'string' && metaTitle.trim()) {
+            playlistTitle = metaTitle.trim();
+          }
 
+          const seenTokens = new Set<string>();
+          const queueTokens: string[] = [];
 
-
-          const extractFromObject = (obj: any) => {
-            if (!obj || typeof obj !== 'object') return;
-
-            if (obj.playlistVideoRenderer) {
-              const r = obj.playlistVideoRenderer;
-              const title =
-                r.title?.runs?.map((x: any) => x.text).join('') ||
-                r.title?.simpleText ||
-                '';
-              pushPlaylistItem(r.videoId, title);
+          const findContinuationToken = (obj: any): string | null => {
+            if (!obj || typeof obj !== 'object') return null;
+            if (typeof obj.continuationCommand?.token === 'string') {
+              return obj.continuationCommand.token;
             }
-
-            if (obj.playlistPanelVideoRenderer) {
-              const r = obj.playlistPanelVideoRenderer;
-              const title =
-                r.title?.runs?.map((x: any) => x.text).join('') ||
-                r.title?.simpleText ||
-                '';
-              pushPlaylistItem(r.videoId, title);
-            }
-
-            if (!continuationToken) {
-              if (obj.continuationCommand?.token) {
-                continuationToken = obj.continuationCommand.token;
-              } else if (
-                obj.continuationItemRenderer?.continuationEndpoint
-                  ?.continuationCommand?.token
-              ) {
-                continuationToken =
-                  obj.continuationItemRenderer.continuationEndpoint
-                    .continuationCommand.token;
-              }
-            }
-
             for (const k of Object.keys(obj)) {
-              extractFromObject(obj[k]);
+              const found = findContinuationToken(obj[k]);
+              if (found) return found;
+            }
+            return null;
+          };
+
+          const enqueueToken = (token: string | null) => {
+            if (token && !seenTokens.has(token)) {
+              seenTokens.add(token);
+              queueTokens.push(token);
             }
           };
 
-          extractFromObject(data);
+          const extractTitle = (titleObj: any): string => {
+            if (!titleObj) return '';
+            if (typeof titleObj === 'string') return titleObj;
+            if (typeof titleObj.content === 'string') return titleObj.content;
+            if (Array.isArray(titleObj.runs)) {
+              return titleObj.runs.map((x: any) => x?.text || '').join('');
+            }
+            if (typeof titleObj.simpleText === 'string') return titleObj.simpleText;
+            return '';
+          };
 
-          // Fetch continuation pages so we get all videos without limits
-          let pageCount = 0;
-          while (continuationToken && pageCount < 50) {
-            pageCount++;
-            const currentToken: string = continuationToken;
-            continuationToken = null;
+          const processPlaylistEntries = (entries: any) => {
+            if (!Array.isArray(entries)) return;
+            for (const entry of entries) {
+              if (!entry || typeof entry !== 'object') continue;
+
+              if (entry.playlistVideoListRenderer?.contents) {
+                processPlaylistEntries(entry.playlistVideoListRenderer.contents);
+                continue;
+              }
+
+              if (entry.lockupViewModel) {
+                const lvm = entry.lockupViewModel;
+                if (
+                  !lvm.contentType ||
+                  lvm.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO'
+                ) {
+                  const vid =
+                    lvm.contentId ||
+                    lvm.rendererContext?.commandContext?.onTap?.innertubeCommand
+                      ?.watchEndpoint?.videoId ||
+                    '';
+                  const title = extractTitle(
+                    lvm.metadata?.lockupMetadataViewModel?.title
+                  );
+                  pushPlaylistItem(vid, title);
+                }
+                continue;
+              }
+
+              if (entry.playlistVideoRenderer) {
+                const r = entry.playlistVideoRenderer;
+                pushPlaylistItem(r.videoId, extractTitle(r.title));
+                continue;
+              }
+
+              if (entry.playlistPanelVideoRenderer) {
+                const r = entry.playlistPanelVideoRenderer;
+                pushPlaylistItem(r.videoId, extractTitle(r.title));
+                continue;
+              }
+
+              if (entry.continuationItemRenderer) {
+                enqueueToken(findContinuationToken(entry.continuationItemRenderer));
+                continue;
+              }
+
+              if (entry.continuationItemViewModel) {
+                enqueueToken(findContinuationToken(entry.continuationItemViewModel));
+                continue;
+              }
+            }
+          };
+
+          const extractFallbackRecursive = (obj: any) => {
+            if (!obj || typeof obj !== 'object') return;
+            if (obj.lockupViewModel) {
+              processPlaylistEntries([{ lockupViewModel: obj.lockupViewModel }]);
+              return;
+            }
+            if (obj.playlistVideoRenderer) {
+              processPlaylistEntries([
+                { playlistVideoRenderer: obj.playlistVideoRenderer },
+              ]);
+              return;
+            }
+            if (obj.playlistPanelVideoRenderer) {
+              processPlaylistEntries([
+                { playlistPanelVideoRenderer: obj.playlistPanelVideoRenderer },
+              ]);
+              return;
+            }
+            if (obj.continuationItemRenderer || obj.continuationItemViewModel) {
+              enqueueToken(
+                findContinuationToken(
+                  obj.continuationItemRenderer || obj.continuationItemViewModel
+                )
+              );
+              return;
+            }
+            for (const k of Object.keys(obj)) {
+              extractFallbackRecursive(obj[k]);
+            }
+          };
+
+          // Scope initial extraction to the playlist's primary item section so
+          // bottom recommended-playlist shelves (sectionListRenderer.contents[1+]) are not mixed in.
+          const primarySectionEntries =
+            data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer
+              ?.content?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer
+              ?.contents;
+
+          if (Array.isArray(primarySectionEntries)) {
+            processPlaylistEntries(primarySectionEntries);
+          } else {
+            extractFallbackRecursive(data);
+          }
+
+          // Fetch all continuation pages without an artificial item or page limit
+          while (queueTokens.length > 0) {
+            const currentToken = queueTokens.shift()!;
             try {
               const postRes = await fetch(
                 'https://www.youtube.com/youtubei/v1/browse?prettyPrint=false',
@@ -963,17 +1053,34 @@ async function startServer() {
               );
               if (!postRes.ok) break;
               const postData = await postRes.json();
-              extractFromObject(postData);
+              const actions = Array.isArray(postData?.onResponseReceivedActions)
+                ? postData.onResponseReceivedActions
+                : [];
+              let handledAction = false;
+              for (const action of actions) {
+                const contItems =
+                  action?.appendContinuationItemsAction?.continuationItems ||
+                  action?.reloadContinuationItemsCommand?.continuationItems;
+                if (Array.isArray(contItems)) {
+                  handledAction = true;
+                  processPlaylistEntries(contItems);
+                }
+              }
+              if (!handledAction) {
+                extractFallbackRecursive(postData);
+              }
             } catch {
               break;
             }
           }
         }
 
-        // Additional HTML sweep for any watch links in playlist page
-        const watchMatches = html.matchAll(/watch\?v=([a-zA-Z0-9_-]{11})/g);
-        for (const m of watchMatches) {
-          pushPlaylistItem(m[1], `Playlist Track ${m[1]}`);
+        // Fallback HTML sweep only if structured ytInitialData extraction returned 0 items
+        if (items.length === 0) {
+          const watchMatches = html.matchAll(/watch\?v=([a-zA-Z0-9_-]{11})/g);
+          for (const m of watchMatches) {
+            pushPlaylistItem(m[1], `Playlist Track ${m[1]}`);
+          }
         }
       }
     } catch (err) {

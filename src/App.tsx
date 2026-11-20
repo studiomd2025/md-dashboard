@@ -74,8 +74,8 @@ import {
   subscribeTeamManagement,
   updateBannerDoc,
   updateCountdownDoc,
-  updatePlayEventDoc,
   updatePostDoc,
+  upsertPlayEventWithIdDoc,
   withdrawAccessRequestDoc,
 } from './lib/firestoreStore';
 import { Header } from './components/Header';
@@ -88,12 +88,14 @@ import { BackendConsoleView } from './components/BackendConsoleView';
 import { RegisterModal } from './components/RegisterModal';
 import {
   LiveTvView,
+  PLAY_EVENTS,
   STATIONS,
   type BroadcastChannel,
   type PlayEventItem,
 } from './components/LiveTvView';
 import { MobileWidgetStudioView } from './components/MobileWidgetStudioView';
 import { OfflineIndicator } from './components/PWAInstallButton';
+import { YmdDateInput } from './components/YmdDateInputs';
 import { useFlipLayout, useSystemAnimationGuard } from './hooks/useFlipLayout';
 import { useMobileDrawerSwipe } from './hooks/useMobileDrawerSwipe';
 
@@ -181,6 +183,14 @@ export default function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobileDateSearchOpen, setIsMobileDateSearchOpen] = useState(false);
   const [isMobileSplitVisible, setIsMobileSplitVisible] = useState(false);
+  const [mobileSplitHeight, setMobileSplitHeight] = useState(0);
+  const mainScrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const scrollPageToTop = (behavior: ScrollBehavior = 'auto') => {
+    if (typeof window === 'undefined') return;
+    window.scrollTo({ top: 0, behavior });
+    mainScrollContainerRef.current?.scrollTo({ top: 0, behavior });
+  };
 
   const {
     isDraggingDrawer,
@@ -330,7 +340,7 @@ export default function App() {
       else return;
 
       if (!shouldPreserve) {
-        window.scrollTo({ top: 0, behavior: 'auto' });
+        scrollPageToTop('auto');
       }
     };
     window.addEventListener('hashchange', onHashChange);
@@ -885,10 +895,32 @@ export default function App() {
     payload: Omit<PlayEventRecord, 'id'>
   ) => {
     if (!user || !isAdmin) return;
-    await updatePlayEventDoc(id, payload);
+    await upsertPlayEventWithIdDoc(user.uid, id, {
+      ...payload,
+      isDeleted: Boolean(payload.isDeleted),
+    });
   };
 
   const handleDeletePlayEvent = async (id: string) => {
+    if (!user || !isAdmin) return;
+    const builtIn = PLAY_EVENTS.find((ev) => ev.id === id);
+    if (builtIn) {
+      await upsertPlayEventWithIdDoc(user.uid, id, {
+        title: builtIn.title,
+        url: builtIn.url,
+        kind: builtIn.kind,
+        mediaId: builtIn.mediaId,
+        dateLabel: builtIn.dateLabel,
+        year: builtIn.year,
+        era: builtIn.era,
+        isDeleted: true,
+      });
+    } else {
+      await deletePlayEventDoc(id);
+    }
+  };
+
+  const handleRestorePlayEvent = async (id: string) => {
     if (!isAdmin) return;
     await deletePlayEventDoc(id);
   };
@@ -952,7 +984,7 @@ export default function App() {
     const url = new URL(window.location.href);
     url.searchParams.set('post', post.id);
     window.history.pushState({ postId: post.id }, '', url.pathname + url.search);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    scrollPageToTop('smooth');
   };
 
   const closePostDetail = () => {
@@ -987,7 +1019,7 @@ export default function App() {
         url.pathname + (url.search ? url.search : '') + '#/next'
       );
       window.localStorage.setItem('md_active_view', 'next');
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      scrollPageToTop('smooth');
     }
   };
 
@@ -1022,7 +1054,7 @@ export default function App() {
       window.location.hash = view === 'timeline' ? '#/timeline' : `#/${view}`;
       window.localStorage.setItem('md_active_view', view);
       if (!shouldPreserveScrollForPlayEvent) {
-        window.scrollTo({ top: 0, behavior: 'auto' });
+        scrollPageToTop('auto');
       }
     }
   };
@@ -1038,7 +1070,7 @@ export default function App() {
       }
       window.location.hash = '#/timeline';
       window.localStorage.setItem('md_active_view', 'timeline');
-      window.scrollTo({ top: 0, behavior: 'auto' });
+      scrollPageToTop('auto');
     }
     setActiveTag((prev) =>
       tag && prev?.toLowerCase() === tag.toLowerCase() ? null : tag
@@ -1057,7 +1089,7 @@ export default function App() {
       }
       window.location.hash = '#/timeline';
       window.localStorage.setItem('md_active_view', 'timeline');
-      window.scrollTo({ top: 0, behavior: 'auto' });
+      scrollPageToTop('auto');
     }
     setActiveMonth((prev) => (prev === month ? null : month));
     setActiveView('timeline');
@@ -1095,9 +1127,7 @@ export default function App() {
   return (
     <div
       style={wrapperStyle}
-      className={`min-h-screen lg:pb-12 ${
-        isMobileSplitVisible ? 'pb-80 sm:pb-20' : 'pb-20'
-      }`}
+      className="min-h-screen sm:pb-20 lg:pb-12 max-sm:h-[100dvh] max-sm:min-h-0 max-sm:overflow-hidden max-sm:flex max-sm:flex-col"
     >
       <Header
         activeView={activeView}
@@ -1121,27 +1151,31 @@ export default function App() {
         onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
       />
 
-      {activeView === 'timeline' && !selectedPostId && (
-        <ScheduledBanner
-          banners={banners}
-          now={nowDate}
-          onNavigateView={handleNavigateView}
-        />
-      )}
+      <div
+        ref={mainScrollContainerRef}
+        className="max-sm:flex-1 max-sm:min-h-0 max-sm:overflow-y-auto max-sm:overscroll-y-contain"
+      >
+        {activeView === 'timeline' && !selectedPostId && (
+          <ScheduledBanner
+            banners={banners}
+            now={nowDate}
+            onNavigateView={handleNavigateView}
+          />
+        )}
 
-      {/* Mobile / Tablet Countdown Strip only appears on main Timeline view (below active banner) */}
-      {activeView === 'timeline' && !selectedPostId && (
-        <MobileCountdownStrip
-          countdowns={countdowns}
-          nowMs={nowMs}
-          design={design}
-          onOpenCountdown={openCountdownPage}
-        />
-      )}
+        {/* Mobile / Tablet Countdown Strip only appears on main Timeline view (below active banner) */}
+        {activeView === 'timeline' && !selectedPostId && (
+          <MobileCountdownStrip
+            countdowns={countdowns}
+            nowMs={nowMs}
+            design={design}
+            onOpenCountdown={openCountdownPage}
+          />
+        )}
 
-      <main className={`mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8 ${
-        (floatingPlayerEnabled || isMobileSplitVisible) ? 'pb-[140px] sm:pb-[160px]' : 'pb-16'
-      }`}>
+        <main className={`mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8 ${
+          floatingPlayerEnabled ? 'pb-6 sm:pb-[160px]' : 'pb-6 sm:pb-16'
+        }`}>
         {authError && (
           <div
             role="alert"
@@ -1254,26 +1288,32 @@ export default function App() {
 
                     {/* Tablet/Desktop Inline Date Filter + View Buttons */}
                     <div className="hidden md:flex items-center gap-2 shrink-0">
-                      <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                        <span className="font-medium">From</span>
-                        <input
-                          type="date"
+                      <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+                        <label htmlFor="desktop-date-from" className="font-medium">
+                          From
+                        </label>
+                        <YmdDateInput
+                          id="desktop-date-from"
                           value={dateFrom}
-                          onChange={(e) => setDateFrom(e.target.value)}
-                          aria-label="Filter from date"
-                          className="rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
+                          onChange={setDateFrom}
+                          ariaLabel="Filter from date"
+                          className="w-[128px]"
+                          inputClassName="rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
                         />
-                      </label>
-                      <label className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
-                        <span className="font-medium">To</span>
-                        <input
-                          type="date"
+                      </div>
+                      <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300">
+                        <label htmlFor="desktop-date-to" className="font-medium">
+                          To
+                        </label>
+                        <YmdDateInput
+                          id="desktop-date-to"
                           value={dateTo}
-                          onChange={(e) => setDateTo(e.target.value)}
-                          aria-label="Filter to date"
-                          className="rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
+                          onChange={setDateTo}
+                          ariaLabel="Filter to date"
+                          className="w-[128px]"
+                          inputClassName="rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
                         />
-                      </label>
+                      </div>
                     </div>
 
                     {/* Desktop Timeline View Toggle (Single Column vs Grid) */}
@@ -1337,26 +1377,30 @@ export default function App() {
                           isMobileDateSearchOpen ? 'translate-y-0' : '-translate-y-2'
                         }`}
                       >
-                        <label className="flex flex-col gap-1 text-[11px] text-slate-600 dark:text-slate-300">
-                          <span className="font-semibold">From</span>
-                          <input
-                            type="date"
+                        <div className="flex flex-col gap-1 text-[11px] text-slate-600 dark:text-slate-300">
+                          <label htmlFor="mobile-date-from" className="font-semibold">
+                            From
+                          </label>
+                          <YmdDateInput
+                            id="mobile-date-from"
                             value={dateFrom}
-                            onChange={(e) => setDateFrom(e.target.value)}
-                            aria-label="Filter from date"
-                            className="w-full rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
+                            onChange={setDateFrom}
+                            ariaLabel="Filter from date"
+                            inputClassName="w-full rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
                           />
-                        </label>
-                        <label className="flex flex-col gap-1 text-[11px] text-slate-600 dark:text-slate-300">
-                          <span className="font-semibold">To</span>
-                          <input
-                            type="date"
+                        </div>
+                        <div className="flex flex-col gap-1 text-[11px] text-slate-600 dark:text-slate-300">
+                          <label htmlFor="mobile-date-to" className="font-semibold">
+                            To
+                          </label>
+                          <YmdDateInput
+                            id="mobile-date-to"
                             value={dateTo}
-                            onChange={(e) => setDateTo(e.target.value)}
-                            aria-label="Filter to date"
-                            className="w-full rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
+                            onChange={setDateTo}
+                            ariaLabel="Filter to date"
+                            inputClassName="w-full rounded-xl border border-slate-200/90 bg-white/85 px-2.5 py-2 text-xs text-slate-900 focus:border-sky-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900/75 dark:text-white"
                           />
-                        </label>
+                        </div>
                         <TimeZoneSelect
                           id="mobile-filter-timezone"
                           label="Time Zone (optional)"
@@ -1569,6 +1613,7 @@ export default function App() {
                 onAddPlayEvent={handleAddPlayEvent}
                 onUpdatePlayEvent={handleUpdatePlayEvent}
                 onDeletePlayEvent={handleDeletePlayEvent}
+                onRestorePlayEvent={handleRestorePlayEvent}
                 onRenameTag={handleRenameTag}
                 onDeleteTag={handleDeleteTag}
                 onFilterByTag={(tag) => handleSelectTag(tag)}
@@ -1645,6 +1690,7 @@ export default function App() {
                 }}
                 scrollToPlayEventNonce={scrollToPlayEventNonce}
                 onMobileSplitVisibilityChange={setIsMobileSplitVisible}
+                onMobileSplitHeightChange={setMobileSplitHeight}
                 isSidebarCollapsed={isSidebarCollapsed}
               />
             )}
@@ -1687,6 +1733,20 @@ export default function App() {
           </div>
         </div>
       </main>
+      </div>
+
+      {/* Mobile-only reserved spacers so the content scrollbar stops cleanly above the split player & bottom nav */}
+      {isMobileSplitVisible && mobileSplitHeight > 0 && (
+        <div
+          aria-hidden="true"
+          className="sm:hidden shrink-0 pointer-events-none"
+          style={{ height: `${mobileSplitHeight}px` }}
+        />
+      )}
+      <div
+        aria-hidden="true"
+        className="sm:hidden h-14 shrink-0 pointer-events-none"
+      />
 
       {/* Mobile Hamburger & Swipe-Right Slide-In Sidebar Drawer (always mounted on lg:hidden for smooth open/close slide) */}
       {typeof document !== 'undefined' &&
