@@ -121,13 +121,24 @@ async function fetchPublicFirestoreState(): Promise<{
           },
         }),
       }),
-      fetch(`${base}/countdowns${keyParam}&pageSize=50`.replace('/countdowns&', '/countdowns?')),
+      fetch(`${base}:runQuery${keyParam}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: 'countdowns' }],
+            limit: 50,
+          },
+        }),
+      }),
     ]);
 
-    if (!postsRes.ok) return null;
-    const rows = (await postsRes.json()) as {
-      document?: { name: string; fields?: Record<string, FsValue> };
-    }[];
+    if (!postsRes.ok && !cdRes.ok) return null;
+    const rows = postsRes.ok
+      ? ((await postsRes.json()) as {
+          document?: { name: string; fields?: Record<string, FsValue> };
+        }[])
+      : [];
 
     const posts: Post[] = rows
       .filter((r) => Boolean(r.document?.name))
@@ -151,26 +162,28 @@ async function fetchPublicFirestoreState(): Promise<{
 
     let countdowns: EventCountdown[] = [];
     if (cdRes.ok) {
-      const cdJson = (await cdRes.json()) as {
-        documents?: { name: string; fields?: Record<string, FsValue> }[];
-      };
-      countdowns = (cdJson.documents || []).map((docItem) => {
-        const d = decodeFirestoreDoc(docItem.name, docItem.fields);
-        return {
-          id: String(d.id || ''),
-          title: String(d.title || ''),
-          targetAt: String(d.targetAt || ''),
-          tag: (d.tag as string | undefined) ?? undefined,
-          location: (d.location as string | undefined) ?? undefined,
-          bodyHtml: (d.bodyHtml as string | undefined) ?? undefined,
-          font: (d.font as EventCountdown['font']) ?? undefined,
-          displayFormat: (d.displayFormat as EventCountdown['displayFormat']) ?? undefined,
-          attachments: normalizeAttachmentList(d.attachments),
-          milestoneBodyHtml: (d.milestoneBodyHtml as string | undefined) ?? undefined,
-          milestoneFont: (d.milestoneFont as EventCountdown['milestoneFont']) ?? undefined,
-          milestoneAttachments: normalizeAttachmentList(d.milestoneAttachments),
-        };
-      });
+      const cdRows = (await cdRes.json()) as {
+        document?: { name: string; fields?: Record<string, FsValue> };
+      }[];
+      countdowns = cdRows
+        .filter((r) => Boolean(r.document?.name))
+        .map((r) => {
+          const d = decodeFirestoreDoc(r.document!.name, r.document!.fields);
+          return {
+            id: String(d.id || ''),
+            title: String(d.title || ''),
+            targetAt: String(d.targetAt || ''),
+            tag: (d.tag as string | undefined) ?? undefined,
+            location: (d.location as string | undefined) ?? undefined,
+            bodyHtml: (d.bodyHtml as string | undefined) ?? undefined,
+            font: (d.font as EventCountdown['font']) ?? undefined,
+            displayFormat: (d.displayFormat as EventCountdown['displayFormat']) ?? undefined,
+            attachments: normalizeAttachmentList(d.attachments),
+            milestoneBodyHtml: (d.milestoneBodyHtml as string | undefined) ?? undefined,
+            milestoneFont: (d.milestoneFont as EventCountdown['milestoneFont']) ?? undefined,
+            milestoneAttachments: normalizeAttachmentList(d.milestoneAttachments),
+          };
+        });
     }
 
     if (posts.length === 0 && countdowns.length === 0) {
