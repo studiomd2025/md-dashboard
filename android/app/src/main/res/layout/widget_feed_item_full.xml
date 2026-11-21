@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full View layout: uncropped media on top, date/pin, title, excerpt, tags -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/feed_item_full_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="12dp">
+
+    <!-- Uncropped image on top -->
+    <ImageView
+        android:id="@+id/feed_item_image"
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:adjustViewBounds="true"
+        android:scaleType="centerCrop"
+        android:contentDescription="Post media"
+        android:visibility="gone" />
+
+    <!-- Meta row: date + Pinned badge -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:id="@+id/feed_item_date"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="2026.11.21"
+            android:textSize="10sp"
+            android:textColor="#64748B" />
+
+        <TextView
+            android:id="@+id/feed_item_pinned_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="📌 Pinned"
+            android:textSize="9sp"
+            android:textStyle="bold"
+            android:textColor="#D97706"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Title (if non-empty) -->
+    <TextView
+        android:id="@+id/feed_item_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text=""
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:textColor="#0F172A"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:visibility="gone" />
+
+    <!-- Excerpt -->
+    <TextView
+        android:id="@+id/feed_item_excerpt"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:text=""
+        android:textSize="12sp"
+        android:textColor="#334155"
+        android:maxLines="2"
+        android:ellipsize="end" />
+
+    <!-- Tags -->
+    <TextView
+        android:id="@+id/feed_item_tags"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text=""
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:textColor="#0284C7"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:visibility="gone" />
+
+    <!-- Bottom item divider -->
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="8dp"
+        android:src="@drawable/widget_divider"
+        android:scaleType="fitXY"
+        android:contentDescription="" />
+
+</LinearLayout>

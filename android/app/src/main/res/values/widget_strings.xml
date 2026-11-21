@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shared -->
+    <string name="widget_configure">Configure Widget</string>
+    <string name="widget_theme_label">Widget Theme</string>
+    <string name="widget_corner_label">Corner Roundness</string>
+    <string name="widget_save">Save</string>
+    <string name="widget_cancel">Cancel</string>
+    <string name="widget_loading">Loading…</string>
+    <string name="widget_error">Could not load data</string>
+    <string name="widget_tap_refresh">Tap to refresh</string>
+    <string name="widget_open_app">Open App</string>
+
+    <!-- Theme names -->
+    <string name="theme_white">White</string>
+    <string name="theme_slate">Slate</string>
+    <string name="theme_midnight">Midnight</string>
+    <string name="theme_sky">Sky</string>
+    <string name="theme_emerald">Emerald</string>
+    <string name="theme_rose">Rose</string>
+    <string name="theme_lavender">Lavender</string>
+    <string name="theme_amber">Amber</string>
+
+    <!-- Corner roundness -->
+    <string name="corner_sharp">Sharp</string>
+    <string name="corner_crisp">Crisp</string>
+    <string name="corner_soft">Soft</string>
+
+    <!-- Countdown widget -->
+    <string name="widget_countdown_name">MD Countdown</string>
+    <string name="widget_countdown_desc">Counts down to your next event</string>
+    <string name="widget_countdown_choose">Countdown Event</string>
+    <string name="widget_countdown_empty">No upcoming events</string>
+    <string name="widget_countdown_format_label">Display format</string>
+    <string name="widget_countdown_format_full">Full Timer (00 : 00 : 00 : 00)</string>
+    <string name="widget_countdown_format_adaptive">Adaptive Remaining (e.g. 2 months, 2 weeks, 3 days)</string>
+    <string name="widget_countdown_format_days_remaining">Days Remaining (D-# / D-DAY / D+#)</string>
+    <string name="widget_countdown_format_date_only">Target Date Only</string>
+
+    <!-- Single Post widget -->
+    <string name="widget_single_post_name">MD Single Post</string>
+    <string name="widget_single_post_desc">Displays one designated diary post with media</string>
+    <string name="widget_single_choose">Select Post</string>
+    <string name="widget_single_empty">No post selected</string>
+    <string name="widget_animate_gif">Animate GIF on mobile</string>
+
+    <!-- MD LIVE widget -->
+    <string name="widget_live_name">MD LIVE</string>
+    <string name="widget_live_desc">Shows live status for My Diaries channels</string>
+    <string name="widget_live_channel_label">Channel</string>
+    <string name="widget_live_open_station">Open Station ↗</string>
+    <string name="widget_live_status_live">LIVE</string>
+    <string name="widget_live_status_offline">OFFLINE</string>
+
+    <!-- Feed Card widget -->
+    <string name="widget_feed_card_name">MD Feed Card</string>
+    <string name="widget_feed_card_desc">Shows recent posts from your diary feed</string>
+    <string name="widget_feed_layout_label">Layout Style</string>
+    <string name="widget_feed_filter_label">Filter</string>
+    <string name="widget_feed_max_label">Max Posts</string>
+    <string name="widget_feed_empty">No posts yet</string>
+
+    <!-- Legacy aliases -->
+    <string name="widget_timeline_name">MD Timeline</string>
+    <string name="widget_timeline_desc">Shows your recent diary posts</string>
+    <string name="widget_timeline_post_limit">Max posts to show</string>
+    <string name="widget_timeline_empty">No recent posts yet</string>
+    <string name="widget_single_name">MD Single Post</string>
+    <string name="widget_single_desc">Displays one designated diary post</string>
+    <string name="widget_pinned_badge">📌 Pinned</string>
+    <string name="widget_pinned_name">MD Pinned Posts</string>
+    <string name="widget_pinned_desc">Shows your currently pinned posts</string>
+    <string name="widget_pinned_empty">No pinned posts right now</string>
+    <string name="widget_pinned_until">Pinned until %1$s</string>
+    <string name="widget_addpost_name">MD New Post</string>
+    <string name="widget_addpost_desc">Quick shortcut to draft a new post</string>
+    <string name="widget_addpost_label">+ New Post</string>
+    <string name="widget_addpost_subtitle">Tap to open the composer</string>
+    <string name="widget_search_name">MD Search</string>
+    <string name="widget_search_desc">Quick search shortcut for MD Dashboard</string>
+    <string name="widget_search_hint">Search posts…</string>
+    <string name="widget_search_btn">Go</string>
+    <string name="widget_countdown_active">🎉 Event is live!</string>
+</resources>

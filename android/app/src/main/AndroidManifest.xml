@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <!-- ── Main Activity ──────────────────────────────────────────────── -->
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ── FileProvider ──────────────────────────────────────────────── -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             WIDGET PROVIDERS  — exactly 4 visible in the launcher picker
+             ══════════════════════════════════════════════════════════════ -->
+
+        <!-- 1. Countdown Widget -->
+        <receiver
+            android:name=".widget.MdCountdownWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_countdown_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.studiomd.dashboard.widget.MD_COUNTDOWN_REFRESH" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_md_countdown_info" />
+        </receiver>
+
+        <!-- 2. Single Post Widget -->
+        <receiver
+            android:name=".widget.MdSinglePostWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_single_post_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.studiomd.dashboard.widget.SINGLE_POST_REFRESH" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_single_post_info" />
+        </receiver>
+
+        <!-- 3. MD LIVE Tile Widget -->
+        <receiver
+            android:name=".widget.MdLiveWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_live_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.studiomd.dashboard.widget.LIVE_REFRESH" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_md_live_info" />
+        </receiver>
+
+        <!-- 4. Feed Card Widget -->
+        <receiver
+            android:name=".widget.MdFeedCardWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_feed_card_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="com.studiomd.dashboard.widget.FEED_CARD_REFRESH" />
+                <action android:name="com.studiomd.dashboard.widget.FEED_CARD_ITEM_CLICK" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_feed_card_info" />
+        </receiver>
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             REMOTE VIEWS SERVICES  (for ListView-based widgets)
+             ══════════════════════════════════════════════════════════════ -->
+
+        <service
+            android:name=".widget.WidgetFeedService"
+            android:permission="android.permission.BIND_REMOTEVIEWS"
+            android:exported="false" />
+
+        <!-- ══════════════════════════════════════════════════════════════════
+             CONFIGURATION ACTIVITIES
+             ══════════════════════════════════════════════════════════════ -->
+
+        <activity
+            android:name=".widget.MdCountdownConfigActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme.NoActionBar">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".widget.MdSinglePostConfigActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme.NoActionBar">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".widget.MdLiveConfigActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme.NoActionBar">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".widget.MdFeedCardConfigActivity"
+            android:exported="true"
+            android:theme="@style/AppTheme.NoActionBar">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+    <!-- ── Permissions ───────────────────────────────────────────────────── -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

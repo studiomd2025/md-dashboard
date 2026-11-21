@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ── Widget theme palette — mirrors web MobileWidgetStudio color swatches ── -->
+
+    <!-- White (pure card) -->
+    <color name="wt_white_bg">#FFFFFF</color>
+    <color name="wt_white_ink">#0F172A</color>
+    <color name="wt_white_subtext">#64748B</color>
+    <color name="wt_white_accent">#0284C7</color>
+
+    <!-- Slate (default / Gray) -->
+    <color name="wt_slate_bg">#F1F5F9</color>
+    <color name="wt_slate_ink">#1E293B</color>
+    <color name="wt_slate_subtext">#64748B</color>
+    <color name="wt_slate_accent">#475569</color>
+
+    <!-- Midnight -->
+    <color name="wt_midnight_bg">#0F172A</color>
+    <color name="wt_midnight_ink">#F8FAFC</color>
+    <color name="wt_midnight_subtext">#94A3B8</color>
+    <color name="wt_midnight_accent">#38BDF8</color>
+
+    <!-- Sky -->
+    <color name="wt_sky_bg">#E0F2FE</color>
+    <color name="wt_sky_ink">#0C4A6E</color>
+    <color name="wt_sky_subtext">#0369A1</color>
+    <color name="wt_sky_accent">#0284C7</color>
+
+    <!-- Emerald -->
+    <color name="wt_emerald_bg">#D1FAE5</color>
+    <color name="wt_emerald_ink">#064E3B</color>
+    <color name="wt_emerald_subtext">#047857</color>
+    <color name="wt_emerald_accent">#059669</color>
+
+    <!-- Rose -->
+    <color name="wt_rose_bg">#FFE4E6</color>
+    <color name="wt_rose_ink">#881337</color>
+    <color name="wt_rose_subtext">#BE123C</color>
+    <color name="wt_rose_accent">#F43F5E</color>
+
+    <!-- Lavender -->
+    <color name="wt_lavender_bg">#EDE9FE</color>
+    <color name="wt_lavender_ink">#3B0764</color>
+    <color name="wt_lavender_subtext">#7C3AED</color>
+    <color name="wt_lavender_accent">#8B5CF6</color>
+
+    <!-- Amber -->
+    <color name="wt_amber_bg">#FEF9C3</color>
+    <color name="wt_amber_ink">#713F12</color>
+    <color name="wt_amber_subtext">#B45309</color>
+    <color name="wt_amber_accent">#D97706</color>
+
+    <!-- Shared structural -->
+    <color name="widget_divider">#E2E8F0</color>
+    <color name="widget_white">#FFFFFF</color>
+    <color name="widget_live_red">#EF4444</color>
+    <color name="widget_live_green">#22C55E</color>
+    <color name="widget_link_blue">#0284C7</color>
+
+    <!-- Automatic Light/Dark adaptive colors for Transparent theme -->
+    <color name="widget_adaptive_ink">#0F172A</color>
+    <color name="widget_adaptive_subtext">#64748B</color>
+    <color name="widget_adaptive_accent">#0284C7</color>
+    <color name="widget_adaptive_divider">#CBD5E1</color>
+
+    <!-- Legacy aliases kept so existing drawables still compile -->
+    <color name="widget_bg_gray">#F1F5F9</color>
+    <color name="widget_accent_gray">#475569</color>
+    <color name="widget_ink_gray">#1E293B</color>
+    <color name="widget_subtext_gray">#64748B</color>
+    <color name="widget_bg_lavender">#EDE9FE</color>
+    <color name="widget_accent_lavender">#8B5CF6</color>
+    <color name="widget_ink_lavender">#3B0764</color>
+    <color name="widget_subtext_lavender">#7C3AED</color>
+    <color name="widget_bg_rose">#FFE4E6</color>
+    <color name="widget_accent_rose">#F43F5E</color>
+    <color name="widget_ink_rose">#881337</color>
+    <color name="widget_subtext_rose">#BE123C</color>
+    <color name="widget_bg_sky">#E0F2FE</color>
+    <color name="widget_accent_sky">#0284C7</color>
+    <color name="widget_ink_sky">#0C4A6E</color>
+    <color name="widget_subtext_sky">#0369A1</color>
+    <color name="widget_bg_mint">#D1FAE5</color>
+    <color name="widget_accent_mint">#059669</color>
+    <color name="widget_ink_mint">#064E3B</color>
+    <color name="widget_subtext_mint">#047857</color>
+    <color name="widget_bg_peach">#FEF9C3</color>
+    <color name="widget_accent_peach">#D97706</color>
+    <color name="widget_ink_peach">#713F12</color>
+    <color name="widget_subtext_peach">#B45309</color>
+    <color name="widget_pin_tint">#F59E0B</color>
+</resources>

@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MD LIVE Tile Widget
+  Matches WIDGET_SPEC.md:
+  Adaptive breakpoints:
+  - Smallest (w < 195 && h < 145): status badge top-right + Ch # + callsign centered; brand & footer hidden.
+  - Horizontal (w >= 195 && h < 145): Channel # left + status badge right; brand, callsign & footer hidden.
+  - Vertical (145 <= h < 185): brand header + status badge + Channel # + callsign + NOW STREAMING + footer.
+  - Expanded Tall (h >= 185): same + event #hashtags strip above footer.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_live_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_surface_bg"
+    android:padding="14dp">
+
+    <!-- Top Row: "MD LIVE" brand header + LIVE / OFFLINE badge -->
+    <LinearLayout
+        android:id="@+id/widget_live_top_row"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/widget_live_brand"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="MD LIVE"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.1"
+            android:textColor="#64748B" />
+
+        <TextView
+            android:id="@+id/widget_live_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="OFFLINE"
+            android:textSize="9sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.05"
+            android:paddingStart="7dp"
+            android:paddingEnd="7dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:background="@drawable/widget_live_badge_offline"
+            android:textColor="#64748B" />
+    </LinearLayout>
+
+    <!-- Center body: channel name + callsign + NOW STREAMING -->
+    <LinearLayout
+        android:id="@+id/widget_live_center"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:gravity="center_vertical">
+
+        <!-- Channel name e.g. "Channel 1" or "Ch 1" -->
+        <TextView
+            android:id="@+id/widget_live_channel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Channel 1"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:textColor="#0F172A"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <!-- Callsign monospace e.g. "MDTV_ch1" -->
+        <TextView
+            android:id="@+id/widget_live_callsign"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="MDTV_ch1"
+            android:fontFamily="monospace"
+            android:textSize="10sp"
+            android:textColor="#94A3B8"
+            android:maxLines="1" />
+
+        <!-- NOW STREAMING indicator when channel is live -->
+        <TextView
+            android:id="@+id/widget_live_now_streaming"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="🔴 NOW STREAMING"
+            android:textSize="10sp"
+            android:textStyle="bold"
+            android:textColor="#EF4444"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Hashtag strip for expanded breakpoint -->
+    <TextView
+        android:id="@+id/widget_live_tags"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="6dp"
+        android:text="#live #broadcast"
+        android:textSize="10sp"
+        android:textStyle="bold"
+        android:textColor="#0284C7"
+        android:visibility="gone" />
+
+    <!-- Divider (ImageView — RemoteViews compatible) -->
+    <ImageView
+        android:id="@+id/widget_live_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="4dp"
+        android:layout_marginBottom="6dp"
+        android:src="@drawable/widget_divider"
+        android:scaleType="fitXY"
+        android:contentDescription="" />
+
+    <!-- Footer: "Open Station ↗" / "Watch Broadcast ↗" -->
+    <TextView
+        android:id="@+id/widget_live_open"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Open Station ↗"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:textColor="#0284C7" />
+
+</LinearLayout>

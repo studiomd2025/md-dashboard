@@ -1,0 +1,8 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MD Dashboard</string>
+    <string name="title_activity_main">MD Dashboard</string>
+    <string name="package_name">com.studiomd.dashboard</string>
+    <string name="custom_url_scheme">com.studiomd.dashboard</string>
+    <string name="default_web_client_id">394153410588-h08h4t7qaq9t5j8jniu1lr0bfhjh3s7p.apps.googleusercontent.com</string>
+</resources>

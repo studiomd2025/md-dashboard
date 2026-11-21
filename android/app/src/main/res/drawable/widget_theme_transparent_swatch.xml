@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Split/checkerboard indicator for Transparent swatch -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Base circle (light gray) -->
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#F1F5F9" />
+            <stroke android:width="1.5dp" android:color="#94A3B8" />
+        </shape>
+    </item>
+    <!-- Dark clip / half circle -->
+    <item android:left="16dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#334155" />
+            <corners android:topRightRadius="16dp" android:bottomRightRadius="16dp" />
+        </shape>
+    </item>
+</layer-list>

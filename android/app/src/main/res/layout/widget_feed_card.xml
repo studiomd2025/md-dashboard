@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MD Feed Card Widget
+  Matches WIDGET_SPEC.md:
+  Header (filter · max posts + "Open App" link) + Divider + Scrollable ListView
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_feed_card_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_surface_bg"
+    android:padding="0dp">
+
+    <!-- Header row: "All Posts · Max 3" + "Open App" -->
+    <LinearLayout
+        android:id="@+id/widget_feed_header_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/widget_feed_header"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="All Posts · Max 3"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:textColor="#1E293B"
+            android:maxLines="1"
+            android:ellipsize="end" />
+
+        <TextView
+            android:id="@+id/widget_feed_open_app"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Open App"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:textColor="#0284C7" />
+    </LinearLayout>
+
+    <!-- Divider below header -->
+    <ImageView
+        android:id="@+id/widget_feed_header_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:src="@drawable/widget_divider"
+        android:scaleType="fitXY"
+        android:contentDescription="" />
+
+    <!-- Scrollable ListView backed by RemoteViewsService -->
+    <ListView
+        android:id="@+id/widget_feed_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:divider="@null"
+        android:dividerHeight="0dp"
+        android:footerDividersEnabled="false"
+        android:headerDividersEnabled="false"
+        android:drawSelectorOnTop="false" />
+
+    <!-- Empty view when no posts match filter -->
+    <TextView
+        android:id="@+id/widget_feed_empty_view"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:text="@string/widget_feed_empty"
+        android:textColor="#64748B"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
+</LinearLayout>

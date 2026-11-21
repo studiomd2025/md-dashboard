@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Automatic Light/Dark adaptive colors for Transparent theme -->
+    <color name="widget_adaptive_ink">#FFFFFF</color>
+    <color name="widget_adaptive_subtext">#94A3B8</color>
+    <color name="widget_adaptive_accent">#38BDF8</color>
+    <color name="widget_adaptive_divider">#334155</color>
+</resources>

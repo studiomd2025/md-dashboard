@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Countdown Widget Layout.
+  Displays a single event countdown with configurable format.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="16dp"
+    android:background="@color/widget_bg_gray">
+
+    <!-- Event label -->
+    <TextView
+        android:id="@+id/widget_cd_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="@string/widget_countdown_name"
+        android:textColor="@color/widget_accent_gray"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Big countdown number / text -->
+    <TextView
+        android:id="@+id/widget_cd_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/widget_ink_gray"
+        android:textSize="36sp"
+        android:textStyle="bold"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="--" />
+
+    <!-- Format sub-label (e.g. "days", or "D:HH:MM:SS") -->
+    <TextView
+        android:id="@+id/widget_cd_format_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:layout_marginTop="2dp"
+        android:textColor="@color/widget_subtext_gray"
+        android:textSize="12sp"
+        android:maxLines="1"
+        android:text="" />
+
+    <!-- Event title -->
+    <TextView
+        android:id="@+id/widget_cd_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:layout_marginTop="10dp"
+        android:textColor="@color/widget_ink_gray"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:text="@string/widget_countdown_empty" />
+
+    <!-- Location -->
+    <TextView
+        android:id="@+id/widget_cd_location"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:layout_marginTop="2dp"
+        android:textColor="@color/widget_subtext_gray"
+        android:textSize="11sp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:text="" />
+
+    <!-- Target date -->
+    <TextView
+        android:id="@+id/widget_cd_date"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:layout_marginTop="2dp"
+        android:textColor="@color/widget_subtext_gray"
+        android:textSize="11sp"
+        android:maxLines="1"
+        android:text="" />
+
+    <!-- Refresh button at bottom -->
+    <ImageButton
+        android:id="@+id/widget_cd_refresh"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:layout_marginTop="8dp"
+        android:src="@android:drawable/ic_menu_rotate"
+        android:background="@null"
+        android:contentDescription="@string/widget_tap_refresh" />
+</LinearLayout>

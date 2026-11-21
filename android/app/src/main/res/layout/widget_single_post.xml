@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MD Single Post Widget
+  Matches WIDGET_SPEC.md:
+  - Header: title (if non-empty), yyyy.m.d · #tag
+  - Excerpt
+  - Uncropped first image/GIF (adjustViewBounds="true", scaleType="fitCenter")
+  - Open ↗ footer
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_single_post_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_surface_bg"
+    android:padding="12dp">
+
+    <!-- Post Title (if non-empty and not "Diary Entry") -->
+    <TextView
+        android:id="@+id/widget_single_post_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text=""
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="#0F172A"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:visibility="gone" />
+
+    <!-- Meta row: yyyy.m.d · #tag -->
+    <TextView
+        android:id="@+id/widget_single_post_timestamp"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="2026.11.21 · #StudioLaunch"
+        android:textSize="10sp"
+        android:textColor="#64748B"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Post excerpt / caption -->
+    <TextView
+        android:id="@+id/widget_single_post_caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="hi here are stay's images"
+        android:textSize="12sp"
+        android:textColor="#1E293B"
+        android:maxLines="3"
+        android:ellipsize="end" />
+
+    <!-- Uncropped image / GIF: adjustViewBounds="true", scaleType="fitCenter" -->
+    <ImageView
+        android:id="@+id/widget_single_post_image"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="6dp"
+        android:layout_marginBottom="6dp"
+        android:adjustViewBounds="true"
+        android:scaleType="fitCenter"
+        android:src="@drawable/widget_preview_single_post"
+        android:contentDescription="Post media"
+        android:visibility="visible" />
+
+    <!-- Divider above footer -->
+    <ImageView
+        android:id="@+id/widget_single_post_divider"
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:src="@drawable/widget_divider"
+        android:scaleType="fitXY"
+        android:contentDescription="" />
+
+    <!-- Footer: "Open ↗" -->
+    <TextView
+        android:id="@+id/widget_single_post_open"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="Open ↗"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:textColor="#0284C7" />
+
+</LinearLayout>
