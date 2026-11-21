@@ -62,7 +62,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="3dp"
-            android:text="stream bestie love options"
+            android:text="Winter Showcase Preview"
             android:textSize="12sp"
             android:textColor="#334155" />
 
@@ -70,20 +70,10 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="#youtube #loveoptions"
+            android:text="#StudioLaunch2026"
             android:textSize="10sp"
             android:textStyle="bold"
             android:textColor="#0284C7" />
-
-        <ImageView
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:layout_marginTop="6dp"
-            android:adjustViewBounds="true"
-            android:scaleType="centerCrop"
-            android:src="@drawable/widget_preview_single_post"
-            android:contentDescription="Post media" />
     </LinearLayout>
 
 </LinearLayout>

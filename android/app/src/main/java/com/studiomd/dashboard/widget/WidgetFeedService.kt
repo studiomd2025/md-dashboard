@@ -3,7 +3,9 @@ package com.studiomd.dashboard.widget
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
@@ -39,40 +41,51 @@ class WidgetFeedFactory(
     }
 
     private fun loadData() {
-        theme = WidgetPrefs.loadTheme(ctx, widgetId)
-        layoutStyle = WidgetPrefs.loadFeedLayoutStyle(ctx, widgetId)
-        val maxPosts = WidgetPrefs.loadFeedMaxPosts(ctx, widgetId)
-        val filter = WidgetPrefs.loadFeedFilter(ctx, widgetId)
-        val tag = WidgetPrefs.loadFeedTag(ctx, widgetId)
-        val dateFrom = WidgetPrefs.loadFeedDateFrom(ctx, widgetId)
-        val dateTo = WidgetPrefs.loadFeedDateTo(ctx, widgetId)
+        try {
+            theme = WidgetPrefs.loadTheme(ctx, widgetId)
+            layoutStyle = WidgetPrefs.loadFeedLayoutStyle(ctx, widgetId)
+            val maxPosts = WidgetPrefs.loadFeedMaxPosts(ctx, widgetId)
+            val filter = WidgetPrefs.loadFeedFilter(ctx, widgetId)
+            val tag = WidgetPrefs.loadFeedTag(ctx, widgetId)
+            val dateFrom = WidgetPrefs.loadFeedDateFrom(ctx, widgetId)
+            val dateTo = WidgetPrefs.loadFeedDateTo(ctx, widgetId)
 
-        val feed = runBlocking { WidgetApiClient.fetchFeed(ctx) } ?: return
-        var filtered = feed.posts
+            val feed = runBlocking { WidgetApiClient.fetchFeed(ctx) } ?: return
+            var filtered = feed.posts
 
-        when (filter) {
-            "pinned" -> filtered = filtered.filter { it.pinned }
-            "tag" -> if (tag.isNotBlank()) {
-                val cleanTag = tag.removePrefix("#").trim()
-                filtered = filtered.filter { p ->
-                    p.tags.any { it.removePrefix("#").equals(cleanTag, ignoreCase = true) }
+            if (filtered.isEmpty() && posts.isNotEmpty()) {
+                // Keep existing cached posts if new fetch is empty/failed
+                return
+            }
+
+            when (filter) {
+                "pinned" -> filtered = filtered.filter { it.pinned }
+                "tag" -> if (tag.isNotBlank()) {
+                    val cleanTag = tag.removePrefix("#").trim()
+                    filtered = filtered.filter { p ->
+                        p.tags.any { it.removePrefix("#").equals(cleanTag, ignoreCase = true) }
+                    }
+                }
+                "date" -> {
+                    if (dateFrom.isNotBlank()) {
+                        filtered = filtered.filter { it.publishedAt >= dateFrom }
+                    }
+                    if (dateTo.isNotBlank()) {
+                        filtered = filtered.filter { it.publishedAt <= dateTo }
+                    }
+                }
+                else -> {
+                    // "all" - pinned first, then newest
+                    filtered = filtered.sortedWith(compareByDescending<WidgetPost> { it.pinned }.thenByDescending { it.publishedAt })
                 }
             }
-            "date" -> {
-                if (dateFrom.isNotBlank()) {
-                    filtered = filtered.filter { it.publishedAt >= dateFrom }
-                }
-                if (dateTo.isNotBlank()) {
-                    filtered = filtered.filter { it.publishedAt <= dateTo }
-                }
+
+            if (filtered.isNotEmpty()) {
+                posts = filtered.take(maxPosts)
             }
-            else -> {
-                // "all" - pinned first, then newest
-                filtered = filtered.sortedWith(compareByDescending<WidgetPost> { it.pinned }.thenByDescending { it.publishedAt })
-            }
+        } catch (e: Exception) {
+            Log.e("WidgetFeedFactory", "Error loading feed data", e)
         }
-
-        posts = filtered.take(maxPosts)
     }
 
     override fun getCount(): Int = posts.size
@@ -101,7 +114,7 @@ class WidgetFeedFactory(
             views.setTextColor(R.id.feed_item_tags, accentColor)
         }
 
-        // Title: clean title or first sentence of excerpt for list
+        // Title: clean title or excerpt snippet
         val cleanTitle = post.title.trim()
         val hasRealTitle = cleanTitle.isNotEmpty() && !cleanTitle.equals("Diary Entry", ignoreCase = true)
 
@@ -133,21 +146,14 @@ class WidgetFeedFactory(
                 views.setViewVisibility(R.id.feed_item_pinned_badge, if (post.pinned) View.VISIBLE else View.GONE)
             }
 
-            // Image
+            // Image with short timeout and sample scaling
             val imageUrl = post.wideImageUrl
             if (!imageUrl.isNullOrBlank()) {
-                try {
-                    val conn = URL(imageUrl).openConnection() as HttpURLConnection
-                    conn.connectTimeout = 4000
-                    conn.readTimeout = 4000
-                    val bmp = conn.inputStream.use { BitmapFactory.decodeStream(it) }
-                    if (bmp != null) {
-                        views.setImageViewBitmap(R.id.feed_item_image, bmp)
-                        views.setViewVisibility(R.id.feed_item_image, View.VISIBLE)
-                    } else {
-                        views.setViewVisibility(R.id.feed_item_image, View.GONE)
-                    }
-                } catch (_: Exception) {
+                val bmp = fetchScaledBitmap(imageUrl)
+                if (bmp != null) {
+                    views.setImageViewBitmap(R.id.feed_item_image, bmp)
+                    views.setViewVisibility(R.id.feed_item_image, View.VISIBLE)
+                } else {
                     views.setViewVisibility(R.id.feed_item_image, View.GONE)
                 }
             } else {
@@ -167,6 +173,19 @@ class WidgetFeedFactory(
         views.setOnClickFillInIntent(rootId, fillInIntent)
 
         return views
+    }
+
+    private fun fetchScaledBitmap(urlStr: String): Bitmap? {
+        return try {
+            val conn = URL(urlStr).openConnection() as HttpURLConnection
+            conn.connectTimeout = 3000
+            conn.readTimeout = 3000
+            conn.inputStream.use { stream ->
+                BitmapFactory.decodeStream(stream)
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     override fun getLoadingView(): RemoteViews? = null

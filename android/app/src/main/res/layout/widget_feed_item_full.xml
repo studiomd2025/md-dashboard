@@ -5,13 +5,14 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:padding="8dp">
 
-    <!-- Uncropped image on top -->
+    <!-- Media image scaled to maximum width -->
     <ImageView
         android:id="@+id/feed_item_image"
         android:layout_width="match_parent"
-        android:layout_height="140dp"
+        android:layout_height="wrap_content"
+        android:maxHeight="220dp"
         android:adjustViewBounds="true"
         android:scaleType="centerCrop"
         android:contentDescription="Post media"

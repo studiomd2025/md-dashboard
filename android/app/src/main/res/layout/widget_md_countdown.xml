@@ -1,105 +1,123 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  MD Countdown Widget
-  Matches WIDGET_SPEC.md: clockless, adaptive, clean typography
+  MD Countdown Widget Layout
+  Matches WIDGET_SPEC.md: clockless, adaptive, single-line timer protection
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/widget_countdown_root"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="top"
-    android:background="@drawable/widget_surface_bg"
-    android:padding="16dp">
+    android:layout_height="match_parent">
 
-    <!-- Horizontal container for Horizontal breakpoint (Timer left + Title right) -->
-    <LinearLayout
-        android:id="@+id/widget_countdown_horiz_container"
+    <ImageView
+        android:id="@+id/widget_countdown_bg"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:visibility="gone">
+        android:layout_height="match_parent"
+        android:scaleType="fitXY"
+        android:contentDescription="" />
 
-        <TextView
-            android:id="@+id/widget_countdown_horiz_value"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="D-00"
-            android:textSize="28sp"
-            android:textStyle="bold"
-            android:textColor="#0F172A"
-            android:includeFontPadding="false" />
-
-        <TextView
-            android:id="@+id/widget_countdown_horiz_title"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginStart="12dp"
-            android:text="Upcoming Event"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:textColor="#334155" />
-    </LinearLayout>
-
-    <!-- Vertical / Standard container -->
     <LinearLayout
-        android:id="@+id/widget_countdown_vert_container"
+        android:id="@+id/widget_countdown_content"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="match_parent"
         android:orientation="vertical"
-        android:gravity="top">
+        android:gravity="top"
+        android:padding="12dp">
 
-        <TextView
-            android:id="@+id/widget_countdown_value"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="D-00"
-            android:textSize="36sp"
-            android:textStyle="bold"
-            android:textColor="#0F172A"
-            android:includeFontPadding="false"
-            android:layout_marginTop="2dp" />
-
-        <TextView
-            android:id="@+id/widget_countdown_title"
+        <!-- Horizontal container for Horizontal breakpoint (Timer left + Title right) -->
+        <LinearLayout
+            android:id="@+id/widget_countdown_horiz_container"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Upcoming Event"
-            android:maxLines="2"
-            android:ellipsize="end"
-            android:textSize="13sp"
-            android:textColor="#334155" />
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone">
 
-        <TextView
-            android:layout_width="0dp"
+            <TextView
+                android:id="@+id/widget_countdown_horiz_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="D-00"
+                android:textSize="28sp"
+                android:textStyle="bold"
+                android:textColor="#0F172A"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:ellipsize="none"
+                android:includeFontPadding="false" />
+
+            <TextView
+                android:id="@+id/widget_countdown_horiz_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="12dp"
+                android:text="Upcoming Event"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="#334155" />
+        </LinearLayout>
+
+        <!-- Vertical / Standard container -->
+        <LinearLayout
+            android:id="@+id/widget_countdown_vert_container"
+            android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
-            android:text="" />
+            android:orientation="vertical"
+            android:gravity="top">
 
-        <!-- Hashtag pill -->
-        <TextView
-            android:id="@+id/widget_countdown_tags"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="#EventTag"
-            android:maxLines="1"
-            android:ellipsize="end"
-            android:textSize="11sp"
-            android:textStyle="bold"
-            android:textColor="#1D4ED8"
-            android:background="@drawable/widget_hashtag_pill"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
-            android:paddingTop="3dp"
-            android:paddingBottom="3dp"
-            android:visibility="gone" />
+            <TextView
+                android:id="@+id/widget_countdown_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="D-00"
+                android:textSize="36sp"
+                android:textStyle="bold"
+                android:textColor="#0F172A"
+                android:maxLines="1"
+                android:singleLine="true"
+                android:ellipsize="none"
+                android:includeFontPadding="false"
+                android:layout_marginTop="2dp" />
+
+            <TextView
+                android:id="@+id/widget_countdown_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Upcoming Event"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:textSize="13sp"
+                android:textColor="#334155" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:text="" />
+
+            <!-- Hashtag pill -->
+            <TextView
+                android:id="@+id/widget_countdown_tags"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="#EventTag"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:textColor="#1D4ED8"
+                android:background="@drawable/widget_hashtag_pill"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:visibility="gone" />
+        </LinearLayout>
+
     </LinearLayout>
-
-</LinearLayout>
+</FrameLayout>

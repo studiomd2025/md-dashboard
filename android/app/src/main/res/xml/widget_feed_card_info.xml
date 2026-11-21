@@ -10,7 +10,7 @@
     android:minResizeHeight="70dp"
     android:targetCellWidth="2"
     android:targetCellHeight="2"
-    android:previewImage="@drawable/widget_preview_feed_card"
+    android:previewLayout="@layout/widget_feed_card_preview"
     android:resizeMode="horizontal|vertical"
     android:updatePeriodMillis="1800000"
     android:widgetCategory="home_screen" />

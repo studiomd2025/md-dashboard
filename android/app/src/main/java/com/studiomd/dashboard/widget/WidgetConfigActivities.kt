@@ -17,14 +17,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Base config activity — shared theme swatches + corner buttons
+// Base config activity — shared theme swatches
 // ─────────────────────────────────────────────────────────────────────────────
 
 abstract class MdBaseWidgetConfigActivity : Activity() {
 
     protected var widgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
     private var selectedTheme: WidgetTheme = WidgetTheme.TRANSPARENT
-    private var selectedCorner: WidgetCorner = WidgetCorner.CRISP
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,13 +59,6 @@ abstract class MdBaseWidgetConfigActivity : Activity() {
         selectedTheme = WidgetPrefs.loadTheme(this, widgetId)
         root.addView(buildThemeSwatches { selectedTheme = it })
 
-        // ── Section: Corner Roundness ─────────────────────────────────────────
-        root.addView(textView("Corner Roundness", 13f, false, "#64748B").apply {
-            setPadding(0, dp(16), 0, dp(10))
-        })
-        selectedCorner = WidgetPrefs.loadCorner(this, widgetId)
-        root.addView(buildCornerButtons { selectedCorner = it })
-
         // ── Save button ───────────────────────────────────────────────────────
         val saveBtn = Button(this).apply {
             text = getString(R.string.widget_save)
@@ -81,7 +73,6 @@ abstract class MdBaseWidgetConfigActivity : Activity() {
         root.addView(saveBtn)
         saveBtn.setOnClickListener {
             WidgetPrefs.saveTheme(this, widgetId, selectedTheme.id)
-            WidgetPrefs.saveCorner(this, widgetId, selectedCorner.id)
             onSave()
             triggerWidgetUpdate()
             setResult(RESULT_OK, Intent().putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId))
@@ -102,11 +93,13 @@ abstract class MdBaseWidgetConfigActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(dotSize, dotSize).apply { rightMargin = gap }
                 if (theme.isTransparent) {
                     background = ContextCompat.getDrawable(context, R.drawable.widget_theme_transparent_swatch)
+                    alpha = if (theme == selectedTheme) 1.0f else 0.6f
                 } else {
                     val gd = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
                         setColor(Color.parseColor(theme.bgHex))
-                        setStroke(dp(2), Color.parseColor(theme.strokeHex))
+                        val strokeColor = if (theme == selectedTheme) Color.parseColor("#0284C7") else Color.parseColor(theme.strokeHex)
+                        setStroke(dp(2), strokeColor)
                     }
                     background = gd
                 }
@@ -118,8 +111,7 @@ abstract class MdBaseWidgetConfigActivity : Activity() {
                 WidgetTheme.ALL.forEachIndexed { i, t ->
                     val v = row.getChildAt(i) as? View ?: return@forEachIndexed
                     if (t.isTransparent) {
-                        // Keep transparent indicator, highlight outline
-                        v.alpha = if (t == theme) 1.0f else 0.7f
+                        v.alpha = if (t == theme) 1.0f else 0.6f
                     } else {
                         val gd = v.background as? GradientDrawable ?: return@forEachIndexed
                         gd.setStroke(dp(2), if (t == theme) Color.parseColor("#0284C7") else Color.parseColor(t.strokeHex))
@@ -127,43 +119,6 @@ abstract class MdBaseWidgetConfigActivity : Activity() {
                 }
             }
             row.addView(dot)
-        }
-        return row
-    }
-
-    private fun buildCornerButtons(onPick: (WidgetCorner) -> Unit): LinearLayout {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.START
-        }
-        WidgetCorner.ALL.forEach { corner ->
-            val btn = Button(this).apply {
-                text = corner.displayName
-                textSize = 13f
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                    dp(36)).apply { rightMargin = dp(8) }
-                setOnClickListener {
-                    onPick(corner)
-                    WidgetCorner.ALL.forEachIndexed { i, c ->
-                        val b = row.getChildAt(i) as? Button ?: return@forEachIndexed
-                        if (c == corner) {
-                            b.setBackgroundColor(Color.parseColor("#0284C7"))
-                            b.setTextColor(Color.WHITE)
-                        } else {
-                            b.setBackgroundColor(Color.parseColor("#F1F5F9"))
-                            b.setTextColor(Color.parseColor("#1E293B"))
-                        }
-                    }
-                }
-            }
-            if (corner == selectedCorner) {
-                btn.setBackgroundColor(Color.parseColor("#0284C7"))
-                btn.setTextColor(Color.WHITE)
-            } else {
-                btn.setBackgroundColor(Color.parseColor("#F1F5F9"))
-                btn.setTextColor(Color.parseColor("#1E293B"))
-            }
-            row.addView(btn)
         }
         return row
     }
@@ -206,13 +161,14 @@ class MdCountdownConfigActivity : MdBaseWidgetConfigActivity() {
         root.addView(textView(getString(R.string.widget_countdown_format_label), 13f, false, "#64748B").apply {
             setPadding(0, dp(14), 0, dp(8))
         })
-        // Format options matching Image 2 exactly
-        val fmtKeys = listOf("full", "adaptive", "days-remaining", "date-only")
+        // Format options matching WIDGET_SPEC.md exactly:
+        // "full" (Full timer), "days-remaining" (Days Remaining), "days-only" (Days only), "date-only" (Target Date Only)
+        val fmtKeys = listOf("full", "days-remaining", "days-only", "date-only")
         val fmtLabels = arrayOf(
             "Full Timer (00 : 00 : 00 : 00)",
-            "Adaptive Remaining (e.g. 2 months, 2 weeks, 3 days)",
             "Days Remaining (D-# / D-DAY / D+#)",
-            "Target Date Only"
+            "Days only (2 months, 3 days)",
+            "Target Date Only (yyyy.m.d)"
         )
 
         val fmtSpinner = Spinner(this).also {
@@ -222,6 +178,7 @@ class MdCountdownConfigActivity : MdBaseWidgetConfigActivity() {
         }
         root.addView(fmtSpinner)
         selectedFormat = WidgetPrefs.loadCountdownFormat(this, widgetId)
+        if (selectedFormat == "adaptive" || selectedFormat == "compact") selectedFormat = "days-only"
         fmtSpinner.setSelection(fmtKeys.indexOf(selectedFormat).coerceAtLeast(0))
         fmtSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
@@ -237,7 +194,7 @@ class MdCountdownConfigActivity : MdBaseWidgetConfigActivity() {
                 val titles = if (countdowns.isNotEmpty()) {
                     countdowns.map { it.title }.toTypedArray()
                 } else {
-                    arrayOf("No upcoming events")
+                    arrayOf("Winter Studio Showcase")
                 }
                 val cdAdapter = ArrayAdapter(this@MdCountdownConfigActivity,
                     android.R.layout.simple_spinner_item, titles)
@@ -310,12 +267,17 @@ class MdSinglePostConfigActivity : MdBaseWidgetConfigActivity() {
             withContext(Dispatchers.Main) {
                 // Format label per WIDGET_SPEC.md:
                 // 1. Non-empty title (ignoring "Diary Entry")
-                // 2. Otherwise excerpt (up to ~42 chars), annotated [Image]/[GIF] if media present
+                // 2. Otherwise excerpt (up to ~42 chars), annotated [Image]/[GIF] ONLY if media present
                 // 3. Otherwise [Image Post — yyyy.m.d]
                 val labels = posts.map { p ->
                     val cleanTitle = p.title.trim()
-                    val hasMedia = !p.wideImageUrl.isNullOrBlank()
-                    val mediaTag = if (hasMedia) "[Image] " else ""
+                    val hasMedia = p.hasMedia || (!p.wideImageUrl.isNullOrBlank() && p.wideImageUrl != "null")
+                    val isGif = p.isAnimatedGif
+                    val mediaTag = when {
+                        isGif -> "[GIF] "
+                        hasMedia -> "[Image] "
+                        else -> ""
+                    }
                     val dateStr = WidgetTimeHelper.formatDate(p.publishedAt)
 
                     when {
@@ -540,6 +502,7 @@ class MdFeedCardConfigActivity : MdBaseWidgetConfigActivity() {
         WidgetPrefs.saveFeedLayoutStyle(this, widgetId, layoutStyle)
         WidgetPrefs.saveFeedMaxPosts(this, widgetId, maxPosts)
         WidgetPrefs.saveFeedFilter(this, widgetId, filter)
+        if (selectedTag.isNotEmpty()) WidgetPrefs.saveFeedTag(this, widgetId, selectedTag)
     }
 
     override fun triggerWidgetUpdate() {
