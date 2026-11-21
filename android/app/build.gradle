@@ -48,6 +48,10 @@ dependencies {
     implementation "androidx.glance:glance-material3:1.1.0"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
     implementation "com.google.code.gson:gson:2.10.1"
+    // Firebase Auth & Play Services Auth for Capawesome Firebase Authentication
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-auth'
+    implementation 'com.google.android.gms:play-services-auth:21.3.0'
 }
 
 apply from: 'capacitor.build.gradle'
