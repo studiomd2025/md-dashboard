@@ -1,8 +1,12 @@
 node_modules/
 build/
 dist/
+dev-dist/
+data/
 coverage/
 .DS_Store
 *.log
 .env*
 !.env.example
+public/assets/aistudio/*
+!public/assets/aistudio/banner_16758633.png

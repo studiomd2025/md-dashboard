@@ -743,10 +743,24 @@ async function startServer() {
       })
       .slice(0, 12);
 
+    const sortedCountdowns = [...sourceCountdowns].sort((a, b) => {
+      const aMs = new Date(a.targetAt).getTime();
+      const bMs = new Date(b.targetAt).getTime();
+      const aValid = !Number.isNaN(aMs);
+      const bValid = !Number.isNaN(bMs);
+      if (!aValid && !bValid) return 0;
+      if (!aValid) return 1;
+      if (!bValid) return -1;
+      const aUpcoming = aMs >= nowMs;
+      const bUpcoming = bMs >= nowMs;
+      if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+      return aUpcoming ? aMs - bMs : bMs - aMs;
+    });
+
     res.json({
       title: 'MY DIARIES DASHBOARD',
       updatedAt: new Date().toISOString(),
-      countdowns: sourceCountdowns,
+      countdowns: sortedCountdowns,
       items: livePosts.map((p) => {
         const visual = p.attachments.find((a) => a.type === 'image' || a.type === 'gif');
         const mediaUrl = visual
@@ -756,13 +770,14 @@ async function startServer() {
           : null;
         return {
           id: p.id,
-          title: p.title || 'Diary Entry',
+          title: (p.title || '').trim(),
           excerpt: stripTags(p.bodyHtml).slice(0, 220),
           publishedAt: p.publishedAt,
           pinned: isPostPinned(p, nowMs),
           pinnedUntil: p.pinnedUntil,
           tags: Array.from(new Set([...p.inlineTags, ...p.manualTags])),
           wideImageUrl: mediaUrl,
+          hasMedia: Boolean(mediaUrl),
           isAnimatedGif: visual?.type === 'gif',
         };
       }),
@@ -795,6 +810,7 @@ async function startServer() {
           : '';
         const tags = Array.from(new Set([...p.inlineTags, ...p.manualTags]));
         const titlePrefix = isPostPinned(p, nowMs) ? '[Pinned] ' : '';
+        const cleanTitle = (p.title || '').trim() || stripTags(p.bodyHtml).slice(0, 60) || p.publishedAt.slice(0, 10);
         const categories = tags.map((t) => `<category>${xmlEscape(t)}</category>`).join('');
         const enclosure = mediaUrl
           ? `<enclosure url="${xmlEscape(mediaUrl)}" type="${visual?.type === 'gif' ? 'image/gif' : 'image/jpeg'}" length="0" />`
@@ -804,7 +820,7 @@ async function startServer() {
           : '';
         return `<item>
       <guid isPermaLink="false">${xmlEscape(p.id)}</guid>
-      <title>${xmlEscape(titlePrefix + (p.title || 'Diary Entry'))}</title>
+      <title>${xmlEscape(titlePrefix + cleanTitle)}</title>
       <link>${xmlEscape(origin)}/?post=${xmlEscape(p.id)}</link>
       <pubDate>${new Date(p.publishedAt).toUTCString()}</pubDate>
       <description>${xmlEscape(stripTags(p.bodyHtml))}</description>
@@ -1286,8 +1302,23 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir));
+    app.use(
+      express.static(distDir, {
+        setHeaders(res, filePath) {
+          const base = path.basename(filePath);
+          if (
+            base === 'index.html' ||
+            base === 'sw.js' ||
+            base === 'registerSW.js' ||
+            base === 'manifest.webmanifest'
+          ) {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+          }
+        },
+      })
+    );
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
       res.sendFile(path.join(distDir, 'index.html'));
     });
   }

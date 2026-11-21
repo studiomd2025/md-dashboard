@@ -11,6 +11,7 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
+        injectRegister: null,
         includeAssets: ['favicon.svg', 'icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png'],
         manifest: {
           id: '/',
@@ -44,8 +45,12 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          cleanupOutdatedCaches: true,
+          skipWaiting: true,
+          clientsClaim: true,
+          navigateFallback: null,
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globPatterns: ['**/*.{js,css,ico,png,svg,woff,woff2}'],
           navigateFallbackDenylist: [/^\/api\//, /^\/uploads\//],
           runtimeCaching: [
             {
