@@ -73,8 +73,8 @@ class MdLiveWidgetProvider : AppWidgetProvider() {
 
                 views.setInt(R.id.widget_live_brand, "setMaxLines", 1)
 
-                // Deep-link: Tapping MD LIVE widget opens #/live directly in MainActivity
-                val liveUri = "https://localhost/#/live"
+                // Deep-link: Tapping MD LIVE widget opens #/live?ch={ch} directly in MainActivity
+                val liveUri = "https://localhost/#/live?ch=$ch"
                 val pi = PendingIntent.getActivity(
                     ctx, id + 50_000,
                     Intent(ctx, MainActivity::class.java).apply {

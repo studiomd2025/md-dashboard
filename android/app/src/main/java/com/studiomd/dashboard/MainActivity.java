@@ -57,15 +57,34 @@ public class MainActivity extends BridgeActivity {
             if (uriStr.contains("#/") || uriStr.contains("?post=")) {
                 wv.postDelayed(() -> {
                     if (uriStr.contains("#/")) {
-                        String rawRoute = uriStr.substring(uriStr.indexOf("#/") + 2); // e.g. "live" or "next"
+                        String rawRoute = uriStr.substring(uriStr.indexOf("#/") + 2); // e.g. "live?ch=2" or "next"
                         String tabName = rawRoute.split("\\?")[0];
-                        wv.evaluateJavascript(
-                            "try { " +
-                            "  window.localStorage.setItem('md_active_view', '" + tabName + "'); " +
-                            "  window.location.hash = '#/" + tabName + "'; " +
-                            "  window.dispatchEvent(new HashChangeEvent('hashchange')); " +
-                            "} catch(e) {}", null
-                        );
+                        String chNum = "";
+                        if (uriStr.contains("ch=")) {
+                            try {
+                                chNum = uriStr.substring(uriStr.indexOf("ch=") + 3);
+                                if (chNum.contains("&")) chNum = chNum.substring(0, chNum.indexOf("&"));
+                            } catch (Exception e) {}
+                        }
+
+                        final String channelToSelect = chNum;
+                        String js = "try { " +
+                                    "  window.localStorage.setItem('md_active_view', '" + tabName + "'); " +
+                                    "  window.location.hash = '#/" + tabName + "'; " +
+                                    "  window.dispatchEvent(new HashChangeEvent('hashchange')); " +
+                                    (channelToSelect.isEmpty() ? "" : 
+                                    "  setTimeout(function() { " +
+                                    "    var btns = document.querySelectorAll('button'); " +
+                                    "    for (var i = 0; i < btns.length; i++) { " +
+                                    "      var txt = btns[i].textContent || ''; " +
+                                    "      if (txt.indexOf('Channel " + channelToSelect + "') !== -1 || txt.indexOf('CH 0" + channelToSelect + "') !== -1) { " +
+                                    "        btns[i].click(); " +
+                                    "        break; " +
+                                    "      } " +
+                                    "    } " +
+                                    "  }, 400); ") +
+                                    "} catch(e) {}";
+                        wv.evaluateJavascript(js, null);
                     } else if (uriStr.contains("?post=")) {
                         String postId = uriStr.substring(uriStr.indexOf("?post=") + 6);
                         wv.evaluateJavascript("window.location.href = '/?post=" + postId + "';", null);
