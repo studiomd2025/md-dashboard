@@ -29,6 +29,16 @@ public class MainActivity extends BridgeActivity {
         handleWidgetDeepLink(intent);
     }
 
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().postDelayed(() -> {
+                getBridge().getWebView().evaluateJavascript("if (typeof window !== 'undefined' && window.dispatchEvent) { window.dispatchEvent(new Event('focus')); window.dispatchEvent(new Event('pageshow')); }", null);
+            }, 300);
+        }
+    }
+
     private void handleWidgetDeepLink(Intent intent) {
         if (getBridge() != null && getBridge().getWebView() != null) {
             WebView wv = getBridge().getWebView();
