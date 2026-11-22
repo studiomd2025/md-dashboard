@@ -4,6 +4,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script>
+      // Immediately unregister all Service Workers and clear CacheStorage in Capacitor WebView
+      (() => {
+        try {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+              for (var registration of registrations) {
+                registration.unregister();
+              }
+            });
+          }
+          if ('caches' in window) {
+            caches.keys().then(function(names) {
+              for (var name of names) {
+                caches.delete(name);
+              }
+            });
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <script>
       // Suppress benign Vite HMR WebSocket notices in cloud preview where HMR is disabled
       (() => {
         const isViteWsNotice = (msg) => {

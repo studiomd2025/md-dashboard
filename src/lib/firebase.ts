@@ -1,7 +1,10 @@
+import { Capacitor } from '@capacitor/core';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { initializeApp } from 'firebase/app';
 import {
   GoogleAuthProvider,
   getAuth,
+  signInWithCredential,
   signInWithPopup,
   signOut,
   type User,
@@ -97,11 +100,27 @@ export function isOwnerUser(
 }
 
 export async function signInOwnerWithGoogle(): Promise<User> {
+  if (Capacitor.isNativePlatform()) {
+    const result = await FirebaseAuthentication.signInWithGoogle();
+    const idToken = result.credential?.idToken;
+
+    if (!idToken) {
+      throw new Error('Google Sign-In did not return an ID token.');
+    }
+
+    const credential = GoogleAuthProvider.credential(idToken);
+    const userCredential = await signInWithCredential(auth, credential);
+    return userCredential.user;
+  }
+
   const cred = await signInWithPopup(auth, googleProvider);
   return cred.user;
 }
 
 export async function signOutOwner(): Promise<void> {
+  if (Capacitor.isNativePlatform()) {
+    await FirebaseAuthentication.signOut().catch(() => {});
+  }
   await signOut(auth);
 }
 
