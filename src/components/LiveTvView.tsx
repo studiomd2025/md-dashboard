@@ -130,7 +130,7 @@ export const STATIONS: BroadcastChannel[] = [
 ];
 
 export const PLAY_EVENTS: PlayEventItem[] = [
-  // Interim Era â€” 2018
+  // Interim Era — 2018
   {
     id: 'ev-2018-iloveme',
     era: 'Interim Era',
@@ -142,7 +142,7 @@ export const PLAY_EVENTS: PlayEventItem[] = [
     mediaId: 'PLoDpsKEy68GF11UPA7mkBgWV-8iLd8JeE',
   },
 
-  // Caratime Era â€” 2019
+  // Caratime Era — 2019
   {
     id: 'ev-2019-identity',
     era: 'Caratime Era',
@@ -174,7 +174,7 @@ export const PLAY_EVENTS: PlayEventItem[] = [
     mediaId: 'PLoDpsKEy68GFyQMXaI2DKMLfSjYVM-LdX',
   },
 
-  // Caratime Era â€” 2020
+  // Caratime Era — 2020
   {
     id: 'ev-2020-lumiere',
     era: 'Caratime Era',
@@ -216,7 +216,7 @@ export const PLAY_EVENTS: PlayEventItem[] = [
     mediaId: 'PLoDpsKEy68GFMLwskKhxSYAWjBbpvlaa9',
   },
 
-  // Caratime Era â€” 2021
+  // Caratime Era — 2021
   {
     id: 'ev-2021-betact-iwas',
     era: 'Caratime Era',
@@ -268,7 +268,7 @@ export const PLAY_EVENTS: PlayEventItem[] = [
     mediaId: 'PLFh_M_vWUiZyIr6K-Q1m0psM1Stw7ZylR',
   },
 
-  // Caratime Era â€” 2022
+  // Caratime Era — 2022
   {
     id: 'ev-2022-belive',
     era: 'Caratime Era',
@@ -300,7 +300,7 @@ export const PLAY_EVENTS: PlayEventItem[] = [
     mediaId: 'PLFh_M_vWUiZxY8w1D4DvsJV0xKTBMjjyp',
   },
 
-  // Caratime Era â€” 2023
+  // Caratime Era — 2023
   {
     id: 'ev-2023-stayteen',
     era: 'Caratime Era',
@@ -332,7 +332,7 @@ export const PLAY_EVENTS: PlayEventItem[] = [
     mediaId: 'PLFh_M_vWUiZwvkGk3y4d0wxH-gHqEiXGT',
   },
 
-  // Daliatime Era â€” 2024
+  // Daliatime Era — 2024
   {
     id: 'ev-2024-thegoodlife',
     era: 'Daliatime Era',
@@ -384,7 +384,7 @@ export const PLAY_EVENTS: PlayEventItem[] = [
     mediaId: 'PLsosZDdrwfcXFe2p8ewZVRja7iVOaV1aQ',
   },
 
-  // Daliatime Era â€” 2025
+  // Daliatime Era — 2025
   {
     id: 'ev-2025-allinday',
     era: 'Daliatime Era',
@@ -1279,12 +1279,17 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     setBannerLoadFailed(false);
   }, [activeTwitchKey, currentTwitchInfo?.bannerImageUrl, currentTwitchInfo?.offlineImageUrl]);
 
-  const twitchProfileBanner = !bannerLoadFailed
-    ? currentTwitchInfo?.bannerImageUrl || currentTwitchInfo?.offlineImageUrl || null
-    : currentTwitchInfo?.offlineImageUrl &&
-      currentTwitchInfo.offlineImageUrl !== currentTwitchInfo?.bannerImageUrl
-    ? currentTwitchInfo.offlineImageUrl
-    : null;
+  const stationFallbackBanners: Record<string, string> = {
+    mdtv_ch1: '/samples/metro-eclipse-dark.jpg',
+    mdmt_ch2: '/samples/sunset-glass.jpg',
+    mdrs_ch3: '/samples/twilight-lagoon.jpg',
+  };
+
+  const twitchProfileBanner =
+    (!bannerLoadFailed && (currentTwitchInfo?.bannerImageUrl || currentTwitchInfo?.offlineImageUrl)) ||
+    currentTwitchInfo?.offlineImageUrl ||
+    stationFallbackBanners[activeTwitchKey] ||
+    '/samples/metro-eclipse-dark.jpg';
 
   const getCleanYoutubeMediaId = (item: PlayEventItem | null): { mediaId: string; isShorts: boolean } => {
     if (!item) return { mediaId: '', isShorts: false };
@@ -1476,7 +1481,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
         if (items.length === 0) return null;
         const years = Array.from(new Set(items.map((e) => e.year)));
         const yearLabel =
-          years.length === 1 ? years[0] : `${years[0]}â€“${years[years.length - 1]}`;
+          years.length === 1 ? years[0] : `${years[0]}–${years[years.length - 1]}`;
         return {
           era,
           count: items.length,
@@ -1656,7 +1661,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               ? selectedTrack.title
               : activeEvent
               ? activeEvent.title
-              : `CH 0${activeStation.number} Â· ${activeStation.callsign}`}
+              : `CH 0${activeStation.number} · ${activeStation.callsign}`}
           </span>
         </div>
 
@@ -1809,7 +1814,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                       ? activeEvent.title
                       : `${activeEvent.era}/${activeEvent.year}/${activeEvent.title}`
                   } (${activeEvent.dateLabel})`
-                : `CH 0${activeStation.number} Â· ${activeStation.callsign}`}
+                : `CH 0${activeStation.number} · ${activeStation.callsign}`}
             </span>
           )}
           {selectedTrack && (
@@ -2429,7 +2434,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                         key={`mini-remote-${station.callsign}`}
                         type="button"
                         onClick={() => onSelectStation(station)}
-                        aria-label={`${station.label} â€” ${station.callsign}`}
+                        aria-label={`${station.label} — ${station.callsign}`}
                         style={
                           isFullscreen
                             ? { height: `${fsChannelBtnHeight}px` }
@@ -2576,8 +2581,8 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     <button
                       type="button"
                       onClick={() => setRemoteBrowsePlayEvents(false)}
-                      title="Back to Channels 1â€“4"
-                      aria-label="Back to Channels 1â€“4"
+                      title="Back to Channels 1–4"
+                      aria-label="Back to Channels 1–4"
                       className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-white/10 text-sky-300 hover:bg-white/20 cursor-pointer"
                     >
                       <RemoteIcon className="h-3 w-3" />
@@ -2615,7 +2620,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                                 </div>
                                 {!isMiniCompactHeight && (
                                   <div className="font-mono text-[8.5px] text-slate-400 tabular-nums truncate">
-                                    {folder.yearLabel} Â· {folder.count}
+                                    {folder.yearLabel} · {folder.count}
                                   </div>
                                 )}
                               </div>
@@ -3261,7 +3266,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     ) : filteredPlaylistTracks.length === 0 ? (
                       <div className="py-12 text-center">
                         <p className="text-xs text-slate-500 dark:text-slate-400">
-                          No videos matching â€œ{playlistFilterQuery}â€.
+                          No videos matching “{playlistFilterQuery}”.
                         </p>
                       </div>
                     ) : (
@@ -3392,7 +3397,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
               type="button"
               role="tab"
               aria-selected={isSelected}
-              aria-label={`${station.label} â€” ${station.callsign}`}
+              aria-label={`${station.label} — ${station.callsign}`}
               onClick={() => onSelectStation(station)}
               className={`flex flex-col items-center justify-center gap-2 rounded-xl border px-1.5 py-2.5 text-center transition-colors cursor-pointer min-w-0 ${
                 isSelected
@@ -3498,7 +3503,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                 type="button"
                 role="tab"
                 aria-selected={isSelected}
-                aria-label={`${station.label} â€” ${station.callsign}`}
+                aria-label={`${station.label} — ${station.callsign}`}
                 onClick={() => onSelectStation(station)}
                 className={`flex flex-col items-center justify-center gap-2 rounded-xl border px-1.5 py-2.5 text-center transition-colors cursor-pointer min-w-0 ${
                   isSelected
@@ -3682,7 +3687,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                           {folder.era}
                         </div>
                         <div className="mt-0.5 font-mono text-[10px] sm:text-[11px] text-slate-500 tabular-nums dark:text-slate-400">
-                          {folder.yearLabel} Â· {folder.count} items
+                          {folder.yearLabel} · {folder.count} items
                         </div>
                       </button>
                     );
@@ -3709,7 +3714,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                             {folder.era}
                           </div>
                           <div className="font-mono text-[11px] text-slate-500 tabular-nums dark:text-slate-400">
-                            {folder.yearLabel} Â· {folder.count}{' '}
+                            {folder.yearLabel} · {folder.count}{' '}
                             {folder.count === 1 ? 'item' : 'items'}
                           </div>
                         </div>
