@@ -241,7 +241,7 @@ export const Header: React.FC<HeaderProps> = ({
               <div
                 role="dialog"
                 aria-label="Notifications"
-                className="absolute right-0 mt-2 w-[300px] sm:w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-slate-200/90 bg-white/95 shadow-2xl backdrop-blur-xl dark:border-slate-700 dark:bg-slate-900/95 z-50 overflow-hidden"
+                className="fixed left-3 right-3 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[340px] rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900 z-50 overflow-hidden"
               >
                 <div className="flex items-center justify-between gap-2 border-b border-slate-200/80 px-3.5 py-2.5 dark:border-slate-800">
                   <span className="font-display text-xs font-bold text-slate-900 dark:text-white">

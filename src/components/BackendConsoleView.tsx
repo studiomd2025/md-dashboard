@@ -69,6 +69,12 @@ import {
 } from '../lib/timeZones';
 import { uploadMediaFile } from '../lib/cloudinaryUpload';
 import { BOOTSTRAP_OWNER_EMAILS } from '../lib/firebase';
+import {
+  getCustomOnlyThemes,
+  PRELOADED_EDITABLE_THEME_IDS,
+  PRELOADED_THEME_DEFAULTS,
+  resolvePreloadedThemePreset,
+} from '../lib/themeColors';
 import { resolveActiveBanner } from './ScheduledBanner';
 import { TimeZoneSelect } from './TimeZoneSelect';
 import { FontSelect } from './FontSelect';
@@ -834,7 +840,12 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     };
 
     if (editingCustomThemeId) {
-      nextList = themes.map((t) => (t.id === editingCustomThemeId ? newTheme : t));
+      const exists = themes.some((t) => t.id === editingCustomThemeId);
+      if (exists) {
+        nextList = themes.map((t) => (t.id === editingCustomThemeId ? newTheme : t));
+      } else {
+        nextList = [...themes, newTheme];
+      }
     } else {
       nextList = [...themes, newTheme];
     }
@@ -853,6 +864,42 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
       setUploadError(formatActionError(err, 'Failed to save custom theme.'));
     }
   };
+
+  const handleEditPreloadedTheme = (presetId: string) => {
+    if (presetId === 'default') return;
+    const resolved = resolvePreloadedThemePreset(presetId, design.customThemes);
+    if (!resolved) return;
+    setEditingCustomThemeId(presetId);
+    setCtName(resolved.name);
+    setCtIsDark(resolved.isDark);
+    setCtSurface(resolved.surfaceStyle || 'aero-glass');
+    setCtCanvasBg(resolved.canvasBg || '#f0f9ff');
+    setCtAccentStart(resolved.accentStart || '#38bdf8');
+    setCtAccentEnd(resolved.accentEnd || '#0284c7');
+    setCtBackdropUrl(resolved.backdropImageUrl || '');
+    setShowCustomThemeBuilder(true);
+  };
+
+  const handleResetPreloadedTheme = async (presetId: string) => {
+    if (presetId === 'default') return;
+    const nextList = (design.customThemes || []).filter((t) => t.id !== presetId);
+    const defaultBase = PRELOADED_THEME_DEFAULTS[presetId];
+    if (editingCustomThemeId === presetId) {
+      setEditingCustomThemeId(null);
+      setShowCustomThemeBuilder(false);
+    }
+    await onUpdateDesign({
+      customThemes: nextList,
+      ...(design.theme === presetId && defaultBase
+        ? { surfaceStyle: defaultBase.surfaceStyle }
+        : {}),
+    });
+  };
+
+  const customOnlyThemes = useMemo(
+    () => getCustomOnlyThemes(design.customThemes),
+    [design.customThemes]
+  );
 
   const handleStartEditCustomTheme = (ct: CustomThemePreset) => {
     setEditingCustomThemeId(ct.id);
@@ -2876,44 +2923,146 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               {THEME_PRESETS.map((preset) => {
                 const selected = design.theme === preset.id;
+                const isDefault = preset.id === 'default';
+                const override = (design.customThemes || []).find(
+                  (t) => t.id === preset.id
+                );
+                const resolved = isDefault
+                  ? null
+                  : resolvePreloadedThemePreset(preset.id, design.customThemes);
+                const isCustomized = Boolean(override);
+
+                const swatches = resolved
+                  ? [resolved.canvasBg, resolved.accentStart, resolved.accentEnd]
+                  : preset.swatches;
+
                 return (
-                  <button
+                  <div
                     key={preset.id}
-                    type="button"
-                    onClick={() => onUpdateDesign({ theme: preset.id })}
-                    className={`flex items-start justify-between gap-3 rounded-2xl border p-4 text-left transition-all cursor-pointer ${
+                    className={`flex flex-col justify-between rounded-2xl border p-4 transition-all ${
                       selected
                         ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
                         : 'border-slate-200/80 bg-white/60 hover:bg-white dark:border-slate-700 dark:bg-slate-900/40'
                     }`}
                   >
-                    <div>
-                      <div className="font-display text-sm font-bold text-slate-900 dark:text-white">
-                        {preset.label}
+                    <div
+                      onClick={() =>
+                        onUpdateDesign({
+                          theme: preset.id,
+                          ...(resolved?.surfaceStyle
+                            ? { surfaceStyle: resolved.surfaceStyle }
+                            : {}),
+                        })
+                      }
+                      className="cursor-pointer flex-1"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                              {preset.label}
+                            </span>
+                            {isCustomized && (
+                              <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                                Edited
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                            {preset.description}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                          {swatches.map((hex, idx) => (
+                            <span
+                              key={`${preset.id}-swatch-${idx}`}
+                              style={{ backgroundColor: hex }}
+                              className="h-4 w-4 rounded-full border border-white shadow-sm"
+                            />
+                          ))}
+                        </div>
                       </div>
-                      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">
-                        {preset.description}
-                      </p>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                      {preset.swatches.map((hex) => (
-                        <span
-                          key={hex}
-                          style={{ backgroundColor: hex }}
-                          className="h-4 w-4 rounded-full border border-white shadow-sm"
-                        />
-                      ))}
+
+                    <div className="mt-3 flex items-center justify-between border-t border-slate-200/50 pt-2.5 dark:border-slate-700/40">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateDesign({
+                            theme: preset.id,
+                            ...(resolved?.surfaceStyle
+                              ? { surfaceStyle: resolved.surfaceStyle }
+                              : {}),
+                          })
+                        }
+                        className={`text-xs font-semibold cursor-pointer ${
+                          selected
+                            ? 'text-sky-700 dark:text-sky-300 font-bold'
+                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                        }`}
+                      >
+                        {selected ? '✓ Active Theme' : 'Select Theme'}
+                      </button>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {isAdmin && !isDefault && (
+                          <>
+                            {isCustomized && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleResetPreloadedTheme(preset.id);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-lg border border-amber-200/80 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/60 cursor-pointer"
+                                title="Reset to preloaded default colors"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                <span>Reset</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEditPreloadedTheme(preset.id);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-lg border border-sky-200/80 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-100 dark:border-sky-800/60 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-900/60 cursor-pointer"
+                              title="Edit this preloaded theme"
+                            >
+                              <Edit3 className="h-3 w-3" />
+                              <span>Edit</span>
+                            </button>
+                          </>
+                        )}
+                        {isDefault && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                            <Lock className="h-3 w-3" />
+                            <span>Locked</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
 
-            {/* + Add New Theme card directly below Crystal Pearl Minimal */}
+            {/* + Add New Theme card directly below preloaded themes */}
             {isAdmin && (
               <button
                 type="button"
-                onClick={() => setShowCustomThemeBuilder((v) => !v)}
+                onClick={() => {
+                  setEditingCustomThemeId(null);
+                  setCtName('');
+                  setCtIsDark(false);
+                  setCtSurface('aero-glass');
+                  setCtCanvasBg('#f0f9ff');
+                  setCtAccentStart('#38bdf8');
+                  setCtAccentEnd('#0284c7');
+                  setCtBackdropUrl('');
+                  setShowCustomThemeBuilder((v) => !v);
+                }}
                 aria-expanded={showCustomThemeBuilder}
                 className={`flex w-full items-center justify-between gap-3 rounded-2xl border border-dashed p-4 text-left transition-colors cursor-pointer ${
                   showCustomThemeBuilder
@@ -3110,7 +3259,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                     className="aero-button-primary inline-flex items-center gap-2 rounded-xl px-5 py-2 text-xs font-semibold text-white cursor-pointer"
                   >
                     <Plus className="h-4 w-4" />
-                    Save & Apply Theme
+                    {editingCustomThemeId ? 'Save & Apply Changes' : 'Save & Apply Theme'}
                   </button>
                 </div>
                   </form>
@@ -3119,13 +3268,13 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
             )}
           </div>
 
-          {(design.customThemes?.length ?? 0) > 0 && (
+          {customOnlyThemes.length > 0 && (
             <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
               <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white">
-                My Saved Custom Themes ({design.customThemes?.length})
+                My Saved Custom Themes ({customOnlyThemes.length})
               </h4>
               <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {(design.customThemes || []).map((ct) => {
+                {customOnlyThemes.map((ct) => {
                   const selected = design.theme === ct.id;
                   return (
                     <div
