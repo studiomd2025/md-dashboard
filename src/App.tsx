@@ -1988,7 +1988,7 @@ export default function App() {
                   }
                 : undefined
             }
-            className={`fixed inset-0 z-50 flex lg:hidden bg-black/65 backdrop-blur-sm transition-[opacity,visibility] duration-300 ease-out ${
+            className={`fixed inset-0 z-50 flex lg:hidden bg-black/65 transition-[opacity,visibility] duration-300 ease-out ${
               isMobileSidebarOpen || isDraggingDrawer
                 ? 'opacity-100 visible pointer-events-auto'
                 : 'opacity-0 invisible pointer-events-none'

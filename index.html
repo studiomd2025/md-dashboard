@@ -150,14 +150,16 @@
         overflow: visible;
       }
       .md-splash-logo-img {
-        width: 76px;
-        height: 64px;
-        padding: 4px 10px;
+        width: auto;
+        height: 80px;
+        max-width: 85vw;
+        padding: 0;
         box-sizing: border-box;
         display: block;
         object-fit: contain;
         object-position: center;
         background: transparent;
+        border: none;
         box-shadow: none;
         overflow: visible;
       }
@@ -202,7 +204,7 @@
   <body>
     <div id="md-boot-splash" role="progressbar" aria-label="Loading MD Dashboard" aria-valuemin="0" aria-valuemax="100" aria-valuenow="14">
       <div class="md-splash-logo-wrap">
-        <img src="/favicon.svg" alt="MD" class="md-splash-logo-img" />
+        <img src="/splash-logo.png" alt="MD" class="md-splash-logo-img" />
       </div>
       <div class="md-splash-title">MY DIARIES DASHBOARD</div>
       <div class="md-splash-track">
