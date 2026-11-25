@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 
 /**
- * Per-widget SharedPreferences storage.
+ * Per-widget and app-synced SharedPreferences storage.
  * Key convention: "<prefix>_<widgetId>"
  */
 object WidgetPrefs {
@@ -18,7 +18,7 @@ object WidgetPrefs {
         prefs(ctx).edit().putString("theme_$widgetId", themeId).apply()
 
     fun loadTheme(ctx: Context, widgetId: Int): WidgetTheme =
-        WidgetTheme.fromId(prefs(ctx).getString("theme_$widgetId", "transparent") ?: "transparent")
+        WidgetTheme.fromId(prefs(ctx).getString("theme_$widgetId", "white") ?: "white")
 
     // ── corner radius ────────────────────────────────────────────────────────
 
@@ -39,8 +39,24 @@ object WidgetPrefs {
     fun saveCountdownFormat(ctx: Context, widgetId: Int, format: String) =
         prefs(ctx).edit().putString("cd_format_$widgetId", format).apply()
 
+    fun hasCountdownFormat(ctx: Context, widgetId: Int): Boolean =
+        prefs(ctx).contains("cd_format_$widgetId")
+
     fun loadCountdownFormat(ctx: Context, widgetId: Int): String =
         prefs(ctx).getString("cd_format_$widgetId", "days-remaining") ?: "days-remaining"
+
+    // App-synced active countdown selection (from Mobile Widget Studio)
+    fun saveSelectedCountdownId(ctx: Context, countdownId: String) =
+        prefs(ctx).edit().putString("app_selected_cd_id", countdownId).apply()
+
+    fun loadSelectedCountdownId(ctx: Context): String =
+        prefs(ctx).getString("app_selected_cd_id", "") ?: ""
+
+    fun saveSelectedCountdownFormat(ctx: Context, format: String) =
+        prefs(ctx).edit().putString("app_selected_cd_format", format).apply()
+
+    fun loadSelectedCountdownFormat(ctx: Context): String =
+        prefs(ctx).getString("app_selected_cd_format", "") ?: ""
 
     // ── single post widget ───────────────────────────────────────────────────
 

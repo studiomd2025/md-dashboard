@@ -8,9 +8,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data models (lightweight, widget-only)
@@ -26,7 +28,9 @@ data class WidgetPost(
     val tags: List<String>,
     val wideImageUrl: String? = null,
     val hasMedia: Boolean = false,
-    val isAnimatedGif: Boolean = false
+    val isAnimatedGif: Boolean = false,
+    val scheduledFor: String? = null,
+    val scheduledTimeZone: String? = null
 )
 
 data class WidgetCountdown(
@@ -34,8 +38,9 @@ data class WidgetCountdown(
     val title: String,
     val targetAt: String,
     val location: String?,
-    val displayFormat: String,   // "full" | "days-only" | "days-remaining" | "date-only"
-    val tag: String? = null
+    val displayFormat: String,   // "full" | "days-only" | "days-remaining" | "d-day" | "date-only"
+    val tag: String? = null,
+    val timeZone: String? = null
 )
 
 data class TwitchStatus(
@@ -47,7 +52,8 @@ data class TwitchStatus(
 data class WidgetFeed(
     val updatedAt: String,
     val posts: List<WidgetPost>,
-    val countdowns: List<WidgetCountdown>
+    val countdowns: List<WidgetCountdown>,
+    val scheduledPosts: List<WidgetPost> = emptyList()
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,7 +66,7 @@ object WidgetApiClient {
     private const val PREFS_NAME = "md_widget_api"
     private const val KEY_BASE_URL = "base_url"
     private const val KEY_FEED_CACHE = "cached_feed_json"
-    private const val FALLBACK_URL = "https://ais-pre-jlyggj2es4wxdx5r36t72p-456241029780.asia-northeast1.run.app"
+    private const val FALLBACK_URL = "https://mddashboard.onrender.com"
 
     private const val FIRESTORE_QUERY_URL =
         "https://firestore.googleapis.com/v1/projects/project-0452fe0b-b1ea-4de7-a42/databases/ai-studio-mydiariesintrane-9f3ca7cf-96b7-41e9-bf7b-35c4bc36aabf/documents:runQuery?key=AIzaSyDHg786M0d3zqkIUD5MPr8wsmjvzjNttag"
@@ -71,8 +77,14 @@ object WidgetApiClient {
     fun saveBaseUrl(ctx: Context, url: String) =
         prefs(ctx).edit().putString(KEY_BASE_URL, url.trimEnd('/')).apply()
 
-    fun loadBaseUrl(ctx: Context): String =
-        prefs(ctx).getString(KEY_BASE_URL, FALLBACK_URL) ?: FALLBACK_URL
+    fun loadBaseUrl(ctx: Context): String {
+        val saved = prefs(ctx).getString(KEY_BASE_URL, FALLBACK_URL) ?: FALLBACK_URL
+        if (saved.contains("ais-pre-jlyggj2es4wxdx5r36t72p")) {
+            saveBaseUrl(ctx, FALLBACK_URL)
+            return FALLBACK_URL
+        }
+        return saved
+    }
 
     private fun saveFeedCache(ctx: Context, json: String) =
         prefs(ctx).edit().putString(KEY_FEED_CACHE, json).apply()
@@ -80,51 +92,102 @@ object WidgetApiClient {
     private fun loadFeedCache(ctx: Context): String? =
         prefs(ctx).getString(KEY_FEED_CACHE, null)
 
+    fun getCachedFeed(ctx: Context): WidgetFeed? = loadCachedFeed(ctx)
+
+    fun upsertCountdownsInCache(ctx: Context, incoming: List<WidgetCountdown>) {
+        if (incoming.isEmpty()) return
+        val existing = loadCachedFeed(ctx)
+        val merged = WidgetFeed(
+            updatedAt = WidgetTimeHelper.updatedNow(),
+            posts = existing?.posts ?: emptyList(),
+            countdowns = incoming.sortedBy { it.targetAt },
+            scheduledPosts = existing?.scheduledPosts ?: emptyList()
+        )
+        saveFeedCache(ctx, serializeFeed(merged))
+    }
+
     // ── Fetch widget feed ────────────────────────────────────────────────────
 
     suspend fun fetchFeed(ctx: Context): WidgetFeed? = withContext(Dispatchers.IO) {
-        try {
-            // Query Firestore REST API directly to bypass AI Studio's 302 auth cookie check
-            val countdowns = fetchFirestoreCountdowns()
-            val posts = fetchFirestorePosts()
+        val cached = loadCachedFeed(ctx)
+        var anyNetworkSucceeded = false
 
-            val feed = WidgetFeed(
-                updatedAt = WidgetTimeHelper.updatedNow(),
-                posts = posts,
-                countdowns = countdowns
-            )
-
-            // Cache clean parsed JSON for offline/refresh persistence
-            val serializedCache = serializeFeed(feed)
-            saveFeedCache(ctx, serializedCache)
-
-            feed
+        val countdowns = try {
+            val res = fetchFirestoreCountdowns()
+            anyNetworkSucceeded = true
+            res
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching live feed from Firestore REST, loading cached feed", e)
-            loadCachedFeed(ctx)
+            Log.e(TAG, "Error fetching countdowns from Firestore REST", e)
+            cached?.countdowns ?: emptyList()
         }
+
+        val (livePosts, scheduledPosts) = try {
+            val all = fetchFirestorePosts()
+            anyNetworkSucceeded = true
+            val nowMs = System.currentTimeMillis()
+            val live = mutableListOf<WidgetPost>()
+            val scheduled = mutableListOf<WidgetPost>()
+            for (p in all) {
+                val schedStr = p.scheduledFor
+                if (!schedStr.isNullOrBlank()) {
+                    scheduled.add(p)
+                    val schedMs = WidgetTimeHelper.parseIsoMillis(schedStr)
+                    if (schedMs == null || schedMs <= nowMs) {
+                        live.add(p)
+                    }
+                } else {
+                    live.add(p)
+                }
+            }
+            Pair<List<WidgetPost>, List<WidgetPost>>(live, scheduled)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching posts from Firestore REST", e)
+            Pair<List<WidgetPost>, List<WidgetPost>>(
+                cached?.posts ?: emptyList(),
+                cached?.scheduledPosts ?: emptyList()
+            )
+        }
+
+        if (!anyNetworkSucceeded) {
+            return@withContext cached
+        }
+
+        val feed = WidgetFeed(
+            updatedAt = WidgetTimeHelper.updatedNow(),
+            posts = livePosts,
+            countdowns = countdowns,
+            scheduledPosts = scheduledPosts
+        )
+
+        saveFeedCache(ctx, serializeFeed(feed))
+        feed
     }
 
     suspend fun fetchTwitchStatus(ctx: Context, channel: String): TwitchStatus? = withContext(Dispatchers.IO) {
         try {
             val base = loadBaseUrl(ctx)
-            val url = "$base/api/twitch-status?channel=${channel.trim()}"
+            val encodedChannel = URLEncoder.encode(channel.trim(), "UTF-8")
+            val url = "$base/api/twitch-status?channel=$encodedChannel"
             val conn = URL(url).openConnection() as HttpURLConnection
-            conn.connectTimeout = 4000
-            conn.readTimeout = 4000
-            val cookies = try { CookieManager.getInstance().getCookie(base) } catch (_: Exception) { null }
-            if (!cookies.isNullOrBlank()) {
-                conn.setRequestProperty("Cookie", cookies)
-            }
-            val raw = conn.inputStream.use { it.bufferedReader().readText() }.trim()
-            if (!raw.startsWith("{")) return@withContext null
+            try {
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
+                val cookies = try { CookieManager.getInstance().getCookie(base) } catch (_: Exception) { null }
+                if (!cookies.isNullOrBlank()) {
+                    conn.setRequestProperty("Cookie", cookies)
+                }
+                val raw = conn.inputStream.use { it.bufferedReader().readText() }.trim()
+                if (!raw.startsWith("{")) return@withContext null
 
-            val obj = JSONObject(raw)
-            TwitchStatus(
-                channel = obj.optString("channel", channel),
-                isLive = obj.optBoolean("isLive", false),
-                streamTitle = obj.optString("streamTitle").takeIf { it.isNotBlank() && it != "null" }
-            )
+                val obj = JSONObject(raw)
+                TwitchStatus(
+                    channel = obj.optString("channel", channel),
+                    isLive = obj.optBoolean("isLive", false),
+                    streamTitle = obj.optString("streamTitle").takeIf { it.isNotBlank() && it != "null" }
+                )
+            } finally {
+                conn.disconnect()
+            }
         } catch (e: Exception) {
             null
         }
@@ -139,7 +202,7 @@ object WidgetApiClient {
             })
         }.toString()
 
-        val raw = postJson(FIRESTORE_QUERY_URL, payload) ?: return emptyList()
+        val raw = postJson(FIRESTORE_QUERY_URL, payload)
         val root = JSONArray(raw)
 
         return (0 until root.length()).mapNotNull { i ->
@@ -153,15 +216,21 @@ object WidgetApiClient {
             val targetAt = optString(fields, "targetAt")
             if (id.isBlank() || title.isBlank() || targetAt.isBlank()) return@mapNotNull null
 
+            val rawFormat = optString(fields, "displayFormat")
+            val normalizedFormat = when {
+                rawFormat.isBlank() || rawFormat == "compact" -> "days-remaining"
+                rawFormat == "d-day" -> "days-remaining"
+                else -> rawFormat
+            }
+
             WidgetCountdown(
                 id = id,
                 title = title,
                 targetAt = targetAt,
                 location = optString(fields, "location").takeIf { it.isNotBlank() },
-                displayFormat = optString(fields, "displayFormat").let {
-                    if (it.isBlank() || it == "compact") "days-remaining" else it
-                },
-                tag = optString(fields, "tag").takeIf { it.isNotBlank() }
+                displayFormat = normalizedFormat,
+                tag = optString(fields, "tag").takeIf { it.isNotBlank() },
+                timeZone = optString(fields, "timeZone").takeIf { it.isNotBlank() }
             )
         }.sortedBy { it.targetAt }
     }
@@ -180,7 +249,7 @@ object WidgetApiClient {
             })
         }.toString()
 
-        val raw = postJson(FIRESTORE_QUERY_URL, payload) ?: return emptyList()
+        val raw = postJson(FIRESTORE_QUERY_URL, payload)
         val root = JSONArray(raw)
 
         return (0 until root.length()).mapNotNull { i ->
@@ -193,6 +262,8 @@ object WidgetApiClient {
             val title = optString(fields, "title").trim()
             val bodyHtml = optString(fields, "bodyHtml")
             val publishedAt = optString(fields, "publishedAt")
+            val scheduledFor = optString(fields, "scheduledFor").takeIf { it.isNotBlank() }
+            val scheduledTimeZone = optString(fields, "scheduledTimeZone").takeIf { it.isNotBlank() }
             val pinnedUntil = optString(fields, "pinnedUntil").takeIf { it.isNotBlank() }
 
             val excerpt = stripHtml(bodyHtml).ifBlank { if (title.isNotBlank() && !title.equals("Diary Entry", true)) title else "Post" }
@@ -214,30 +285,32 @@ object WidgetApiClient {
                 tags = tags,
                 wideImageUrl = imageUrl,
                 hasMedia = hasMedia,
-                isAnimatedGif = isGif
+                isAnimatedGif = isGif,
+                scheduledFor = scheduledFor,
+                scheduledTimeZone = scheduledTimeZone
             )
         }.sortedByDescending { it.publishedAt }
     }
 
     // ── Helper parsing functions ─────────────────────────────────────────────
 
-    private fun postJson(urlStr: String, jsonBody: String): String? {
-        return try {
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
+    private fun postJson(urlStr: String, jsonBody: String): String {
+        val conn = URL(urlStr).openConnection() as HttpURLConnection
+        try {
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
-            conn.connectTimeout = 6000
-            conn.readTimeout = 6000
+            conn.connectTimeout = 12000
+            conn.readTimeout = 12000
             conn.doOutput = true
 
             OutputStreamWriter(conn.outputStream).use { it.write(jsonBody); it.flush() }
 
             if (conn.responseCode in 200..299) {
-                conn.inputStream.use { it.bufferedReader().readText() }
-            } else null
-        } catch (e: Exception) {
-            Log.e(TAG, "POST request failed for $urlStr", e)
-            null
+                return conn.inputStream.use { it.bufferedReader().readText() }
+            }
+            throw IOException("HTTP ${conn.responseCode} for $urlStr")
+        } finally {
+            conn.disconnect()
         }
     }
 
@@ -291,26 +364,50 @@ object WidgetApiClient {
 
     // ── Local SharedPreferences Cache Serialization ──────────────────────────
 
+    private fun serializePost(p: WidgetPost): JSONObject = JSONObject().apply {
+        put("id", p.id)
+        put("title", p.title)
+        put("excerpt", p.excerpt)
+        put("publishedAt", p.publishedAt)
+        put("pinned", p.pinned)
+        put("pinnedUntil", p.pinnedUntil ?: "")
+        put("tags", JSONArray(p.tags))
+        put("wideImageUrl", p.wideImageUrl ?: "")
+        put("hasMedia", p.hasMedia)
+        put("isAnimatedGif", p.isAnimatedGif)
+        put("scheduledFor", p.scheduledFor ?: "")
+        put("scheduledTimeZone", p.scheduledTimeZone ?: "")
+    }
+
+    private fun deserializePost(obj: JSONObject): WidgetPost {
+        val img = obj.optString("wideImageUrl").takeIf { it.isNotBlank() }
+        return WidgetPost(
+            id = obj.optString("id"),
+            title = obj.optString("title"),
+            excerpt = obj.optString("excerpt"),
+            publishedAt = obj.optString("publishedAt"),
+            pinned = obj.optBoolean("pinned"),
+            pinnedUntil = obj.optString("pinnedUntil").takeIf { it.isNotBlank() },
+            tags = (0 until (obj.optJSONArray("tags")?.length() ?: 0)).map { j -> obj.getJSONArray("tags").getString(j) },
+            wideImageUrl = img,
+            hasMedia = obj.optBoolean("hasMedia", !img.isNullOrBlank()),
+            isAnimatedGif = obj.optBoolean("isAnimatedGif"),
+            scheduledFor = obj.optString("scheduledFor").takeIf { it.isNotBlank() },
+            scheduledTimeZone = obj.optString("scheduledTimeZone").takeIf { it.isNotBlank() }
+        )
+    }
+
     private fun serializeFeed(feed: WidgetFeed): String {
         val root = JSONObject()
         root.put("updatedAt", feed.updatedAt)
 
         val postsArr = JSONArray()
-        feed.posts.forEach { p ->
-            postsArr.put(JSONObject().apply {
-                put("id", p.id)
-                put("title", p.title)
-                put("excerpt", p.excerpt)
-                put("publishedAt", p.publishedAt)
-                put("pinned", p.pinned)
-                put("pinnedUntil", p.pinnedUntil ?: "")
-                put("tags", JSONArray(p.tags))
-                put("wideImageUrl", p.wideImageUrl ?: "")
-                put("hasMedia", p.hasMedia)
-                put("isAnimatedGif", p.isAnimatedGif)
-            })
-        }
+        feed.posts.forEach { postsArr.put(serializePost(it)) }
         root.put("posts", postsArr)
+
+        val schedArr = JSONArray()
+        feed.scheduledPosts.forEach { schedArr.put(serializePost(it)) }
+        root.put("scheduledPosts", schedArr)
 
         val cdArr = JSONArray()
         feed.countdowns.forEach { c ->
@@ -321,6 +418,7 @@ object WidgetApiClient {
                 put("location", c.location ?: "")
                 put("displayFormat", c.displayFormat)
                 put("tag", c.tag ?: "")
+                put("timeZone", c.timeZone ?: "")
             })
         }
         root.put("countdowns", cdArr)
@@ -334,20 +432,12 @@ object WidgetApiClient {
             val root = JSONObject(raw)
             val postsArr = root.optJSONArray("posts") ?: JSONArray()
             val posts = (0 until postsArr.length()).map { i ->
-                val obj = postsArr.getJSONObject(i)
-                val img = obj.optString("wideImageUrl").takeIf { it.isNotBlank() }
-                WidgetPost(
-                    id = obj.optString("id"),
-                    title = obj.optString("title"),
-                    excerpt = obj.optString("excerpt"),
-                    publishedAt = obj.optString("publishedAt"),
-                    pinned = obj.optBoolean("pinned"),
-                    pinnedUntil = obj.optString("pinnedUntil").takeIf { it.isNotBlank() },
-                    tags = (0 until (obj.optJSONArray("tags")?.length() ?: 0)).map { j -> obj.getJSONArray("tags").getString(j) },
-                    wideImageUrl = img,
-                    hasMedia = obj.optBoolean("hasMedia", !img.isNullOrBlank()),
-                    isAnimatedGif = obj.optBoolean("isAnimatedGif")
-                )
+                deserializePost(postsArr.getJSONObject(i))
+            }
+
+            val schedArr = root.optJSONArray("scheduledPosts") ?: JSONArray()
+            val scheduledPosts = (0 until schedArr.length()).map { i ->
+                deserializePost(schedArr.getJSONObject(i))
             }
 
             val cdArr = root.optJSONArray("countdowns") ?: JSONArray()
@@ -359,14 +449,16 @@ object WidgetApiClient {
                     targetAt = obj.optString("targetAt"),
                     location = obj.optString("location").takeIf { it.isNotBlank() },
                     displayFormat = obj.optString("displayFormat"),
-                    tag = obj.optString("tag").takeIf { it.isNotBlank() }
+                    tag = obj.optString("tag").takeIf { it.isNotBlank() },
+                    timeZone = obj.optString("timeZone").takeIf { it.isNotBlank() }
                 )
             }
 
             WidgetFeed(
                 updatedAt = root.optString("updatedAt"),
                 posts = posts,
-                countdowns = countdowns
+                countdowns = countdowns,
+                scheduledPosts = scheduledPosts
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error deserializing cached feed", e)

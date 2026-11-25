@@ -23,7 +23,7 @@ import kotlinx.coroutines.withContext
 abstract class MdBaseWidgetConfigActivity : Activity() {
 
     protected var widgetId: Int = AppWidgetManager.INVALID_APPWIDGET_ID
-    private var selectedTheme: WidgetTheme = WidgetTheme.TRANSPARENT
+    private var selectedTheme: WidgetTheme = WidgetTheme.WHITE
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -98,8 +98,9 @@ abstract class MdBaseWidgetConfigActivity : Activity() {
                     val gd = GradientDrawable().apply {
                         shape = GradientDrawable.OVAL
                         setColor(Color.parseColor(theme.bgHex))
-                        val strokeColor = if (theme == selectedTheme) Color.parseColor("#0284C7") else Color.parseColor(theme.strokeHex)
-                        setStroke(dp(2), strokeColor)
+                        val isSelected = theme == selectedTheme
+                        val strokeColor = if (isSelected) Color.parseColor("#0284C7") else Color.parseColor(theme.strokeHex)
+                        setStroke(if (isSelected) dp(3) else dp(2), strokeColor)
                     }
                     background = gd
                 }
@@ -114,7 +115,8 @@ abstract class MdBaseWidgetConfigActivity : Activity() {
                         v.alpha = if (t == theme) 1.0f else 0.6f
                     } else {
                         val gd = v.background as? GradientDrawable ?: return@forEachIndexed
-                        gd.setStroke(dp(2), if (t == theme) Color.parseColor("#0284C7") else Color.parseColor(t.strokeHex))
+                        val isSelected = t == theme
+                        gd.setStroke(if (isSelected) dp(3) else dp(2), if (isSelected) Color.parseColor("#0284C7") else Color.parseColor(t.strokeHex))
                     }
                 }
             }
@@ -166,7 +168,7 @@ class MdCountdownConfigActivity : MdBaseWidgetConfigActivity() {
         val fmtKeys = listOf("full", "days-remaining", "days-only", "date-only")
         val fmtLabels = arrayOf(
             "Full Timer (00 : 00 : 00 : 00)",
-            "Days Remaining (D-# / D-DAY / D+#)",
+            "Days Remaining (D-# / D-Day / D+#)",
             "Days only (2 months, 3 days)",
             "Target Date Only (yyyy.m.d)"
         )
@@ -179,6 +181,7 @@ class MdCountdownConfigActivity : MdBaseWidgetConfigActivity() {
         root.addView(fmtSpinner)
         selectedFormat = WidgetPrefs.loadCountdownFormat(this, widgetId)
         if (selectedFormat == "adaptive" || selectedFormat == "compact") selectedFormat = "days-only"
+        if (selectedFormat == "d-day") selectedFormat = "days-remaining"
         fmtSpinner.setSelection(fmtKeys.indexOf(selectedFormat).coerceAtLeast(0))
         fmtSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
@@ -187,37 +190,71 @@ class MdCountdownConfigActivity : MdBaseWidgetConfigActivity() {
             override fun onNothingSelected(p: AdapterView<*>?) {}
         }
 
+        val bindCountdowns: (List<WidgetCountdown>) -> Unit = { list ->
+            countdowns = list
+            val titles = if (countdowns.isNotEmpty()) {
+                countdowns.map { it.title }.toTypedArray()
+            } else {
+                arrayOf("Winter Studio Showcase")
+            }
+            val cdAdapter = ArrayAdapter(
+                this@MdCountdownConfigActivity,
+                android.R.layout.simple_spinner_item,
+                titles
+            )
+            cdAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            cdSpinner.adapter = cdAdapter
+
+            val savedId = WidgetPrefs.loadCountdownId(this@MdCountdownConfigActivity, widgetId)
+                .ifEmpty { WidgetPrefs.loadSelectedCountdownId(this@MdCountdownConfigActivity) }
+            val idx = countdowns.indexOfFirst { it.id == savedId }.coerceAtLeast(0)
+            cdSpinner.setSelection(idx)
+            if (countdowns.isNotEmpty()) {
+                selectedId = countdowns[idx].id
+                if (!WidgetPrefs.hasCountdownFormat(this@MdCountdownConfigActivity, widgetId)) {
+                    val cdFmt = countdowns[idx].displayFormat.let {
+                        when (it) {
+                            "d-day", "compact", "" -> "days-remaining"
+                            "adaptive" -> "days-only"
+                            else -> it
+                        }
+                    }
+                    selectedFormat = cdFmt
+                    fmtSpinner.setSelection(fmtKeys.indexOf(selectedFormat).coerceAtLeast(0))
+                }
+            }
+
+            cdSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    selectedId = countdowns.getOrNull(pos)?.id ?: ""
+                }
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }
+
+        // Pre-populate immediately from cache so tapping Save right away still preserves selection
+        val cachedList = WidgetApiClient.getCachedFeed(this)?.countdowns ?: emptyList()
+        if (cachedList.isNotEmpty()) {
+            bindCountdowns(cachedList)
+        }
+
         CoroutineScope(Dispatchers.IO).launch {
             val feed = WidgetApiClient.fetchFeed(this@MdCountdownConfigActivity)
-            countdowns = feed?.countdowns ?: emptyList()
+            val fresh = feed?.countdowns ?: emptyList()
             withContext(Dispatchers.Main) {
-                val titles = if (countdowns.isNotEmpty()) {
-                    countdowns.map { it.title }.toTypedArray()
-                } else {
-                    arrayOf("Winter Studio Showcase")
-                }
-                val cdAdapter = ArrayAdapter(this@MdCountdownConfigActivity,
-                    android.R.layout.simple_spinner_item, titles)
-                cdAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-                cdSpinner.adapter = cdAdapter
-
-                val savedId = WidgetPrefs.loadCountdownId(this@MdCountdownConfigActivity, widgetId)
-                val idx = countdowns.indexOfFirst { it.id == savedId }.coerceAtLeast(0)
-                cdSpinner.setSelection(idx)
-                if (countdowns.isNotEmpty()) selectedId = countdowns[idx].id
-
-                cdSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                    override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                        selectedId = countdowns.getOrNull(pos)?.id ?: ""
-                    }
-                    override fun onNothingSelected(p: AdapterView<*>?) {}
+                if (fresh.isNotEmpty() || countdowns.isEmpty()) {
+                    bindCountdowns(fresh)
                 }
             }
         }
     }
 
     override fun onSave() {
-        if (selectedId.isNotEmpty()) WidgetPrefs.saveCountdownId(this, widgetId, selectedId)
+        val idToSave = selectedId.ifEmpty { countdowns.firstOrNull()?.id.orEmpty() }
+        if (idToSave.isNotEmpty()) {
+            WidgetPrefs.saveCountdownId(this, widgetId, idToSave)
+            WidgetPrefs.saveSelectedCountdownId(this, idToSave)
+        }
         WidgetPrefs.saveCountdownFormat(this, widgetId, selectedFormat)
     }
 

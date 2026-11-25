@@ -402,6 +402,20 @@ function isPostPinned(post: Post, nowMs: number): boolean {
 async function startServer() {
   const app = express();
 
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
+    res.setHeader(
+      'Access-Control-Allow-Headers',
+      'Content-Type, Authorization, Cache-Control, Pragma'
+    );
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
   app.post(
     '/api/upload-raw',
     express.raw({ type: '*/*', limit: '250mb' }),
@@ -880,7 +894,11 @@ async function startServer() {
     const seen = new Set<string>();
     let playlistTitle = 'YouTube Playlist';
 
-    const pushPlaylistItem = (rawId: unknown, rawTitle: unknown) => {
+    const pushPlaylistItem = (
+      rawId: unknown,
+      rawTitle: unknown,
+      published = ''
+    ) => {
       const videoId = typeof rawId === 'string' ? rawId.trim() : '';
       const title = typeof rawTitle === 'string' ? rawTitle.trim() : '';
       if (videoId && title && !seen.has(videoId)) {
@@ -890,233 +908,301 @@ async function startServer() {
           title,
           thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
           url: `https://www.youtube.com/watch?v=${videoId}`,
+          ...(published ? { published } : {}),
         });
       }
     };
 
-    try {
-      const pageRes = await fetch(
-        `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`,
-        {
-          headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-          },
-        }
-      );
+    const apiKey = (process.env.YOUTUBE_API_KEY || '').trim();
 
-      if (pageRes.ok) {
-        const html = await pageRes.text();
-        const titleMatch = html.match(/<title>([^<]+)<\/title>/);
-        if (titleMatch) {
-          playlistTitle = titleMatch[1].replace(/\s*-\s*YouTube\s*$/i, '').trim();
-        }
-
-        const match =
-          html.match(/var ytInitialData\s*=\s*({[\s\S]*?});\s*<\/script>/) ||
-          html.match(/var ytInitialData\s*=\s*({[\s\S]*?});/);
-        if (match) {
-          const data = JSON.parse(match[1]);
-          const metaTitle =
-            data?.metadata?.playlistMetadataRenderer?.title;
-          if (typeof metaTitle === 'string' && metaTitle.trim()) {
-            playlistTitle = metaTitle.trim();
-          }
-
-          const seenTokens = new Set<string>();
-          const queueTokens: string[] = [];
-
-          const findContinuationToken = (obj: any): string | null => {
-            if (!obj || typeof obj !== 'object') return null;
-            if (typeof obj.continuationCommand?.token === 'string') {
-              return obj.continuationCommand.token;
-            }
-            for (const k of Object.keys(obj)) {
-              const found = findContinuationToken(obj[k]);
-              if (found) return found;
-            }
-            return null;
-          };
-
-          const enqueueToken = (token: string | null) => {
-            if (token && !seenTokens.has(token)) {
-              seenTokens.add(token);
-              queueTokens.push(token);
-            }
-          };
-
-          const extractTitle = (titleObj: any): string => {
-            if (!titleObj) return '';
-            if (typeof titleObj === 'string') return titleObj;
-            if (typeof titleObj.content === 'string') return titleObj.content;
-            if (Array.isArray(titleObj.runs)) {
-              return titleObj.runs.map((x: any) => x?.text || '').join('');
-            }
-            if (typeof titleObj.simpleText === 'string') return titleObj.simpleText;
-            return '';
-          };
-
-          const processPlaylistEntries = (entries: any) => {
-            if (!Array.isArray(entries)) return;
-            for (const entry of entries) {
-              if (!entry || typeof entry !== 'object') continue;
-
-              if (entry.playlistVideoListRenderer?.contents) {
-                processPlaylistEntries(entry.playlistVideoListRenderer.contents);
-                continue;
-              }
-
-              if (entry.lockupViewModel) {
-                const lvm = entry.lockupViewModel;
-                if (
-                  !lvm.contentType ||
-                  lvm.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO'
-                ) {
-                  const vid =
-                    lvm.contentId ||
-                    lvm.rendererContext?.commandContext?.onTap?.innertubeCommand
-                      ?.watchEndpoint?.videoId ||
-                    '';
-                  const title = extractTitle(
-                    lvm.metadata?.lockupMetadataViewModel?.title
-                  );
-                  pushPlaylistItem(vid, title);
-                }
-                continue;
-              }
-
-              if (entry.playlistVideoRenderer) {
-                const r = entry.playlistVideoRenderer;
-                pushPlaylistItem(r.videoId, extractTitle(r.title));
-                continue;
-              }
-
-              if (entry.playlistPanelVideoRenderer) {
-                const r = entry.playlistPanelVideoRenderer;
-                pushPlaylistItem(r.videoId, extractTitle(r.title));
-                continue;
-              }
-
-              if (entry.continuationItemRenderer) {
-                enqueueToken(findContinuationToken(entry.continuationItemRenderer));
-                continue;
-              }
-
-              if (entry.continuationItemViewModel) {
-                enqueueToken(findContinuationToken(entry.continuationItemViewModel));
-                continue;
-              }
-            }
-          };
-
-          const extractFallbackRecursive = (obj: any) => {
-            if (!obj || typeof obj !== 'object') return;
-            if (obj.lockupViewModel) {
-              processPlaylistEntries([{ lockupViewModel: obj.lockupViewModel }]);
-              return;
-            }
-            if (obj.playlistVideoRenderer) {
-              processPlaylistEntries([
-                { playlistVideoRenderer: obj.playlistVideoRenderer },
-              ]);
-              return;
-            }
-            if (obj.playlistPanelVideoRenderer) {
-              processPlaylistEntries([
-                { playlistPanelVideoRenderer: obj.playlistPanelVideoRenderer },
-              ]);
-              return;
-            }
-            if (obj.continuationItemRenderer || obj.continuationItemViewModel) {
-              enqueueToken(
-                findContinuationToken(
-                  obj.continuationItemRenderer || obj.continuationItemViewModel
-                )
-              );
-              return;
-            }
-            for (const k of Object.keys(obj)) {
-              extractFallbackRecursive(obj[k]);
-            }
-          };
-
-          // Scope initial extraction to the playlist's primary item section so
-          // bottom recommended-playlist shelves (sectionListRenderer.contents[1+]) are not mixed in.
-          const primarySectionEntries =
-            data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer
-              ?.content?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer
-              ?.contents;
-
-          if (Array.isArray(primarySectionEntries)) {
-            processPlaylistEntries(primarySectionEntries);
-          } else {
-            extractFallbackRecursive(data);
-          }
-
-          // Fetch all continuation pages without an artificial item or page limit
-          while (queueTokens.length > 0) {
-            const currentToken = queueTokens.shift()!;
-            try {
-              const postRes = await fetch(
-                'https://www.youtube.com/youtubei/v1/browse?prettyPrint=false',
-                {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'User-Agent':
-                      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                  },
-                  body: JSON.stringify({
-                    context: {
-                      client: {
-                        clientName: 'WEB',
-                        clientVersion: '2.20240101.00.00',
-                        hl: 'en',
-                        gl: 'US',
-                      },
-                    },
-                    continuation: currentToken,
-                  }),
-                }
-              );
-              if (!postRes.ok) break;
-              const postData = await postRes.json();
-              const actions = Array.isArray(postData?.onResponseReceivedActions)
-                ? postData.onResponseReceivedActions
-                : [];
-              let handledAction = false;
-              for (const action of actions) {
-                const contItems =
-                  action?.appendContinuationItemsAction?.continuationItems ||
-                  action?.reloadContinuationItemsCommand?.continuationItems;
-                if (Array.isArray(contItems)) {
-                  handledAction = true;
-                  processPlaylistEntries(contItems);
-                }
-              }
-              if (!handledAction) {
-                extractFallbackRecursive(postData);
-              }
-            } catch {
-              break;
-            }
+    if (apiKey) {
+      try {
+        const metaUrl =
+          `https://www.googleapis.com/youtube/v3/playlists?part=snippet` +
+          `&id=${encodeURIComponent(listId)}&key=${encodeURIComponent(apiKey)}`;
+        const metaRes = await fetch(metaUrl);
+        if (metaRes.ok) {
+          const metaJson: any = await metaRes.json();
+          const apiTitle = metaJson?.items?.[0]?.snippet?.title;
+          if (typeof apiTitle === 'string' && apiTitle.trim()) {
+            playlistTitle = apiTitle.trim();
           }
         }
 
-        // Fallback HTML sweep only if structured ytInitialData extraction returned 0 items
-        if (items.length === 0) {
-          const watchMatches = html.matchAll(/watch\?v=([a-zA-Z0-9_-]{11})/g);
-          for (const m of watchMatches) {
-            pushPlaylistItem(m[1], `Playlist Track ${m[1]}`);
+        let pageToken = '';
+        let pagesFetched = 0;
+        const maxPages = 10;
+
+        do {
+          const itemsUrl =
+            `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails` +
+            `&maxResults=50&playlistId=${encodeURIComponent(listId)}` +
+            (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '') +
+            `&key=${encodeURIComponent(apiKey)}`;
+
+          const itemsRes = await fetch(itemsUrl);
+          if (!itemsRes.ok) {
+            console.error(
+              'YouTube Data API playlistItems error:',
+              itemsRes.status,
+              await itemsRes.text().catch(() => '')
+            );
+            break;
           }
-        }
+
+          const itemsJson: any = await itemsRes.json();
+          const entries = Array.isArray(itemsJson?.items) ? itemsJson.items : [];
+          for (const entry of entries) {
+            const snippet = entry?.snippet || {};
+            const vid =
+              snippet?.resourceId?.videoId ||
+              entry?.contentDetails?.videoId ||
+              '';
+            const title = snippet?.title || '';
+            if (title === 'Private video' || title === 'Deleted video') continue;
+            const published =
+              entry?.contentDetails?.videoPublishedAt ||
+              snippet?.publishedAt ||
+              '';
+            pushPlaylistItem(vid, title, published);
+          }
+
+          pageToken =
+            typeof itemsJson?.nextPageToken === 'string'
+              ? itemsJson.nextPageToken
+              : '';
+          pagesFetched += 1;
+        } while (pageToken && pagesFetched < maxPages);
+      } catch (apiErr) {
+        console.error('Error fetching playlist via YouTube Data API:', apiErr);
       }
-    } catch (err) {
-      console.error('Error in initialData playlist scraper:', err);
     }
 
-    // Fallback to RSS feed if scrapers found 0 items
+    if (items.length === 0) {
+      try {
+        const pageRes = await fetch(
+          `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`,
+          {
+            headers: {
+              'User-Agent':
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+              Cookie: 'CONSENT=YES+cb.20210328-17-p0.en+FX+999; SOCS=CAI;',
+            },
+          }
+        );
+
+        if (pageRes.ok) {
+          const html = await pageRes.text();
+          const titleMatch = html.match(/<title>([^<]+)<\/title>/);
+          if (titleMatch && playlistTitle === 'YouTube Playlist') {
+            playlistTitle = titleMatch[1].replace(/\s*-\s*YouTube\s*$/i, '').trim();
+          }
+
+          const match =
+            html.match(/var ytInitialData\s*=\s*({[\s\S]*?});\s*<\/script>/) ||
+            html.match(/var ytInitialData\s*=\s*({[\s\S]*?});/);
+          if (match) {
+            const data = JSON.parse(match[1]);
+            const metaTitle =
+              data?.metadata?.playlistMetadataRenderer?.title;
+            if (typeof metaTitle === 'string' && metaTitle.trim()) {
+              playlistTitle = metaTitle.trim();
+            }
+
+            const seenTokens = new Set<string>();
+            const queueTokens: string[] = [];
+
+            const findContinuationToken = (obj: any): string | null => {
+              if (!obj || typeof obj !== 'object') return null;
+              if (typeof obj.continuationCommand?.token === 'string') {
+                return obj.continuationCommand.token;
+              }
+              for (const k of Object.keys(obj)) {
+                const found = findContinuationToken(obj[k]);
+                if (found) return found;
+              }
+              return null;
+            };
+
+            const enqueueToken = (token: string | null) => {
+              if (token && !seenTokens.has(token)) {
+                seenTokens.add(token);
+                queueTokens.push(token);
+              }
+            };
+
+            const extractTitle = (titleObj: any): string => {
+              if (!titleObj) return '';
+              if (typeof titleObj === 'string') return titleObj;
+              if (typeof titleObj.content === 'string') return titleObj.content;
+              if (Array.isArray(titleObj.runs)) {
+                return titleObj.runs.map((x: any) => x?.text || '').join('');
+              }
+              if (typeof titleObj.simpleText === 'string') return titleObj.simpleText;
+              return '';
+            };
+
+            const processPlaylistEntries = (entries: any) => {
+              if (!Array.isArray(entries)) return;
+              for (const entry of entries) {
+                if (!entry || typeof entry !== 'object') continue;
+
+                if (entry.playlistVideoListRenderer?.contents) {
+                  processPlaylistEntries(entry.playlistVideoListRenderer.contents);
+                  continue;
+                }
+
+                if (entry.lockupViewModel) {
+                  const lvm = entry.lockupViewModel;
+                  if (
+                    !lvm.contentType ||
+                    lvm.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO'
+                  ) {
+                    const vid =
+                      lvm.contentId ||
+                      lvm.rendererContext?.commandContext?.onTap?.innertubeCommand
+                        ?.watchEndpoint?.videoId ||
+                      '';
+                    const title = extractTitle(
+                      lvm.metadata?.lockupMetadataViewModel?.title
+                    );
+                    pushPlaylistItem(vid, title);
+                  }
+                  continue;
+                }
+
+                if (entry.playlistVideoRenderer) {
+                  const r = entry.playlistVideoRenderer;
+                  pushPlaylistItem(r.videoId, extractTitle(r.title));
+                  continue;
+                }
+
+                if (entry.playlistPanelVideoRenderer) {
+                  const r = entry.playlistPanelVideoRenderer;
+                  pushPlaylistItem(r.videoId, extractTitle(r.title));
+                  continue;
+                }
+
+                if (entry.continuationItemRenderer) {
+                  enqueueToken(findContinuationToken(entry.continuationItemRenderer));
+                  continue;
+                }
+
+                if (entry.continuationItemViewModel) {
+                  enqueueToken(findContinuationToken(entry.continuationItemViewModel));
+                  continue;
+                }
+              }
+            };
+
+            const extractFallbackRecursive = (obj: any) => {
+              if (!obj || typeof obj !== 'object') return;
+              if (obj.lockupViewModel) {
+                processPlaylistEntries([{ lockupViewModel: obj.lockupViewModel }]);
+                return;
+              }
+              if (obj.playlistVideoRenderer) {
+                processPlaylistEntries([
+                  { playlistVideoRenderer: obj.playlistVideoRenderer },
+                ]);
+                return;
+              }
+              if (obj.playlistPanelVideoRenderer) {
+                processPlaylistEntries([
+                  { playlistPanelVideoRenderer: obj.playlistPanelVideoRenderer },
+                ]);
+                return;
+              }
+              if (obj.continuationItemRenderer || obj.continuationItemViewModel) {
+                enqueueToken(
+                  findContinuationToken(
+                    obj.continuationItemRenderer || obj.continuationItemViewModel
+                  )
+                );
+                return;
+              }
+              for (const k of Object.keys(obj)) {
+                extractFallbackRecursive(obj[k]);
+              }
+            };
+
+            const primarySectionEntries =
+              data?.contents?.twoColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer
+                ?.content?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer
+                ?.contents;
+
+            if (Array.isArray(primarySectionEntries)) {
+              processPlaylistEntries(primarySectionEntries);
+            } else {
+              extractFallbackRecursive(data);
+            }
+
+            let continuationPages = 0;
+            const maxContinuationPages = 8;
+            while (queueTokens.length > 0 && continuationPages < maxContinuationPages) {
+              const currentToken = queueTokens.shift()!;
+              continuationPages += 1;
+              try {
+                const postRes = await fetch(
+                  'https://www.youtube.com/youtubei/v1/browse?prettyPrint=false',
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'User-Agent':
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                      Cookie: 'CONSENT=YES+cb.20210328-17-p0.en+FX+999; SOCS=CAI;',
+                    },
+                    body: JSON.stringify({
+                      context: {
+                        client: {
+                          clientName: 'WEB',
+                          clientVersion: '2.20240101.00.00',
+                          hl: 'en',
+                          gl: 'US',
+                        },
+                      },
+                      continuation: currentToken,
+                    }),
+                  }
+                );
+                if (!postRes.ok) break;
+                const postData = await postRes.json();
+                const actions = Array.isArray(postData?.onResponseReceivedActions)
+                  ? postData.onResponseReceivedActions
+                  : [];
+                let handledAction = false;
+                for (const action of actions) {
+                  const contItems =
+                    action?.appendContinuationItemsAction?.continuationItems ||
+                    action?.reloadContinuationItemsCommand?.continuationItems;
+                  if (Array.isArray(contItems)) {
+                    handledAction = true;
+                    processPlaylistEntries(contItems);
+                  }
+                }
+                if (!handledAction) {
+                  extractFallbackRecursive(postData);
+                }
+              } catch {
+                break;
+              }
+            }
+          }
+
+          if (items.length === 0) {
+            const watchMatches = html.matchAll(/watch\?v=([a-zA-Z0-9_-]{11})/g);
+            for (const m of watchMatches) {
+              pushPlaylistItem(m[1], `Playlist Track ${m[1]}`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Error in initialData playlist scraper:', err);
+      }
+    }
+
     if (items.length === 0) {
       try {
         const feedUrl = `https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(listId)}`;
@@ -1138,25 +1224,19 @@ async function startServer() {
             const videoTitleMatch = block.match(/<title>([^<]+)<\/title>/);
             const pubMatch = block.match(/<published>([^<]+)<\/published>/);
             if (idMatch && videoTitleMatch) {
-              const videoId = idMatch[1].trim();
-              if (!seen.has(videoId)) {
-                seen.add(videoId);
-                const cleanTitle = videoTitleMatch[1]
-                  .replace(/&quot;/g, '"')
-                  .replace(/&apos;/g, "'")
-                  .replace(/&#39;/g, "'")
-                  .replace(/&amp;/g, '&')
-                  .replace(/&lt;/g, '<')
-                  .replace(/&gt;/g, '>')
-                  .trim();
-                items.push({
-                  videoId,
-                  title: cleanTitle,
-                  thumbnail: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-                  url: `https://www.youtube.com/watch?v=${videoId}`,
-                  published: pubMatch ? pubMatch[1].trim() : '',
-                });
-              }
+              const cleanTitle = videoTitleMatch[1]
+                .replace(/&quot;/g, '"')
+                .replace(/&apos;/g, "'")
+                .replace(/&#39;/g, "'")
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .trim();
+              pushPlaylistItem(
+                idMatch[1].trim(),
+                cleanTitle,
+                pubMatch ? pubMatch[1].trim() : ''
+              );
             }
           }
         }
@@ -1342,3 +1422,4 @@ async function startServer() {
 }
 
 startServer();
+

@@ -4,15 +4,12 @@ import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 import com.studiomd.dashboard.R
 import kotlinx.coroutines.runBlocking
-import java.net.HttpURLConnection
-import java.net.URL
 
 class WidgetFeedService : RemoteViewsService() {
     override fun onGetViewFactory(intent: Intent): RemoteViewsFactory {
@@ -30,7 +27,7 @@ class WidgetFeedFactory(
 
     private var posts: List<WidgetPost> = emptyList()
     private var layoutStyle: String = "full"
-    private var theme: WidgetTheme = WidgetTheme.TRANSPARENT
+    private var theme: WidgetTheme = WidgetTheme.WHITE
 
     override fun onCreate() {
         loadData()
@@ -176,16 +173,14 @@ class WidgetFeedFactory(
     }
 
     private fun fetchScaledBitmap(urlStr: String): Bitmap? {
-        return try {
-            val conn = URL(urlStr).openConnection() as HttpURLConnection
-            conn.connectTimeout = 3000
-            conn.readTimeout = 3000
-            conn.inputStream.use { stream ->
-                BitmapFactory.decodeStream(stream)
-            }
-        } catch (_: Exception) {
-            null
-        }
+        return MdSinglePostWidgetProvider.loadScaledWidgetBitmap(
+            urlStr = urlStr,
+            maxWidthPx = 640,
+            maxHeightPx = 640,
+            maxBytes = 1_000_000,
+            connectTimeoutMs = 5000,
+            readTimeoutMs = 6000
+        )
     }
 
     override fun getLoadingView(): RemoteViews? = null

@@ -26,6 +26,7 @@ import {
   X,
 } from 'lucide-react';
 import { normalizeShortsToWatchUrl } from '../lib/mediaUtils';
+import { fetchJsonWithRetry, fetchYouTubePlaylist } from '../lib/apiClient';
 import type { PlayEventRecord } from '../types';
 
 const RemoteIcon: React.FC<{ className?: string }> = ({
@@ -484,9 +485,14 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   onMobileSplitHeightChange,
   isSidebarCollapsed = false,
 }) => {
-  const parentHost = useMemo(() => {
-    if (typeof window === 'undefined') return 'localhost';
-    return window.location.hostname || 'localhost';
+  const parentParams = useMemo(() => {
+    const hosts = new Set<string>(['localhost', 'mddashboard.onrender.com']);
+    if (typeof window !== 'undefined' && window.location.hostname) {
+      hosts.add(window.location.hostname);
+    }
+    return Array.from(hosts)
+      .map((h) => `parent=${encodeURIComponent(h)}`)
+      .join('&');
   }, []);
 
   const allPlayEvents = useMemo(
@@ -1198,27 +1204,12 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       }
 
       try {
-        const isLocalHost =
-          typeof window !== 'undefined' &&
-          window.location &&
-          (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/i.test(window.location.hostname) ||
-           window.location.protocol === 'capacitor:' ||
-           window.location.protocol === 'file:');
-        const apiOrigin =
-          typeof window !== 'undefined' &&
-          window.location &&
-          /^https?:/i.test(window.location.origin) &&
-          !isLocalHost
-            ? window.location.origin
-            : 'https://mddashboard.onrender.com';
-        const res = await fetch(
-          `${apiOrigin}/api/twitch-status?channel=${encodeURIComponent(channel)}${
+        const data = await fetchJsonWithRetry<TwitchStatusInfo>(
+          `/api/twitch-status?channel=${encodeURIComponent(channel)}${
             forceRefresh ? '&force=1' : ''
           }`,
-          { cache: 'no-store' }
+          { timeoutMs: 20000, retries: 2 }
         );
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = (await res.json()) as TwitchStatusInfo;
         twitchStatusCache.set(key, { fetchedAt: Date.now(), data });
         if (!cancelled) {
           setTwitchState({ channelKey: key, loading: false, info: data });
@@ -1236,7 +1227,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     isLive: false,
                     bannerImageUrl: null,
                     offlineImageUrl: null,
-                    streamTitle: `ERR: ${apiOrigin} -> ${errMsg}`,
+                    streamTitle: `Offline (${errMsg})`,
                     viewersCount: null,
                   },
                 }
@@ -1264,14 +1255,11 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
   const activeTwitchKey = activeStation.callsign.toLowerCase();
   const currentTwitchInfo =
     twitchState.channelKey === activeTwitchKey ? twitchState.info : null;
-  const isCheckingTwitch =
-    isTwitch && !selectedTrack && (twitchState.channelKey !== activeTwitchKey || twitchState.loading);
+  const isCheckingTwitch = false;
   const showTwitchOfflineBanner =
     isTwitch &&
     !selectedTrack &&
-    !isCheckingTwitch &&
-    currentTwitchInfo !== null &&
-    !currentTwitchInfo.isLive;
+    !(currentTwitchInfo && currentTwitchInfo.isLive);
 
   const [bannerLoadFailed, setBannerLoadFailed] = useState(false);
 
@@ -1279,16 +1267,16 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     setBannerLoadFailed(false);
   }, [activeTwitchKey, currentTwitchInfo?.bannerImageUrl, currentTwitchInfo?.offlineImageUrl]);
 
-  const stationFallbackBanners: Record<string, string> = {
-    mdtv_ch1: '/samples/metro-eclipse-dark.jpg',
-    mdmt_ch2: '/samples/sunset-glass.jpg',
-    mdrs_ch3: '/samples/twilight-lagoon.jpg',
+  const localStationBanners: Record<string, string> = {
+    mdtv_ch1: '/banners/MDTV_ch1.png',
+    mdmt_ch2: '/banners/MDMT_ch2.png',
+    mdrs_ch3: '/banners/MDRS_ch3.png',
   };
 
   const twitchProfileBanner =
-    (!bannerLoadFailed && (currentTwitchInfo?.bannerImageUrl || currentTwitchInfo?.offlineImageUrl)) ||
+    (!bannerLoadFailed && localStationBanners[activeTwitchKey]) ||
+    currentTwitchInfo?.bannerImageUrl ||
     currentTwitchInfo?.offlineImageUrl ||
-    stationFallbackBanners[activeTwitchKey] ||
     '/samples/metro-eclipse-dark.jpg';
 
   const getCleanYoutubeMediaId = (item: PlayEventItem | null): { mediaId: string; isShorts: boolean } => {
@@ -1330,7 +1318,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     showPlaylistDrawer ||
     activeMiniDrawer === 'playlist' ||
     isChannel4Station ||
-    (floatingEnabled && Boolean(activePlaylistId));
+    ((isActiveTab || floatingEnabled) && Boolean(activePlaylistId));
 
   useEffect(() => {
     if (!activePlaylistId) {
@@ -1340,51 +1328,92 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
       return;
     }
 
+    const playlistStorageKey = `md_yt_playlist_${activePlaylistId}`;
+
+    // 1. Instant load from memory cache or localStorage if previously synced
+    let initialTracks: PlaylistTrackItem[] = [];
+    let initialTitle = defaultPlaylistTitle;
+
+    const isPlaceholderSet = (list: PlaylistTrackItem[]) =>
+      list.length === 3 &&
+      list[0]?.videoId === 'jfKfPfyJRdk' &&
+      list[1]?.videoId === '5qap5aO4i9A' &&
+      list[2]?.videoId === 'dQw4w9WgXcQ';
+
     const cached = playlistTrackCache.get(activePlaylistId);
-    if (cached && playlistSyncNonce === 0) {
-      setActivePlaylistTitle(cached.title || defaultPlaylistTitle);
-      setPlaylistTracks(cached.items);
-      setPlaylistLoading(false);
-      setPlaylistError('');
-      return;
+    if (cached && cached.items.length > 0 && !isPlaceholderSet(cached.items)) {
+      initialTitle = cached.title || defaultPlaylistTitle;
+      initialTracks = cached.items;
+    } else {
+      try {
+        const raw = window.localStorage.getItem(playlistStorageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw) as { title?: string; items?: PlaylistTrackItem[] };
+          if (
+            Array.isArray(parsed.items) &&
+            parsed.items.length > 0 &&
+            !isPlaceholderSet(parsed.items)
+          ) {
+            initialTitle = parsed.title || defaultPlaylistTitle;
+            initialTracks = parsed.items;
+          }
+        }
+      } catch {
+        // Ignore storage parse errors
+      }
     }
 
-    if (!shouldFetchPlaylist) {
-      setPlaylistTracks([]);
-      return;
-    }
-
-    let cancelled = false;
-    setPlaylistTracks([]);
-    setPlaylistLoading(true);
+    setActivePlaylistTitle(initialTitle);
+    setPlaylistTracks(initialTracks);
     setPlaylistError('');
 
-    fetch(
-      `/api/youtube-playlist?list=${encodeURIComponent(activePlaylistId)}&_t=${Date.now()}`,
-      { cache: 'no-store' }
-    )
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-        return res.json();
-      })
-      .then((data: { title?: string; items?: PlaylistTrackItem[]; error?: string }) => {
+    if (!shouldFetchPlaylist) {
+      setPlaylistLoading(false);
+      return;
+    }
+
+    // Skip network call if we already have memory-cached tracks and user did not manually trigger Sync
+    if (cached && cached.items.length > 0 && !isPlaceholderSet(cached.items) && playlistSyncNonce === 0) {
+      setPlaylistLoading(false);
+      return;
+    }
+
+    // 2. Fetch full playlist via native CapacitorHttp (on Android) or fetch (on Web)
+    let cancelled = false;
+    setPlaylistLoading(true);
+
+    fetchYouTubePlaylist(activePlaylistId)
+      .then((result) => {
         if (cancelled) return;
-        if (data.error && (!data.items || data.items.length === 0)) {
-          setPlaylistError(data.error);
-        } else {
-          const resolvedTitle = data.title || defaultPlaylistTitle;
-          const items = data.items || [];
+        const items = result?.items || [];
+        if (items.length > 0) {
+          const resolvedTitle = result?.title || defaultPlaylistTitle;
           playlistTrackCache.set(activePlaylistId, { title: resolvedTitle, items });
+          try {
+            window.localStorage.setItem(
+              playlistStorageKey,
+              JSON.stringify({ title: resolvedTitle, items })
+            );
+          } catch {
+            // Ignore storage errors
+          }
           setActivePlaylistTitle(resolvedTitle);
           setPlaylistTracks(items);
+          setPlaylistError('');
+        } else if (initialTracks.length === 0) {
+          setPlaylistError('Unable to load video tracklist for this playlist.');
         }
       })
       .catch(() => {
         if (cancelled) return;
-        setPlaylistError('Unable to load video tracklist for this playlist.');
+        if (initialTracks.length === 0) {
+          setPlaylistError('Unable to load video tracklist for this playlist.');
+        }
       })
       .finally(() => {
-        if (!cancelled) setPlaylistLoading(false);
+        if (!cancelled) {
+          setPlaylistLoading(false);
+        }
       });
 
     return () => {
@@ -1433,7 +1462,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
     : isTwitch
     ? `https://player.twitch.tv/?channel=${encodeURIComponent(
         activeStation.callsign
-      )}&parent=${encodeURIComponent(parentHost)}&muted=false&autoplay=true`
+      )}&${parentParams}&muted=false&autoplay=true`
     : `https://www.youtube-nocookie.com/embed/videoseries?list=${encodeURIComponent(
         activeStation.playlistId || ''
       )}&autoplay=${ytAutoplay}${ytJsApiQuery}`;
@@ -1809,11 +1838,9 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
           ) : (
             <span className="font-mono font-semibold tabular-nums truncate max-w-[240px] sm:max-w-[420px]">
               {activeEvent
-                ? `/${
-                    activeEvent.era === 'Year End Collection'
-                      ? activeEvent.title
-                      : `${activeEvent.era}/${activeEvent.year}/${activeEvent.title}`
-                  } (${activeEvent.dateLabel})`
+                ? activeEvent.title === 'MD Wrapped'
+                  ? '/MDWrapped'
+                  : `/${activeEvent.era === 'Year End Collection' ? activeEvent.title : `${activeEvent.era}/${activeEvent.year}/${activeEvent.title}`} (${activeEvent.dateLabel})`
                 : `CH 0${activeStation.number} · ${activeStation.callsign}`}
             </span>
           )}
@@ -2261,7 +2288,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     alt={`${activeStation.callsign} profile banner`}
                     referrerPolicy="no-referrer"
                     onError={() => setBannerLoadFailed(true)}
-                    className="h-full w-full object-cover object-center"
+                    className="aspect-video h-full w-full object-cover object-center"
                   />
                 ) : (
                   <iframe
@@ -3239,7 +3266,7 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                     ref={modalPlaylistScrollRef}
                     className="relative flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-6 py-2 divide-y divide-slate-200/70 dark:divide-slate-800/80"
                   >
-                    {playlistLoading ? (
+                    {playlistLoading && playlistTracks.length === 0 ? (
                       <div className="py-12 text-center space-y-3">
                         <Loader2 className="mx-auto h-7 w-7 animate-spin text-sky-600 dark:text-sky-400" />
                         <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
@@ -3251,17 +3278,27 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
                         <p className="text-xs text-rose-600 dark:text-rose-400 font-medium">
                           {playlistError}
                         </p>
-                        {activePlaylistId && (
-                          <a
-                            href={`https://www.youtube.com/playlist?list=${activePlaylistId}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="aero-button-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setPlaylistSyncNonce((n) => n + 1)}
+                            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-white cursor-pointer shadow-sm"
                           >
-                            <span>Open Playlist on YouTube</span>
-                            <ExternalLink className="h-3.5 w-3.5" />
-                          </a>
-                        )}
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            <span>Retry Sync</span>
+                          </button>
+                          {activePlaylistId && (
+                            <a
+                              href={`https://www.youtube.com/playlist?list=${activePlaylistId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="aero-button-primary inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold text-white cursor-pointer"
+                            >
+                              <span>Open Playlist on YouTube</span>
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+                        </div>
                       </div>
                     ) : filteredPlaylistTracks.length === 0 ? (
                       <div className="py-12 text-center">

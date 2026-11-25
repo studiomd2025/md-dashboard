@@ -39,7 +39,10 @@ enum class WidgetTheme(
     companion object {
         val ALL: List<WidgetTheme> = entries.toList()
         val displayNames: Array<String> get() = ALL.map { it.displayName }.toTypedArray()
-        fun fromId(id: String): WidgetTheme = ALL.firstOrNull { it.id == id } ?: TRANSPARENT
+        fun fromId(id: String): WidgetTheme {
+            if (id.equals("slate", ignoreCase = true)) return WHITE
+            return ALL.firstOrNull { it.id == id } ?: WHITE
+        }
 
         /**
          * Checks whether the system is currently in Night/Dark mode.

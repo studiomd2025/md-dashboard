@@ -1,14 +1,22 @@
 package com.studiomd.dashboard;
 
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.webkit.WebView;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
+import com.studiomd.dashboard.widget.MdNotificationManager;
 import com.studiomd.dashboard.widget.WidgetBridge;
 import io.capawesome.capacitorjs.plugins.firebase.authentication.FirebaseAuthenticationPlugin;
 
 public class MainActivity extends BridgeActivity {
+
+    private static final int REQ_POST_NOTIFICATIONS = 4012;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -17,8 +25,33 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(WidgetBridge.class);
         registerPlugin(FirebaseAuthenticationPlugin.class);
 
+        WebView webView = getBridge().getWebView();
+        if (webView != null) {
+            webView.getSettings().setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+            webView.getSettings().setMediaPlaybackRequiresUserGesture(false);
+            webView.getSettings().setDomStorageEnabled(true);
+            webView.getSettings().setJavaScriptEnabled(true);
+        }
+
+        // Schedule periodic native checks for scheduled posts, countdown target dates, and MD Memo feed
+        MdNotificationManager.INSTANCE.schedulePeriodicChecks(this);
+        requestNotificationPermissionIfNeeded();
+
         // Handle incoming deep link intent on cold launch
         handleWidgetDeepLink(getIntent());
+    }
+
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{Manifest.permission.POST_NOTIFICATIONS},
+                    REQ_POST_NOTIFICATIONS
+                );
+            }
+        }
     }
 
     @Override

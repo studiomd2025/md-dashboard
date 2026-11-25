@@ -35,6 +35,7 @@ import type {
 } from './types';
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { getMergedPostTags, getMonthKey, stripHtml } from './lib/mediaUtils';
+import { buildApiUrl, fetchJsonWithRetry } from './lib/apiClient';
 import {
   DEFAULT_TIME_ZONE,
   dateFilterBoundToMs,
@@ -86,6 +87,7 @@ import { NextOnMdView } from './components/NextOnMdView';
 import { RichComposerModal } from './components/RichComposerModal';
 import { BackendConsoleView } from './components/BackendConsoleView';
 import { RegisterModal } from './components/RegisterModal';
+import { ImageLightboxModal } from './components/ImageLightboxModal';
 import {
   LiveTvView,
   PLAY_EVENTS,
@@ -98,6 +100,20 @@ import { OfflineIndicator } from './components/PWAInstallButton';
 import { YmdDateInput } from './components/YmdDateInputs';
 import { useFlipLayout, useSystemAnimationGuard } from './hooks/useFlipLayout';
 import { useMobileDrawerSwipe } from './hooks/useMobileDrawerSwipe';
+import {
+  checkBloggerFeedAlerts,
+  evaluateDashboardAlerts,
+  loadStoredNotifications,
+  requestBrowserNotificationPermission,
+  saveStoredNotifications,
+  type AppNotificationItem,
+} from './lib/notifications';
+import {
+  checkNativeNotificationsNow,
+  isNativeAndroidBridgeAvailable,
+  refreshAllNativeWidgets,
+  syncCountdownsToNative,
+} from './lib/widgetBridge';
 
 const getInitialDesignState = (): DesignSettings => {
   const fallback: DesignSettings = {
@@ -126,7 +142,17 @@ const getInitialDesignState = (): DesignSettings => {
 
 export default function App() {
   useSystemAnimationGuard();
-  const [posts, setPosts] = useState<Post[]>([]);
+  const [posts, setPosts] = useState<Post[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = window.localStorage.getItem('md_cached_posts_v1');
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
   const [banners, setBanners] = useState<BannerSchedule[]>([]);
   const [countdowns, setCountdowns] = useState<EventCountdown[]>([]);
   const [customPlayEvents, setCustomPlayEvents] = useState<PlayEventRecord[]>([]);
@@ -139,7 +165,7 @@ export default function App() {
     theme: 'default',
     surfaceStyle: 'aero-glass',
   });
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => posts.length === 0);
   const [loadError, setLoadError] = useState('');
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -237,7 +263,51 @@ export default function App() {
   );
 
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [notifications, setNotifications] = useState<AppNotificationItem[]>(() =>
+    loadStoredNotifications()
+  );
+  const [webPushPermission, setWebPushPermission] = useState<
+    NotificationPermission | 'unsupported'
+  >(() => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      return 'unsupported';
+    }
+    return window.Notification.permission;
+  });
   const pendingPlayEventScrollRef = useRef(false);
+  const bootSplashDismissedRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const win = window as Window & {
+      __mdSetBootProgress?: (pct: number, label?: string) => void;
+      __mdDismissBootSplash?: () => void;
+    };
+
+    if (bootSplashDismissedRef.current) return;
+
+    if (!authReady) {
+      win.__mdSetBootProgress?.(76, 'Connecting…');
+    } else if (isLoading) {
+      win.__mdSetBootProgress?.(90, 'Loading entries…');
+    } else {
+      bootSplashDismissedRef.current = true;
+      win.__mdSetBootProgress?.(100, 'Ready');
+      const doneTimer = window.setTimeout(() => {
+        win.__mdDismissBootSplash?.();
+      }, 120);
+      return () => window.clearTimeout(doneTimer);
+    }
+
+    // Never block navigation or media playback if Firestore takes too long / offline
+    const fallbackTimer = window.setTimeout(() => {
+      if (!bootSplashDismissedRef.current) {
+        bootSplashDismissedRef.current = true;
+        win.__mdDismissBootSplash?.();
+      }
+    }, 3200);
+    return () => window.clearTimeout(fallbackTimer);
+  }, [authReady, isLoading]);
 
   const { containerRef: timelineFlipRef, captureFlip: captureTimelineFlip } =
     useFlipLayout(`${timelineLayout}-${isSidebarCollapsed}-${isTwoColViewport}`);
@@ -294,6 +364,61 @@ export default function App() {
       setNowMs(Date.now());
     }, 1000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  // Sync Firestore countdowns to Android home-screen widgets
+  useEffect(() => {
+    if (countdowns.length > 0) {
+      syncCountdownsToNative(countdowns);
+    }
+  }, [countdowns]);
+
+  // Evaluate due scheduled posts & countdown target dates (bucketed every 15s)
+  const alertEvalBucket = Math.floor(nowMs / 15000);
+  useEffect(() => {
+    if (posts.length === 0 && countdowns.length === 0) return;
+    let cancelled = false;
+    evaluateDashboardAlerts({ posts, countdowns, nowMs })
+      .then(({ items }) => {
+        if (!cancelled) setNotifications(items);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [posts, countdowns, alertEvalBucket]);
+
+  // Poll https://officialmdmemo.blogspot.com Blogger feed + native check
+  useEffect(() => {
+    let cancelled = false;
+    const runChecks = async () => {
+      try {
+        const res = await checkBloggerFeedAlerts();
+        if (!cancelled) setNotifications(res.items);
+      } catch {
+        // ignore transient feed error
+      }
+      if (isNativeAndroidBridgeAvailable()) {
+        checkNativeNotificationsNow();
+      }
+    };
+
+    runChecks();
+    const pollTimer = window.setInterval(runChecks, 5 * 60 * 1000);
+    const onFocus = () => {
+      runChecks();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') runChecks();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollTimer);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
   }, []);
 
   useEffect(() => {
@@ -481,9 +606,11 @@ export default function App() {
       }
       fallbackFetched = true;
       try {
-        const res = await fetch('/api/state');
-        if (!res.ok || cancelled || sawDesignInFirestore || sawPostsInFirestore) return;
-        const data = (await res.json()) as IntranetState;
+        const stateUrl = buildApiUrl('/api/state');
+        const data = await fetchJsonWithRetry<IntranetState>(stateUrl, {
+          timeoutMs: 20000,
+          retries: 1,
+        });
         if (cancelled || sawDesignInFirestore || sawPostsInFirestore) return;
         setPosts(data.posts || []);
         setBanners(data.banners || []);
@@ -788,6 +915,7 @@ export default function App() {
     } else {
       await createPostDoc(user.uid, payload);
     }
+    refreshAllNativeWidgets();
   };
 
   const handleDeletePost = async (id: string) => {
@@ -796,6 +924,7 @@ export default function App() {
     if (selectedPostId === id) {
       closePostDetail();
     }
+    refreshAllNativeWidgets();
   };
 
   const handleTogglePin = async (post: Post) => {
@@ -809,6 +938,7 @@ export default function App() {
       pinnedUntil: nextPinnedUntil,
       pinnedTimeZone: currentlyPinned ? null : DEFAULT_TIME_ZONE,
     });
+    refreshAllNativeWidgets();
   };
 
   const handlePublishScheduledNow = async (post: Post) => {
@@ -819,6 +949,7 @@ export default function App() {
       scheduledFor: null,
       publishedAt: nowIso,
     });
+    refreshAllNativeWidgets();
   };
 
   const handleRenameTag = async (oldTag: string, newTag: string) => {
@@ -870,6 +1001,7 @@ export default function App() {
   }) => {
     if (!user || !isAdmin) return;
     await createCountdownDoc(user.uid, payload);
+    refreshAllNativeWidgets();
   };
 
   const handleUpdateCountdown = async (
@@ -878,11 +1010,13 @@ export default function App() {
   ) => {
     if (!user || !isAdmin) return;
     await updateCountdownDoc(id, payload);
+    refreshAllNativeWidgets();
   };
 
   const handleDeleteCountdown = async (id: string) => {
     if (!isAdmin) return;
     await deleteCountdownDoc(id);
+    refreshAllNativeWidgets();
   };
 
   const handleAddPlayEvent = async (payload: Omit<PlayEventRecord, 'id'>) => {
@@ -1114,7 +1248,7 @@ export default function App() {
           : `linear-gradient(rgba(255,255,255,0.34), rgba(255,255,255,0.34)), url(${effectiveBackdropUrl})`,
         backgroundSize: 'cover',
         backgroundPosition: 'center',
-        backgroundAttachment: 'fixed',
+        backgroundAttachment: isTwoColViewport ? 'fixed' : 'scroll',
       }
     : activeCustomTheme
     ? {
@@ -1149,11 +1283,51 @@ export default function App() {
         }}
         isMobileSidebarOpen={isMobileSidebarOpen}
         onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
+        notifications={notifications}
+        onNotificationClick={(item) => {
+          const updated = saveStoredNotifications(
+            notifications.map((n) => (n.id === item.id ? { ...n, read: true } : n))
+          );
+          setNotifications(updated);
+          if (item.openExternal) {
+            window.open(item.url, '_blank', 'noopener,noreferrer');
+          } else if (item.kind === 'countdown') {
+            const m = item.url.match(/countdown=([^&#]+)/);
+            openCountdownPage(m ? decodeURIComponent(m[1]) : undefined);
+          } else if (item.kind === 'scheduled') {
+            const m = item.url.match(/post=([^&#]+)/);
+            const target = m ? posts.find((p) => p.id === decodeURIComponent(m[1])) : null;
+            if (target) openPostDetail(target);
+            else handleNavigateView('timeline');
+          }
+        }}
+        onMarkAllNotificationsRead={() => {
+          setNotifications(
+            saveStoredNotifications(notifications.map((n) => ({ ...n, read: true })))
+          );
+        }}
+        onCheckNotificationsNow={async () => {
+          const [evalRes, blogRes] = await Promise.all([
+            evaluateDashboardAlerts({ posts, countdowns, nowMs: Date.now() }),
+            checkBloggerFeedAlerts().catch(() => null),
+          ]);
+          setNotifications(blogRes ? blogRes.items : evalRes.items);
+          if (isNativeAndroidBridgeAvailable()) {
+            await checkNativeNotificationsNow();
+          }
+        }}
+        canRequestWebPush={
+          !isNativeAndroidBridgeAvailable() && webPushPermission === 'default'
+        }
+        onRequestWebPush={async () => {
+          const perm = await requestBrowserNotificationPermission();
+          setWebPushPermission(perm);
+        }}
       />
 
       <div
         ref={mainScrollContainerRef}
-        className="max-sm:flex-1 max-sm:min-h-0 max-sm:overflow-y-auto max-sm:overscroll-y-contain"
+        style={{ overflowAnchor: 'none' }} className="max-sm:flex-1 max-sm:min-h-0 max-sm:overflow-y-auto max-sm:overscroll-y-contain max-sm:touch-pan-y"
       >
         {activeView === 'timeline' && !selectedPostId && (
           <ScheduledBanner
@@ -1173,7 +1347,7 @@ export default function App() {
           />
         )}
 
-        <main className={`mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8 ${
+        <main className={`flex-1 min-h-0 max-sm:w-full max-sm:overflow-y-auto mx-auto max-w-[1380px] space-y-6 px-4 pt-6 sm:px-6 lg:px-8 ${
           floatingPlayerEnabled ? 'pb-6 sm:pb-[160px]' : 'pb-6 sm:pb-16'
         }`}>
         {authError && (
@@ -1884,34 +2058,12 @@ export default function App() {
         onSave={handleSavePost}
       />
 
-      {lightbox && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setLightbox(null)}
-          className="md-animate-fade-in fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm"
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="md-animate-slide-up relative max-h-[90vh] max-w-5xl overflow-hidden rounded-2xl bg-slate-900 shadow-2xl"
-          >
-            <button
-              type="button"
-              onClick={() => setLightbox(null)}
-              aria-label="Close lightbox"
-              className="absolute right-3 top-3 z-10 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-950/70 text-white hover:bg-slate-950 cursor-pointer"
-            >
-              <X className="h-5 w-5" />
-            </button>
-            <img
-              src={lightbox.url}
-              alt={lightbox.title || 'Full resolution diary image'}
-              referrerPolicy="no-referrer"
-              className="max-h-[90vh] w-auto object-contain"
-            />
-          </div>
-        </div>
-      )}
+      <ImageLightboxModal
+        isOpen={Boolean(lightbox)}
+        imageUrl={lightbox?.url || ''}
+        imageTitle={lightbox?.title}
+        onClose={() => setLightbox(null)}
+      />
 
       <RegisterModal
         isOpen={registerModalOpen}

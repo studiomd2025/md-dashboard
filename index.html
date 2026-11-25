@@ -110,8 +110,149 @@
       href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=Fraunces:ital,opsz,wght@0,9..144,500..700;1,9..144,500..700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&family=VT323&display=swap"
       rel="stylesheet"
     />
+    <style>
+      #md-boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: "Plus Jakarta Sans", "DM Sans", ui-sans-serif, system-ui, sans-serif;
+        opacity: 1;
+        transition: opacity 280ms cubic-bezier(0.22, 1, 0.36, 1), visibility 280ms ease;
+      }
+      html.dark #md-boot-splash {
+        background: #0b141d;
+        color: #f1f5f9;
+      }
+      #md-boot-splash.md-splash-hidden {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .md-splash-logo-wrap {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 68px;
+        height: 68px;
+        border-radius: 20px;
+        background: #ffffff;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        box-shadow: 0 12px 28px -12px rgba(15, 23, 42, 0.18);
+      }
+      html.dark .md-splash-logo-wrap {
+        background: #111827;
+        border-color: rgba(248, 250, 252, 0.14);
+        box-shadow: 0 12px 28px -12px rgba(0, 0, 0, 0.55);
+      }
+      .md-splash-logo-img {
+        width: 42px;
+        height: 42px;
+        display: block;
+        object-fit: contain;
+      }
+      html.dark .md-splash-logo-img {
+        filter: invert(1);
+      }
+      .md-splash-title {
+        margin-top: 16px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+      .md-splash-track {
+        margin-top: 18px;
+        width: min(240px, 72vw);
+        height: 6px;
+        border-radius: 9999px;
+        overflow: hidden;
+        background: rgba(17, 24, 39, 0.14);
+      }
+      html.dark .md-splash-track {
+        background: rgba(248, 250, 252, 0.18);
+      }
+      .md-splash-fill {
+        width: 14%;
+        height: 100%;
+        border-radius: 9999px;
+        background: #111827;
+        transition: width 240ms cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      html.dark .md-splash-fill {
+        background: #f8fafc;
+      }
+      .md-splash-status {
+        margin-top: 10px;
+        font-size: 11px;
+        font-weight: 500;
+        opacity: 0.72;
+      }
+    </style>
   </head>
   <body>
+    <div id="md-boot-splash" role="progressbar" aria-label="Loading MD Dashboard" aria-valuemin="0" aria-valuemax="100" aria-valuenow="14">
+      <div class="md-splash-logo-wrap">
+        <img src="/favicon.svg" alt="MD" class="md-splash-logo-img" />
+      </div>
+      <div class="md-splash-title">MY DIARIES DASHBOARD</div>
+      <div class="md-splash-track">
+        <div id="md-boot-progress-fill" class="md-splash-fill"></div>
+      </div>
+      <div id="md-boot-splash-status" class="md-splash-status">Loading workspace…</div>
+    </div>
+    <script>
+      (() => {
+        var currentPct = 14;
+        var dismissed = false;
+        var fill = document.getElementById('md-boot-progress-fill');
+        var splash = document.getElementById('md-boot-splash');
+        var statusEl = document.getElementById('md-boot-splash-status');
+
+        window.__mdSetBootProgress = function (pct, label) {
+          if (dismissed || !splash || !fill) return;
+          var clamped = Math.max(currentPct, Math.min(100, Math.round(pct)));
+          currentPct = clamped;
+          fill.style.width = clamped + '%';
+          splash.setAttribute('aria-valuenow', String(clamped));
+          if (label && statusEl) statusEl.textContent = label;
+        };
+
+        window.__mdDismissBootSplash = function () {
+          if (dismissed) return;
+          dismissed = true;
+          clearInterval(bootTicker);
+          clearTimeout(hardCapTimer);
+          if (!splash) return;
+          if (fill) fill.style.width = '100%';
+          splash.setAttribute('aria-valuenow', '100');
+          splash.style.pointerEvents = 'none';
+          requestAnimationFrame(function () {
+            splash.classList.add('md-splash-hidden');
+            setTimeout(function () {
+              if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
+            }, 320);
+          });
+        };
+
+        var bootTicker = setInterval(function () {
+          if (dismissed) { clearInterval(bootTicker); return; }
+          if (currentPct < 70) {
+            window.__mdSetBootProgress(currentPct + (currentPct < 45 ? 10 : 4));
+          }
+        }, 160);
+
+        // Hard safety cap so splash never blocks navigation or playback if offline/slow
+        var hardCapTimer = setTimeout(function () {
+          window.__mdDismissBootSplash();
+        }, 6500);
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

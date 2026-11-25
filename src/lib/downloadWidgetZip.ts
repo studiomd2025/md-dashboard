@@ -106,7 +106,7 @@ Before editing any widget data parsing code, verify live responses from \`BASE_U
 ### Widget 1: MD Countdown
 - **Config options:**
   1. \`Countdown Event\` dropdown: populated dynamically from \`countdowns[]\` in \`/api/widget-feed.json\`. Default to the first event if none was picked yet. Never fall back to \`D-?? / No upcoming events\` when \`countdowns[]\` has items.
-  2. \`Display format\` dropdown: **ONLY** support \`Full timer (D:HH:MM:SS)\`, \`Days Remaining (D-# / D-DAY / D+#)\`, \`Days only\`, and \`Date only (yyyy.m.d)\`. **Remove \`Compact (e.g. 14d 3h)\`.**
+  2. \`Display format\` dropdown: **ONLY** support \`Full timer (D:HH:MM:SS)\`, \`Days Remaining (D-# / D-Day / D+#)\`, \`Days only\`, and \`Date only (yyyy.m.d)\`. **Remove \`Compact (e.g. 14d 3h)\`.**
   3. \`Widget Theme\` + \`Corner Roundness\`.
 - **Layout & behavior:**
   - Never display any clock icon.

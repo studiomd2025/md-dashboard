@@ -8,6 +8,8 @@ import {
   Copy,
   Download,
   FileCode2,
+  Image as ImageIcon,
+  ImageOff,
   Maximize2,
   Palette,
   Pause,
@@ -23,6 +25,7 @@ import {
 } from 'lucide-react';
 import type { DesignSettings, EventCountdown, Post } from '../types';
 import { formatPostTimestamp, getMergedPostTags, stripHtml } from '../lib/mediaUtils';
+import { fetchJsonWithRetry } from '../lib/apiClient';
 import { dateFilterBoundToMs, DEFAULT_TIME_ZONE } from '../lib/timeZones';
 import { formatCountdownDisplay } from './Sidebar';
 import { STATIONS, type BroadcastChannel } from './LiveTvView';
@@ -32,6 +35,10 @@ import {
 } from '../data/androidWidgetTemplates';
 import { YmdDateInput } from './YmdDateInputs';
 import { downloadWidgetCodeZip } from '../lib/downloadWidgetZip';
+import {
+  syncCountdownsToNative,
+  syncCountdownSelectionToNative,
+} from '../lib/widgetBridge';
 
 interface MobileWidgetStudioViewProps {
   posts: Post[];
@@ -400,10 +407,15 @@ const WidgetVisualMedia: React.FC<{
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasReady, setCanvasReady] = useState(false);
+  const [mediaStatus, setMediaStatus] = useState<'loading' | 'loaded' | 'error'>(
+    () => (url && url.trim() ? 'loading' : 'error')
+  );
 
   useEffect(() => {
+    const trimmed = url?.trim() || '';
     setCanvasReady(false);
-    if (!isGif || animateGif) return;
+    setMediaStatus(trimmed ? 'loading' : 'error');
+    if (!trimmed || !isGif || animateGif) return;
     let cancelled = false;
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -417,12 +429,18 @@ const WidgetVisualMedia: React.FC<{
         try {
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
           setCanvasReady(true);
+          setMediaStatus('loaded');
         } catch {
           setCanvasReady(false);
         }
       }
     };
-    img.src = getStaticGifFallbackUrl(url);
+    img.onerror = () => {
+      if (!cancelled) {
+        setCanvasReady(false);
+      }
+    };
+    img.src = getStaticGifFallbackUrl(trimmed);
     return () => {
       cancelled = true;
     };
@@ -433,12 +451,42 @@ const WidgetVisualMedia: React.FC<{
   const radiusStyle =
     cornerRadius !== undefined ? { borderRadius: `${cornerRadius}px` } : undefined;
 
+  if (mediaStatus === 'error') {
+    return (
+      <div
+        style={radiusStyle}
+        role="img"
+        aria-label={alt || 'Media unavailable'}
+        className={`relative flex flex-col items-center justify-center gap-1.5 overflow-hidden bg-slate-100/90 text-slate-500 dark:bg-slate-800/80 dark:text-slate-400 ${
+          uncropped ? 'w-full min-h-[120px] px-4 py-6' : 'p-2'
+        } ${className}`}
+      >
+        <ImageOff className={uncropped ? 'h-6 w-6 opacity-75' : 'h-4 w-4 opacity-75'} />
+        {uncropped && (
+          <span className="text-[11px] font-medium opacity-85">
+            Image unavailable
+          </span>
+        )}
+      </div>
+    );
+  }
+
   if (isGif && !animateGif) {
     return (
       <div
         style={radiusStyle}
-        className={`relative overflow-hidden ${uncropped ? 'w-full' : ''} ${className}`}
+        className={`relative overflow-hidden ${
+          uncropped ? `w-full ${mediaStatus === 'loading' ? 'min-h-[120px]' : ''}` : ''
+        } ${className}`}
       >
+        {mediaStatus === 'loading' && !canvasReady && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-slate-100/90 text-slate-500 animate-pulse dark:bg-slate-800/80 dark:text-slate-400">
+            <ImageIcon className={uncropped ? 'h-6 w-6 opacity-70' : 'h-4 w-4 opacity-70'} />
+            {uncropped && (
+              <span className="text-[11px] font-medium">Loading image…</span>
+            )}
+          </div>
+        )}
         {canvasReady ? (
           <canvas
             ref={canvasRef}
@@ -452,11 +500,15 @@ const WidgetVisualMedia: React.FC<{
               src={staticUrl}
               alt={alt}
               referrerPolicy="no-referrer"
-              className={mediaFitClass}
+              onLoad={() => setMediaStatus('loaded')}
+              onError={() => setMediaStatus('error')}
+              className={`${mediaFitClass} transition-opacity duration-200 ${
+                mediaStatus === 'loaded' ? 'opacity-100' : 'opacity-0'
+              }`}
             />
           </>
         )}
-        <span className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 font-mono text-[9px] font-bold text-white">
+        <span className="absolute top-1.5 right-1.5 z-20 inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 font-mono text-[9px] font-bold text-white">
           <Pause className="h-2.5 w-2.5" />
           STATIC
         </span>
@@ -467,16 +519,30 @@ const WidgetVisualMedia: React.FC<{
   return (
     <div
       style={radiusStyle}
-      className={`relative overflow-hidden ${uncropped ? 'w-full' : ''} ${className}`}
+      className={`relative overflow-hidden ${
+        uncropped ? `w-full ${mediaStatus === 'loading' ? 'min-h-[120px]' : ''}` : ''
+      } ${className}`}
     >
+      {mediaStatus === 'loading' && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-slate-100/90 text-slate-500 animate-pulse dark:bg-slate-800/80 dark:text-slate-400">
+          <ImageIcon className={uncropped ? 'h-6 w-6 opacity-70' : 'h-4 w-4 opacity-70'} />
+          {uncropped && (
+            <span className="text-[11px] font-medium">Loading image…</span>
+          )}
+        </div>
+      )}
       <img
         src={url}
         alt={alt}
         referrerPolicy="no-referrer"
-        className={mediaFitClass}
+        onLoad={() => setMediaStatus('loaded')}
+        onError={() => setMediaStatus('error')}
+        className={`${mediaFitClass} transition-opacity duration-200 ${
+          mediaStatus === 'loaded' ? 'opacity-100' : 'opacity-0'
+        }`}
       />
       {isGif && animateGif && (
-        <span className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 font-mono text-[9px] font-bold text-emerald-300">
+        <span className="absolute top-1.5 right-1.5 z-20 inline-flex items-center gap-1 rounded-md bg-black/75 px-1.5 py-0.5 font-mono text-[9px] font-bold text-emerald-300">
           <Play className="h-2.5 w-2.5 fill-current" />
           GIF
         </span>
@@ -585,6 +651,22 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
     }
   }, [countdowns, selectedCountdownId]);
 
+  useEffect(() => {
+    if (countdowns.length > 0) {
+      syncCountdownsToNative(countdowns);
+    }
+  }, [countdowns]);
+
+  useEffect(() => {
+    const selected =
+      countdowns.find((c) => c.id === selectedCountdownId) ||
+      countdowns[0] ||
+      null;
+    if (selected) {
+      syncCountdownSelectionToNative(selected, true);
+    }
+  }, [countdowns, selectedCountdownId]);
+
   const selectedLiveChannel = useMemo(
     () =>
       liveChannels.find((c) => c.number === selectedLiveChannelNum) ||
@@ -609,16 +691,16 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
       },
     }));
 
-    fetch(`/api/twitch-status?channel=${encodeURIComponent(channel)}`, {
-      cache: 'no-store',
+    fetchJsonWithRetry<{
+      isLive?: boolean;
+      bannerImageUrl?: string | null;
+      streamTitle?: string | null;
+    }>(`/api/twitch-status?channel=${encodeURIComponent(channel)}`, {
+      timeoutMs: 20000,
+      retries: 2,
     })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('HTTP'))))
       .then(
-        (data: {
-          isLive?: boolean;
-          bannerImageUrl?: string | null;
-          streamTitle?: string | null;
-        }) => {
+        (data) => {
           if (cancelled) return;
           setTwitchStatusByCallsign((prev) => ({
             ...prev,
@@ -718,6 +800,18 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
       null,
     [countdowns, selectedCountdownId]
   );
+
+  useEffect(() => {
+    if (countdowns.length > 0) {
+      void syncCountdownsToNative(countdowns);
+    }
+  }, [countdowns]);
+
+  useEffect(() => {
+    if (activeCountdown) {
+      void syncCountdownSelectionToNative(activeCountdown, true);
+    }
+  }, [activeCountdown]);
 
   const countdownTagList = useMemo(() => {
     if (!activeCountdown?.tag) return [];

@@ -12,6 +12,7 @@
         android:id="@+id/widget_single_post_bg"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:src="@drawable/widget_surface_crisp"
         android:scaleType="fitXY"
         android:contentDescription="" />
 
@@ -27,13 +28,13 @@
             android:id="@+id/widget_single_post_title"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text=""
+            android:text="Latest Diary Post"
             android:textSize="14sp"
             android:textStyle="bold"
             android:textColor="#0F172A"
             android:maxLines="1"
             android:ellipsize="end"
-            android:visibility="gone" />
+            android:visibility="visible" />
 
         <!-- Meta row: yyyy.m.d · #tag -->
         <TextView
@@ -41,7 +42,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:text=""
+            android:text="2026.11.25"
             android:textSize="10sp"
             android:textColor="#64748B"
             android:maxLines="1"
@@ -53,7 +54,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text=""
+            android:text="Select a post in widget settings"
             android:textSize="12sp"
             android:textColor="#1E293B"
             android:maxLines="3"
@@ -71,6 +72,41 @@
             android:scaleType="fitCenter"
             android:contentDescription="Post media"
             android:visibility="gone" />
+
+        <!-- Real placeholder / fallback when media is loading or unavailable -->
+        <LinearLayout
+            android:id="@+id/widget_single_post_image_placeholder"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="6dp"
+            android:minHeight="64dp"
+            android:background="@drawable/widget_media_placeholder_bg"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="10dp"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/widget_single_post_placeholder_icon"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:src="@drawable/ic_widget_media_placeholder"
+                android:contentDescription="" />
+
+            <TextView
+                android:id="@+id/widget_single_post_placeholder_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Loading image…"
+                android:textSize="10sp"
+                android:textColor="#64748B"
+                android:gravity="center"
+                android:maxLines="2"
+                android:ellipsize="end" />
+        </LinearLayout>
 
         <!-- Divider above footer -->
         <ImageView

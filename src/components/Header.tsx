@@ -1,14 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  Bell,
+  CalendarClock,
+  CheckCheck,
+  ExternalLink,
+  FileText,
   LogIn,
   LogOut,
   Menu,
   PanelRightClose,
   PanelRightOpen,
+  RefreshCw,
   UserPlus,
   X,
 } from 'lucide-react';
 import type { ActiveView } from '../types';
+import type { AppNotificationItem } from '../lib/notifications';
+import { formatDateYmd } from '../lib/mediaUtils';
 
 interface HeaderProps {
   activeView: ActiveView;
@@ -25,6 +33,12 @@ interface HeaderProps {
   onToggleSidebar: () => void;
   isMobileSidebarOpen: boolean;
   onToggleMobileSidebar: () => void;
+  notifications?: AppNotificationItem[];
+  onNotificationClick?: (item: AppNotificationItem) => void;
+  onMarkAllNotificationsRead?: () => void;
+  onCheckNotificationsNow?: () => Promise<void> | void;
+  canRequestWebPush?: boolean;
+  onRequestWebPush?: () => Promise<void> | void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -42,10 +56,42 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleSidebar,
   isMobileSidebarOpen,
   onToggleMobileSidebar,
+  notifications = [],
+  onNotificationClick,
+  onMarkAllNotificationsRead,
+  onCheckNotificationsNow,
+  canRequestWebPush = false,
+  onRequestWebPush,
 }) => {
   const logoSlotRef = useRef<HTMLDivElement>(null);
   const logoMeasureRef = useRef<HTMLSpanElement>(null);
+  const notifContainerRef = useRef<HTMLDivElement>(null);
   const [useCompactLogo, setUseCompactLogo] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
+  const [checkingNotifs, setCheckingNotifs] = useState(false);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  useEffect(() => {
+    if (!notifOpen) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (
+        notifContainerRef.current &&
+        !notifContainerRef.current.contains(e.target as Node)
+      ) {
+        setNotifOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNotifOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [notifOpen]);
 
   useEffect(() => {
     const checkLogoFit = () => {
@@ -88,6 +134,16 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'settings', label: 'Settings' },
     { id: 'install', label: 'Install Mobile App' },
   ];
+
+  const handleManualCheck = async () => {
+    if (!onCheckNotificationsNow || checkingNotifs) return;
+    setCheckingNotifs(true);
+    try {
+      await onCheckNotificationsNow();
+    } finally {
+      setCheckingNotifs(false);
+    }
+  };
 
   return (
     <header className="sticky top-0 z-[38] shrink-0 border-b border-white/70 bg-white/75 backdrop-blur-xl dark:border-slate-800/80 dark:bg-slate-950/75">
@@ -159,6 +215,134 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         <div className="flex items-center gap-2 shrink-0">
+          {/* Notification Bell */}
+          <div ref={notifContainerRef} className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setNotifOpen((prev) => !prev)}
+              aria-label={
+                unreadCount > 0
+                  ? `Notifications (${unreadCount} unread)`
+                  : 'Notifications'
+              }
+              aria-expanded={notifOpen}
+              title="Notifications"
+              className="relative inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200/90 bg-white/85 text-slate-700 shadow-sm hover:bg-white hover:text-sky-700 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200 dark:hover:text-white cursor-pointer transition-colors"
+            >
+              <Bell className="h-4 w-4" />
+              {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white shadow-sm tabular-nums">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
+            </button>
+
+            {notifOpen && (
+              <div
+                role="dialog"
+                aria-label="Notifications"
+                className="absolute right-0 mt-2 w-[300px] sm:w-[340px] max-w-[calc(100vw-24px)] rounded-2xl border border-slate-200/90 bg-white/95 shadow-2xl backdrop-blur-xl dark:border-slate-700 dark:bg-slate-900/95 z-50 overflow-hidden"
+              >
+                <div className="flex items-center justify-between gap-2 border-b border-slate-200/80 px-3.5 py-2.5 dark:border-slate-800">
+                  <span className="font-display text-xs font-bold text-slate-900 dark:text-white">
+                    Notifications
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {onCheckNotificationsNow && (
+                      <button
+                        type="button"
+                        onClick={handleManualCheck}
+                        disabled={checkingNotifs}
+                        title="Check MD Memo & scheduled updates"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50 dark:text-sky-300 dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        <RefreshCw
+                          className={`h-3 w-3 ${checkingNotifs ? 'animate-spin' : ''}`}
+                        />
+                        <span>Refresh</span>
+                      </button>
+                    )}
+                    {unreadCount > 0 && onMarkAllNotificationsRead && (
+                      <button
+                        type="button"
+                        onClick={onMarkAllNotificationsRead}
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        <CheckCheck className="h-3 w-3" />
+                        <span>Read all</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {canRequestWebPush && onRequestWebPush && (
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-200/70 bg-sky-50/70 px-3.5 py-2 text-[11px] dark:border-slate-800 dark:bg-sky-950/30">
+                    <span className="text-slate-700 dark:text-slate-200">
+                      Enable browser alerts for updates?
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => onRequestWebPush()}
+                      className="rounded-lg bg-sky-600 px-2.5 py-1 font-semibold text-white hover:bg-sky-700 cursor-pointer shrink-0"
+                    >
+                      Allow
+                    </button>
+                  </div>
+                )}
+
+                <div className="max-h-80 overflow-y-auto divide-y divide-slate-200/70 dark:divide-slate-800">
+                  {notifications.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-xs text-slate-500 dark:text-slate-400">
+                      No alerts yet. Scheduled posts, countdown dates, and new MD Memo posts appear here.
+                    </div>
+                  ) : (
+                    notifications.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          onNotificationClick?.(item);
+                          setNotifOpen(false);
+                        }}
+                        className={`flex w-full items-start gap-2.5 px-3.5 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/70 cursor-pointer ${
+                          item.read ? 'opacity-75' : 'bg-sky-50/40 dark:bg-sky-950/20'
+                        }`}
+                      >
+                        <div className="mt-0.5 shrink-0 text-sky-600 dark:text-sky-400">
+                          {item.kind === 'countdown' ? (
+                            <CalendarClock className="h-4 w-4" />
+                          ) : item.kind === 'blogger' ? (
+                            <ExternalLink className="h-4 w-4" />
+                          ) : (
+                            <FileText className="h-4 w-4" />
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-display text-xs font-bold text-slate-900 dark:text-white truncate">
+                              {item.title}
+                            </span>
+                            {!item.read && (
+                              <span className="h-2 w-2 rounded-full bg-sky-500 shrink-0" />
+                            )}
+                          </div>
+                          <div className="mt-0.5 text-xs text-slate-600 dark:text-slate-300 line-clamp-2">
+                            {item.body}
+                          </div>
+                          {item.kind !== 'countdown' && (
+                            <div className="mt-1 font-mono text-[10px] text-slate-400 tabular-nums">
+                              {formatDateYmd(item.createdAt)}
+                            </div>
+                          )}
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
           {authReady && isAdmin ? (
             <>
               <button
@@ -249,4 +433,3 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
-

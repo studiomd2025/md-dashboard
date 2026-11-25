@@ -1518,7 +1518,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                   >
                     <option value="full">Full Timer (00 : 00 : 00 : 00)</option>
                     <option value="days-only">Adaptive Remaining (e.g. 2 months, 2 weeks, 3 days)</option>
-                    <option value="d-day">Days Remaining (D-# / D-DAY / D+#)</option>
+                    <option value="d-day">Days Remaining (D-# / D-Day / D+#)</option>
                     <option value="date-only">Target Date Only</option>
                   </select>
                 </div>

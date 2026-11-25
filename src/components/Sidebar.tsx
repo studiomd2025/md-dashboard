@@ -74,7 +74,7 @@ export function formatCountdownDisplay(cd: EventCountdown, nowMs: number): strin
     return 'Event arrived';
   }
 
-  // Days Remaining (D-#) is the only countdown format that continues counting on & after the event date (D-DAY, D+1, D+2...)
+  // Days Remaining (D-#) is the only countdown format that continues counting on & after the event date (D-Day, D+1, D+2...)
   if (format === 'd-day') {
     const targetParts = getWallClockParts(targetDate, cd.timeZone);
     const nowParts = getWallClockParts(nowMs, cd.timeZone);
@@ -90,7 +90,7 @@ export function formatCountdownDisplay(cd: EventCountdown, nowMs: number): strin
     );
     const dayDiff = Math.round((nowDayUtc - targetDayUtc) / 86400000);
     if (dayDiff === 0) {
-      return 'D-DAY';
+      return 'D-Day';
     }
     if (dayDiff > 0) {
       return `D+${dayDiff}`;
