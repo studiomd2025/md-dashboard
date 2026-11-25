@@ -115,12 +115,40 @@ import {
   syncCountdownsToNative,
 } from './lib/widgetBridge';
 
+const CACHED_CUSTOM_THEMES_KEY = 'md_cached_custom_themes_v1';
+
+const loadCachedCustomThemes = (): DesignSettings['customThemes'] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(CACHED_CUSTOM_THEMES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (t): t is NonNullable<DesignSettings['customThemes']>[number] =>
+        Boolean(t && typeof t === 'object' && typeof t.id === 'string' && t.id !== 'default')
+    );
+  } catch {
+    return [];
+  }
+};
+
+const saveCachedCustomThemes = (themes: DesignSettings['customThemes']) => {
+  if (typeof window === 'undefined') return;
+  try {
+    const safeList = (themes || []).filter((t) => t && t.id && t.id !== 'default');
+    window.localStorage.setItem(CACHED_CUSTOM_THEMES_KEY, JSON.stringify(safeList));
+  } catch {
+    // ignore storage quota errors
+  }
+};
+
 const getInitialDesignState = (): DesignSettings => {
   const fallback: DesignSettings = {
     theme: 'default',
     surfaceStyle: 'aero-glass',
     customBackdropUrl: '',
-    customThemes: [],
+    customThemes: loadCachedCustomThemes(),
   };
   if (typeof window === 'undefined') return fallback;
   try {
@@ -313,7 +341,10 @@ export default function App() {
     useFlipLayout(`${timelineLayout}-${isSidebarCollapsed}-${isTwoColViewport}`);
 
   const activeCustomTheme = useMemo(
-    () => (design.customThemes || []).find((t) => t.id === design.theme) || null,
+    () =>
+      design.theme === 'default'
+        ? null
+        : (design.customThemes || []).find((t) => t.id === design.theme) || null,
     [design.customThemes, design.theme]
   );
 
@@ -342,6 +373,7 @@ export default function App() {
 
     const isDark = getThemeIsDark(design, systemPrefersDark);
     root.classList.toggle('dark', isDark);
+    root.toggleAttribute('data-custom-override', Boolean(activeCustomTheme));
 
     if (activeCustomTheme) {
       const customColors = getCustomThemeColors(activeCustomTheme);
@@ -350,12 +382,16 @@ export default function App() {
       root.style.setProperty('--accent-shadow', 'rgba(15, 23, 42, 0.25)');
       root.style.setProperty('--countdown-ink', customColors.countdownInk);
       root.style.setProperty('--theme-link', customColors.themeLink);
+      document.body.style.backgroundColor = activeCustomTheme.canvasBg;
+      document.body.style.backgroundImage = 'none';
     } else {
       root.style.removeProperty('--accent-start');
       root.style.removeProperty('--accent-end');
       root.style.removeProperty('--accent-shadow');
       root.style.removeProperty('--countdown-ink');
       root.style.removeProperty('--theme-link');
+      document.body.style.removeProperty('background-color');
+      document.body.style.removeProperty('background-image');
     }
   }, [design, activeCustomTheme, systemPrefersDark]);
 
@@ -620,6 +656,7 @@ export default function App() {
             theme: data.design.theme,
             surfaceStyle: data.design.surfaceStyle,
           };
+          saveCachedCustomThemes(data.design.customThemes);
           setDesign(applyDeviceThemePreference(data.design));
         }
       } catch {
@@ -665,6 +702,7 @@ export default function App() {
             theme: nextDesign.theme,
             surfaceStyle: nextDesign.surfaceStyle,
           };
+          saveCachedCustomThemes(nextDesign.customThemes);
           setDesign(applyDeviceThemePreference(nextDesign));
           setIsLoading(false);
         } else {
@@ -1060,10 +1098,24 @@ export default function App() {
   };
 
   const handleUpdateDesign = async (next: Partial<DesignSettings>) => {
-    const merged: DesignSettings = { ...design, ...next };
+    const sanitizedNext: Partial<DesignSettings> =
+      next.customThemes !== undefined
+        ? {
+            ...next,
+            customThemes: next.customThemes.filter(
+              (t) => t && t.id && t.id !== 'default'
+            ),
+          }
+        : next;
+
+    const merged: DesignSettings = { ...design, ...sanitizedNext };
     setDesign(merged);
 
-    if (next.theme !== undefined || next.surfaceStyle !== undefined) {
+    if (sanitizedNext.customThemes !== undefined) {
+      saveCachedCustomThemes(merged.customThemes);
+    }
+
+    if (sanitizedNext.theme !== undefined || sanitizedNext.surfaceStyle !== undefined) {
       try {
         localStorage.setItem(
           'md-visitor-design',
@@ -1078,7 +1130,8 @@ export default function App() {
     }
 
     const managesGlobalAssets =
-      next.customThemes !== undefined || next.customBackdropUrl !== undefined;
+      sanitizedNext.customThemes !== undefined ||
+      sanitizedNext.customBackdropUrl !== undefined;
 
     if (user && isAdmin && managesGlobalAssets) {
       const remainingCustomIds = new Set(

@@ -74,21 +74,24 @@ function sanitizeCustomThemes(
   themes: CustomThemePreset[] | undefined
 ): CustomThemePreset[] {
   if (!Array.isArray(themes)) return [];
-  return themes.slice(0, 50).map((t) =>
-    stripUndefinedDeep({
-      id: String(t.id).slice(0, 128),
-      name: String(t.name).slice(0, 120),
-      isDark: Boolean(t.isDark),
-      canvasBg: String(t.canvasBg || '#f0f9ff').slice(0, 32),
-      surfaceStyle:
-        t.surfaceStyle === 'crisp-2026' ? 'crisp-2026' : 'aero-glass',
-      accentStart: String(t.accentStart || '#38bdf8').slice(0, 32),
-      accentEnd: String(t.accentEnd || '#0284c7').slice(0, 32),
-      backdropImageUrl: t.backdropImageUrl
-        ? String(t.backdropImageUrl).slice(0, 2000)
-        : undefined,
-    })
-  );
+  return themes
+    .filter((t) => t && t.id && String(t.id) !== 'default')
+    .slice(0, 50)
+    .map((t) =>
+      stripUndefinedDeep({
+        id: String(t.id).slice(0, 128),
+        name: String(t.name).slice(0, 120),
+        isDark: Boolean(t.isDark),
+        canvasBg: String(t.canvasBg || '#f0f9ff').slice(0, 32),
+        surfaceStyle:
+          t.surfaceStyle === 'crisp-2026' ? 'crisp-2026' : 'aero-glass',
+        accentStart: String(t.accentStart || '#38bdf8').slice(0, 32),
+        accentEnd: String(t.accentEnd || '#0284c7').slice(0, 32),
+        backdropImageUrl: t.backdropImageUrl
+          ? String(t.backdropImageUrl).slice(0, 2000)
+          : undefined,
+      })
+    );
 }
 
 function sanitizeTagList(list: string[] | undefined): string[] {

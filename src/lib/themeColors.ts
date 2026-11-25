@@ -7,6 +7,153 @@ export const DARK_THEME_IDS = new Set([
   'y2k-phosphor-grid',
 ]);
 
+/**
+ * Editable defaults for every preloaded built-in theme EXCEPT `'default'` (System Default),
+ * which must remain locked and non-editable.
+ */
+export const PRELOADED_THEME_DEFAULTS: Record<string, Omit<CustomThemePreset, 'id'>> = {
+  'aero-daylight': {
+    name: 'Frutiger Aero Daylight',
+    isDark: false,
+    canvasBg: '#eff8fd',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#38bdf8',
+    accentEnd: '#0284c7',
+    backdropImageUrl: '/samples/aero-daylight.jpg',
+  },
+  'twilight-lagoon': {
+    name: 'Twilight Lagoon',
+    isDark: true,
+    canvasBg: '#06131c',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#38bdf8',
+    accentEnd: '#0284c7',
+    backdropImageUrl: '/samples/twilight-lagoon.jpg',
+  },
+  'metro-prism-light': {
+    name: 'Frutiger Metro Daylight',
+    isDark: false,
+    canvasBg: '#f4fbff',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#06b6d4',
+    accentEnd: '#2563eb',
+    backdropImageUrl: '/samples/metro-prism-light.jpg',
+  },
+  'metro-eclipse-dark': {
+    name: 'Frutiger Metro Eclipse',
+    isDark: true,
+    canvasBg: '#050d17',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#22d3ee',
+    accentEnd: '#0284c7',
+    backdropImageUrl: '/samples/metro-eclipse-dark.jpg',
+  },
+  'metro-ipod-pop': {
+    name: 'Frutiger Metro Neon Pop',
+    isDark: false,
+    canvasBg: '#f7fff4',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#f43f5e',
+    accentEnd: '#db2777',
+    backdropImageUrl: '/samples/metro-ipod-pop.jpg',
+  },
+  'metro-ipod-electric': {
+    name: 'Frutiger Metro Electric Club',
+    isDark: true,
+    canvasBg: '#0b0719',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#0891b2',
+    accentEnd: '#db2777',
+    backdropImageUrl: '/samples/metro-ipod-electric.jpg',
+  },
+  'meadow-mint': {
+    name: 'Meadow Mint Breeze',
+    isDark: false,
+    canvasBg: '#f1fbf6',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#34d399',
+    accentEnd: '#059669',
+    backdropImageUrl: '/samples/meadow-mint.jpg',
+  },
+  'sunset-glass': {
+    name: 'Sunset Tangerine Glass',
+    isDark: false,
+    canvasBg: '#fff8f3',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#fb923c',
+    accentEnd: '#e11d48',
+    backdropImageUrl: '/samples/sunset-glass.jpg',
+  },
+  'crystal-pearl': {
+    name: 'Crystal Pearl Minimal',
+    isDark: false,
+    canvasBg: '#f8fafc',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#475569',
+    accentEnd: '#0f172a',
+    backdropImageUrl: '/samples/crystal-pearl.jpg',
+  },
+  'y2k-chrome-cd': {
+    name: 'Y2K Liquid Chrome CD',
+    isDark: false,
+    canvasBg: '#cbd5e1',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#3b82f6',
+    accentEnd: '#1d4ed8',
+    backdropImageUrl: '/samples/y2k-chrome-cd.jpg',
+  },
+  'y2k-phosphor-grid': {
+    name: 'Y2K Phosphor Cyber Grid',
+    isDark: true,
+    canvasBg: '#07110d',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#84cc16',
+    accentEnd: '#0d9488',
+    backdropImageUrl: '/samples/y2k-phosphor-grid.jpg',
+  },
+  'y2k-bubblegum-flip': {
+    name: 'Y2K Candy Flip Hologram',
+    isDark: false,
+    canvasBg: '#f3e8ff',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#ec4899',
+    accentEnd: '#7c3aed',
+    backdropImageUrl: '/samples/y2k-bubblegum-flip.jpg',
+  },
+  'y2k-arcade-peach': {
+    name: 'Y2K Dreamcast Tangerine',
+    isDark: false,
+    canvasBg: '#faf2e4',
+    surfaceStyle: 'aero-glass',
+    accentStart: '#f97316',
+    accentEnd: '#0891b2',
+    backdropImageUrl: '/samples/y2k-arcade-peach.jpg',
+  },
+};
+
+export const PRELOADED_EDITABLE_THEME_IDS: ReadonlySet<string> = new Set(
+  Object.keys(PRELOADED_THEME_DEFAULTS)
+);
+
+export function resolvePreloadedThemePreset(
+  presetId: string,
+  customThemes?: CustomThemePreset[]
+): CustomThemePreset | null {
+  if (presetId === 'default') return null;
+  const base = PRELOADED_THEME_DEFAULTS[presetId];
+  if (!base) return null;
+  const override = (customThemes || []).find((t) => t.id === presetId);
+  return override || { id: presetId, ...base };
+}
+
+export function getCustomOnlyThemes(
+  customThemes?: CustomThemePreset[]
+): CustomThemePreset[] {
+  return (customThemes || []).filter(
+    (t) => t && t.id !== 'default' && !PRELOADED_EDITABLE_THEME_IDS.has(t.id)
+  );
+}
+
 function parseHexRgb(hex: string): [number, number, number] | null {
   const clean = hex.trim().replace(/^#/, '');
   if (/^[0-9a-f]{3}$/i.test(clean)) {

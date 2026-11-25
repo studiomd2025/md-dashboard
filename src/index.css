@@ -419,8 +419,8 @@ html.dark[data-theme="default"] .diary-hashtag-inline {
   color: #d4d4d8;
 }
 
-/* Experimental Y2K Material Surfaces */
-html[data-theme="y2k-chrome-cd"]:not([data-surface="crisp-2026"]) .aero-glass {
+/* Experimental Y2K Material Surfaces (skipped when admin has customized the theme) */
+html[data-theme="y2k-chrome-cd"]:not([data-surface="crisp-2026"]):not([data-custom-override]) .aero-glass {
   background: linear-gradient(
     160deg,
     rgba(248, 250, 252, 0.88) 0%,
@@ -434,7 +434,7 @@ html[data-theme="y2k-chrome-cd"]:not([data-surface="crisp-2026"]) .aero-glass {
     0 12px 30px -16px rgba(15, 23, 42, 0.24);
 }
 
-html[data-theme="y2k-phosphor-grid"]:not([data-surface="crisp-2026"]) .aero-glass {
+html[data-theme="y2k-phosphor-grid"]:not([data-surface="crisp-2026"]):not([data-custom-override]) .aero-glass {
   background: rgba(8, 22, 17, 0.82);
   border: 1px solid rgba(163, 230, 53, 0.24);
   box-shadow:
@@ -442,12 +442,12 @@ html[data-theme="y2k-phosphor-grid"]:not([data-surface="crisp-2026"]) .aero-glas
     0 14px 36px -18px rgba(0, 0, 0, 0.65);
 }
 
-html[data-theme="y2k-phosphor-grid"] .diary-prose a,
-html[data-theme="y2k-phosphor-grid"] .diary-hashtag-inline {
+html[data-theme="y2k-phosphor-grid"]:not([data-custom-override]) .diary-prose a,
+html[data-theme="y2k-phosphor-grid"]:not([data-custom-override]) .diary-hashtag-inline {
   color: #a3e635;
 }
 
-html[data-theme="y2k-bubblegum-flip"]:not([data-surface="crisp-2026"]) .aero-glass {
+html[data-theme="y2k-bubblegum-flip"]:not([data-surface="crisp-2026"]):not([data-custom-override]) .aero-glass {
   background: linear-gradient(
     160deg,
     rgba(255, 250, 255, 0.86) 0%,
@@ -459,12 +459,12 @@ html[data-theme="y2k-bubblegum-flip"]:not([data-surface="crisp-2026"]) .aero-gla
     0 12px 32px -16px rgba(124, 58, 237, 0.2);
 }
 
-html[data-theme="y2k-bubblegum-flip"] .diary-prose a,
-html[data-theme="y2k-bubblegum-flip"] .diary-hashtag-inline {
+html[data-theme="y2k-bubblegum-flip"]:not([data-custom-override]) .diary-prose a,
+html[data-theme="y2k-bubblegum-flip"]:not([data-custom-override]) .diary-hashtag-inline {
   color: #be185d;
 }
 
-html[data-theme="y2k-arcade-peach"]:not([data-surface="crisp-2026"]) .aero-glass {
+html[data-theme="y2k-arcade-peach"]:not([data-surface="crisp-2026"]):not([data-custom-override]) .aero-glass {
   background: rgba(255, 251, 245, 0.86);
   border: 1px solid rgba(251, 146, 60, 0.34);
   box-shadow:
@@ -472,9 +472,14 @@ html[data-theme="y2k-arcade-peach"]:not([data-surface="crisp-2026"]) .aero-glass
     0 12px 30px -16px rgba(194, 65, 12, 0.18);
 }
 
-html[data-theme="y2k-arcade-peach"] .diary-prose a,
-html[data-theme="y2k-arcade-peach"] .diary-hashtag-inline {
+html[data-theme="y2k-arcade-peach"]:not([data-custom-override]) .diary-prose a,
+html[data-theme="y2k-arcade-peach"]:not([data-custom-override]) .diary-hashtag-inline {
   color: #c2410c;
+}
+
+html[data-custom-override] .diary-prose a,
+html[data-custom-override] .diary-hashtag-inline {
+  color: var(--theme-link);
 }
 
 .diary-prose {
