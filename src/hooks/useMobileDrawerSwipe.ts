@@ -60,6 +60,8 @@ export function useMobileDrawerSwipe({
   });
   stateRef.current = { isOpen, onOpen, onClose, drawerWidthPx };
 
+  const rafRef = useRef<number | null>(null);
+
   const gestureRef = useRef<{
     active: boolean;
     startX: number;
@@ -82,6 +84,10 @@ export function useMobileDrawerSwipe({
     if (!enabled || typeof window === 'undefined') return;
 
     const resetVisualDrag = () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
       gestureRef.current.active = false;
       gestureRef.current.lock = 'none';
       setIsDraggingDrawer(false);
@@ -99,12 +105,13 @@ export function useMobileDrawerSwipe({
       const touch = e.touches[0];
       const { isOpen: currentlyOpen } = stateRef.current;
 
-      if (!currentlyOpen && isExcludedSwipeTarget(e.target)) {
+      // STRICT LEFT EDGE ZONE: When drawer is closed, swipe MUST start within 24px of left edge
+      if (!currentlyOpen && touch.clientX > 24) {
         gestureRef.current.active = false;
         return;
       }
 
-      if (currentlyOpen && isExcludedSwipeTarget(e.target)) {
+      if (isExcludedSwipeTarget(e.target)) {
         gestureRef.current.active = false;
         return;
       }
@@ -135,9 +142,8 @@ export function useMobileDrawerSwipe({
       const absDy = Math.abs(dy);
 
       if (g.lock === 'none') {
-        if (Math.hypot(dx, dy) < 12) return;
+        if (Math.hypot(dx, dy) < 10) return;
 
-        // Abort immediately if the user is scrolling vertically or diagonally.
         if (absDy * 1.25 >= absDx) {
           g.lock = 'vertical';
           g.active = false;
@@ -145,14 +151,8 @@ export function useMobileDrawerSwipe({
         }
 
         if (!g.wasOpenAtStart) {
-          const isEdgeSwipe = g.startX <= 40;
-          const enoughRightTravel = isEdgeSwipe ? dx >= 14 : dx >= 26;
-          const strongHorizontalRatio = isEdgeSwipe
-            ? absDx > absDy * 1.3
-            : absDx > absDy * 1.75;
-
-          if (dx <= 0 || !enoughRightTravel || !strongHorizontalRatio) {
-            if (dx < -10) {
+          if (g.startX > 24 || dx <= 0 || dx < 12 || absDx <= absDy * 1.5) {
+            if (dx < -8) {
               g.lock = 'vertical';
               g.active = false;
             }
@@ -174,17 +174,22 @@ export function useMobileDrawerSwipe({
 
       if (g.lock === 'horizontal') {
         const width = Math.min(stateRef.current.drawerWidthPx, window.innerWidth * 0.86);
+        let clamped: number;
+        let progress: number;
+
         if (!g.wasOpenAtStart) {
-          const clampedOpen = Math.max(-width, Math.min(0, -width + dx));
-          const progress = Math.max(0, Math.min(1, 1 + clampedOpen / width));
-          setDragOffsetPx(clampedOpen);
-          setBackdropOpacity(progress);
+          clamped = Math.max(-width, Math.min(0, -width + dx));
+          progress = Math.max(0, Math.min(1, 1 + clamped / width));
         } else {
-          const clampedClose = Math.max(-width, Math.min(0, dx));
-          const progress = Math.max(0, Math.min(1, 1 + clampedClose / width));
-          setDragOffsetPx(clampedClose);
-          setBackdropOpacity(progress);
+          clamped = Math.max(-width, Math.min(0, dx));
+          progress = Math.max(0, Math.min(1, 1 + clamped / width));
         }
+
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(() => {
+          setDragOffsetPx(clamped);
+          setBackdropOpacity(progress);
+        });
       }
     };
 
@@ -201,13 +206,13 @@ export function useMobileDrawerSwipe({
       const width = Math.min(stateRef.current.drawerWidthPx, window.innerWidth * 0.86);
 
       if (!g.wasOpenAtStart) {
-        const threshold = g.startX <= 40 ? 44 : Math.max(68, width * 0.28);
-        if (g.lastDx >= threshold || velocityX > 0.38) {
+        const threshold = Math.max(44, width * 0.25);
+        if (g.lastDx >= threshold || velocityX > 0.35) {
           stateRef.current.onOpen();
         }
       } else {
-        const closeThreshold = Math.max(60, width * 0.25);
-        if (g.lastDx <= -closeThreshold || velocityX < -0.38) {
+        const closeThreshold = Math.max(44, width * 0.25);
+        if (g.lastDx <= -closeThreshold || velocityX < -0.35) {
           stateRef.current.onClose();
         }
       }
@@ -221,6 +226,7 @@ export function useMobileDrawerSwipe({
     window.addEventListener('touchcancel', resetVisualDrag, { passive: true });
 
     return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
       window.removeEventListener('touchstart', onTouchStart);
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onTouchEnd);

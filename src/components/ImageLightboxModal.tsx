@@ -32,6 +32,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
   const [isGesturing, setIsGesturing] = useState(false);
   const [showPressMenu, setShowPressMenu] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const [toastMsg, setToastMsg] = useState('');
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -60,6 +61,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
     if (isOpen) {
       resetZoom();
       setShowPressMenu(false);
+      setMenuPos(null);
       setToastMsg('');
     }
   }, [isOpen, imageUrl, resetZoom]);
@@ -100,8 +102,23 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
     []
   );
 
+  // Desktop Right-Click Context Menu
+  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+    setMenuPos({ x: e.clientX, y: e.clientY });
+    setShowPressMenu(true);
+  };
+
   // Unified Pointer Event Handlers for Desktop Web & Mobile/Tablet Touch
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Ignore secondary mouse clicks (right click handled by onContextMenu)
+    if (e.button !== 0 && e.pointerType === 'mouse') return;
+
     if (e.pointerType === 'touch') {
       try {
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -113,11 +130,12 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
     activePointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const pointerList = Array.from(activePointersRef.current.values());
 
-    // Press and hold timer for touch pointer
+    // Press-and-hold timer for touch pointer (~450ms)
     if (e.pointerType === 'touch' && pointerList.length === 1) {
       touchStartPosRef.current = { x: e.clientX, y: e.clientY };
       if (pressTimerRef.current) clearTimeout(pressTimerRef.current);
       pressTimerRef.current = setTimeout(() => {
+        setMenuPos({ x: e.clientX, y: e.clientY });
         setShowPressMenu(true);
         if (typeof navigator !== 'undefined' && navigator.vibrate) {
           try {
@@ -386,6 +404,30 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
   if (!isOpen || !imageUrl) return null;
 
   const isDataUrl = imageUrl.startsWith('data:');
+  const isMobileViewport =
+    typeof window !== 'undefined' && window.innerWidth < 640;
+
+  // Positioning logic:
+  // Mobile (<640px): Centered on screen
+  // Tablet (>=640px touch) & Desktop (Right-click): Anchored at touch/click position
+  let anchoredStyle: React.CSSProperties | undefined = undefined;
+  if (!isMobileViewport && menuPos) {
+    const menuW = 270;
+    const menuH = 270;
+    const posX = Math.min(
+      Math.max(16, menuPos.x - menuW / 2),
+      window.innerWidth - menuW - 16
+    );
+    const posY = Math.min(
+      Math.max(16, menuPos.y - 12),
+      window.innerHeight - menuH - 16
+    );
+    anchoredStyle = {
+      position: 'absolute',
+      left: `${posX}px`,
+      top: `${posY}px`,
+    };
+  }
 
   return (
     <div
@@ -474,6 +516,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
       <div
         ref={containerRef}
         onClick={(e) => e.stopPropagation()}
+        onContextMenu={handleContextMenu}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
@@ -503,18 +546,19 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
         </div>
       </div>
 
-      {/* Press-and-Hold Touch Action Menu Modal */}
+      {/* Photo Action Menu Modal (Centered on Mobile, Anchored on Tablet/Desktop) */}
       {showPressMenu && (
         <div
           onClick={(e) => {
             e.stopPropagation();
             setShowPressMenu(false);
           }}
-          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm md-animate-fade-in"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm md-animate-fade-in"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl border border-slate-700/80 bg-slate-900 p-4 text-white shadow-2xl space-y-2"
+            style={anchoredStyle}
+            className="w-full max-w-xs rounded-3xl border border-slate-700/80 bg-slate-900 p-4 text-white shadow-2xl space-y-2"
           >
             <div className="flex items-center justify-between border-b border-slate-800 pb-2.5 px-1">
               <span className="font-display text-xs font-bold text-slate-300">
@@ -535,7 +579,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
                 onClick={handleSaveImage}
                 className="flex w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-100 hover:bg-slate-800/80 active:bg-slate-800 cursor-pointer"
               >
-                <Download className="h-4 w-4 text-sky-400" />
+                <Download className="h-4 w-4 text-sky-400 shrink-0" />
                 <span>Save Image</span>
               </button>
 
@@ -544,7 +588,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
                 onClick={handleShareImage}
                 className="flex w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-100 hover:bg-slate-800/80 active:bg-slate-800 cursor-pointer"
               >
-                <Share2 className="h-4 w-4 text-sky-400" />
+                <Share2 className="h-4 w-4 text-sky-400 shrink-0" />
                 <span>Share Image</span>
               </button>
 
@@ -553,7 +597,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
                 onClick={handleCopyImage}
                 className="flex w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-100 hover:bg-slate-800/80 active:bg-slate-800 cursor-pointer"
               >
-                <Copy className="h-4 w-4 text-sky-400" />
+                <Copy className="h-4 w-4 text-sky-400 shrink-0" />
                 <span>Copy Image</span>
               </button>
 
@@ -563,7 +607,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
                   onClick={handleCopyLink}
                   className="flex w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-100 hover:bg-slate-800/80 active:bg-slate-800 cursor-pointer"
                 >
-                  <Link2 className="h-4 w-4 text-sky-400" />
+                  <Link2 className="h-4 w-4 text-sky-400 shrink-0" />
                   <span>Copy Link</span>
                 </button>
               )}
@@ -573,7 +617,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
                 onClick={handleOpenOriginal}
                 className="flex w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-100 hover:bg-slate-800/80 active:bg-slate-800 cursor-pointer"
               >
-                <ExternalLink className="h-4 w-4 text-sky-400" />
+                <ExternalLink className="h-4 w-4 text-sky-400 shrink-0" />
                 <span>Open Original in New Tab</span>
               </button>
 
@@ -582,7 +626,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
                 onClick={handleResetFromMenu}
                 className="flex w-full items-center gap-3 rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-amber-300 hover:bg-slate-800/80 active:bg-slate-800 cursor-pointer"
               >
-                <RotateCcw className="h-4 w-4" />
+                <RotateCcw className="h-4 w-4 shrink-0" />
                 <span>Reset Zoom & Position</span>
               </button>
             </div>
