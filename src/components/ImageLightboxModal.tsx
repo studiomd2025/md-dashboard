@@ -514,8 +514,7 @@ export const ImageLightboxModal: React.FC<ImageLightboxModalProps> = ({
 
       {/* Full Viewport Drag & Zoom Stage Container (overflow-visible inner transform) */}
       <div
-        ref={containerRef}
-        onClick={(e) => e.stopPropagation()}
+        ref={containerRef}
         onContextMenu={handleContextMenu}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

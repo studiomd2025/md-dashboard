@@ -26,8 +26,10 @@ import { PWAInstallButton } from './PWAInstallButton';
 import { THEME_PRESETS } from './BackendConsoleView';
 import { STATIONS, type BroadcastChannel } from './LiveTvView';
 import {
+  getCustomOnlyThemes,
   getThemeIsDark,
   mixHex,
+  resolvePreloadedThemePreset,
   sampleBackdropTopIsDark,
 } from '../lib/themeColors';
 
@@ -333,22 +335,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onChange={(e) => handleThemeChange(e.target.value)}
           className="w-full rounded-xl border border-slate-200/90 bg-white/85 px-3 py-2 text-xs font-medium text-slate-800 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100"
         >
-          <optgroup label="Built-in Themes">
-            {THEME_PRESETS.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.label}
+          {[
+            ...THEME_PRESETS.map((p) => {
+              const isDefault = (p.id as string) === 'default' || (p.id as string) === 'system-default' || /^system default$/i.test(p.label);
+              const resolved = isDefault ? null : resolvePreloadedThemePreset(p.id, customThemes);
+              return {
+                id: p.id,
+                label: resolved?.name || p.label,
+                isDefault,
+              };
+            }),
+            ...getCustomOnlyThemes(customThemes).map((ct) => ({
+              id: ct.id,
+              label: ct.name,
+              isDefault: false,
+            })),
+          ]
+            .sort((a, b) => {
+              if (a.isDefault && !b.isDefault) return -1;
+              if (!a.isDefault && b.isDefault) return 1;
+              return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+            })
+            .map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
               </option>
             ))}
-          </optgroup>
-          {customThemes.length > 0 && (
-            <optgroup label="My Custom Themes">
-              {customThemes.map((ct) => (
-                <option key={ct.id} value={ct.id}>
-                  {ct.name} ({ct.isDark ? 'Dark' : 'Light'})
-                </option>
-              ))}
-            </optgroup>
-          )}
         </select>
 
         <PWAInstallButton variant="full" />

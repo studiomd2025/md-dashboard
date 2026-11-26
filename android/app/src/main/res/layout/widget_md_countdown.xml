@@ -21,7 +21,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:gravity="top"
+        android:gravity="center"
         android:padding="12dp">
 
         <!-- Horizontal container for Horizontal breakpoint (Timer left + Title right) -->
@@ -38,12 +38,13 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="D-Day"
-                android:textSize="28sp"
+                android:textSize="22sp"
                 android:textStyle="bold"
                 android:textColor="#0F172A"
                 android:maxLines="1"
                 android:singleLine="true"
                 android:ellipsize="none"
+                android:fontFeatureSettings="tnum"
                 android:includeFontPadding="false" />
 
             <Chronometer
@@ -51,7 +52,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:countDown="true"
-                android:textSize="28sp"
+                android:textSize="22sp"
                 android:textStyle="bold"
                 android:textColor="#0F172A"
                 android:fontFeatureSettings="tnum"
@@ -79,31 +80,32 @@
         <LinearLayout
             android:id="@+id/widget_countdown_vert_container"
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
+            android:layout_height="match_parent"
             android:orientation="vertical"
-            android:gravity="top">
+            android:gravity="center">
 
             <TextView
                 android:id="@+id/widget_countdown_value"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:gravity="center"
                 android:text="D-Day"
-                android:textSize="36sp"
+                android:textSize="26sp"
                 android:textStyle="bold"
                 android:textColor="#0F172A"
                 android:maxLines="1"
                 android:singleLine="true"
                 android:ellipsize="none"
-                android:includeFontPadding="false"
-                android:layout_marginTop="2dp" />
+                android:fontFeatureSettings="tnum"
+                android:includeFontPadding="false" />
 
             <Chronometer
                 android:id="@+id/widget_countdown_chronometer"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:gravity="center"
                 android:countDown="true"
-                android:textSize="36sp"
+                android:textSize="26sp"
                 android:textStyle="bold"
                 android:textColor="#0F172A"
                 android:fontFeatureSettings="tnum"
@@ -111,13 +113,13 @@
                 android:singleLine="true"
                 android:ellipsize="none"
                 android:includeFontPadding="false"
-                android:layout_marginTop="2dp"
                 android:visibility="gone" />
 
             <TextView
                 android:id="@+id/widget_countdown_title"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:gravity="center"
                 android:layout_marginTop="4dp"
                 android:text="Next on MD"
                 android:maxLines="2"
@@ -125,17 +127,13 @@
                 android:textSize="13sp"
                 android:textColor="#334155" />
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:text="" />
-
             <!-- Hashtag pill -->
             <TextView
                 android:id="@+id/widget_countdown_tags"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:gravity="center"
                 android:layout_marginTop="6dp"
                 android:text="#EventTag"
                 android:maxLines="1"

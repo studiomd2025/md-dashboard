@@ -115,12 +115,20 @@ export async function fetchJsonWithRetry<T>(
     } catch (err) {
       lastErr = err;
       if (attempt < retries) {
-        await sleep(1200 * attempt);
+        await sleep(1500 * attempt);
       }
     }
   }
 
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  const formattedMsg =
+    lastErr instanceof Error
+      ? lastErr.message
+      : typeof lastErr === 'object' && lastErr !== null
+      ? (lastErr as any).message || (() => { try { return JSON.stringify(lastErr); } catch { return String(lastErr); } })()
+      : String(lastErr);
+
+  console.warn(`[apiClient] Fetch failed after ${retries} attempts for ${url}: ${formattedMsg}`);
+  throw lastErr instanceof Error ? lastErr : new Error(formattedMsg);
 }
 
 function extractYtTitle(titleObj: unknown): string {

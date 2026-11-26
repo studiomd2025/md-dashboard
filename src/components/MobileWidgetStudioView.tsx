@@ -696,8 +696,8 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
       bannerImageUrl?: string | null;
       streamTitle?: string | null;
     }>(`/api/twitch-status?channel=${encodeURIComponent(channel)}`, {
-      timeoutMs: 20000,
-      retries: 2,
+      timeoutMs: 15000,
+      retries: 1,
     })
       .then(
         (data) => {
@@ -713,7 +713,14 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
           }));
         }
       )
-      .catch(() => {
+      .catch((err) => {
+        const errMsg =
+          err instanceof Error
+            ? err.message
+            : typeof err === 'object' && err !== null
+            ? (err as any).message || (() => { try { return JSON.stringify(err); } catch { return String(err); } })()
+            : String(err);
+        console.warn(`[WidgetStudio] Twitch status fetch failed for channel ${channel}: ${errMsg}`);
         if (cancelled) return;
         setTwitchStatusByCallsign((prev) => ({
           ...prev,
@@ -1009,19 +1016,27 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
     const mode = getCountdownModeFromDims(effectiveDims);
     const timerFontPx = getCountdownTimerFontPx(effectiveDims, timerStr);
     const radiusStyle = { borderRadius: `${widgetCornerRadius}px` };
+    const containerStyle = {
+      ...radiusStyle,
+      containerType: 'inline-size' as const,
+    };
+    const timerFontStyle = {
+      fontSize: `clamp(14px, 10.5cqw, ${timerFontPx}px)`,
+      whiteSpace: 'nowrap' as const,
+    };
 
     // NEVER render any clock icon inside Countdown widget
     if (mode === 'smallest') {
       return (
         <button
           type="button"
-          style={radiusStyle}
+          style={containerStyle}
           onClick={() => activeCountdown && onOpenCountdown?.(activeCountdown.id)}
           className={`flex h-full w-full items-center justify-center px-2.5 py-2 text-center transition-all cursor-pointer ${theme.shell}`}
         >
           <span
-            style={{ fontSize: `${timerFontPx}px` }}
-            className="font-display font-extrabold tracking-tight tabular-nums leading-none whitespace-nowrap"
+            style={timerFontStyle}
+            className="font-display font-extrabold tracking-tight tabular-nums leading-none whitespace-nowrap overflow-hidden text-ellipsis"
           >
             {timerStr}
           </span>
@@ -1033,13 +1048,13 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
       return (
         <button
           type="button"
-          style={radiusStyle}
+          style={containerStyle}
           onClick={() => activeCountdown && onOpenCountdown?.(activeCountdown.id)}
           className={`flex h-full w-full items-center justify-between gap-2.5 px-3 py-2.5 text-left transition-all cursor-pointer ${theme.shell}`}
         >
           <span
-            style={{ fontSize: `${timerFontPx}px` }}
-            className="font-display font-extrabold tracking-tight tabular-nums leading-none shrink-0 whitespace-nowrap"
+            style={timerFontStyle}
+            className="font-display font-extrabold tracking-tight tabular-nums leading-none shrink-0 whitespace-nowrap overflow-hidden text-ellipsis"
           >
             {timerStr}
           </span>
@@ -1054,13 +1069,13 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
       return (
         <button
           type="button"
-          style={radiusStyle}
+          style={containerStyle}
           onClick={() => activeCountdown && onOpenCountdown?.(activeCountdown.id)}
           className={`flex h-full w-full flex-col items-center justify-center gap-1.5 px-3 py-3 text-center transition-all cursor-pointer ${theme.shell}`}
         >
           <div
-            style={{ fontSize: `${timerFontPx}px` }}
-            className="font-display font-extrabold tracking-tight tabular-nums leading-tight whitespace-nowrap"
+            style={timerFontStyle}
+            className="font-display font-extrabold tracking-tight tabular-nums leading-tight whitespace-nowrap overflow-hidden text-ellipsis"
           >
             {timerStr}
           </div>
@@ -1075,14 +1090,14 @@ export const MobileWidgetStudioView: React.FC<MobileWidgetStudioViewProps> = ({
     return (
       <button
         type="button"
-        style={radiusStyle}
+        style={containerStyle}
         onClick={() => activeCountdown && onOpenCountdown?.(activeCountdown.id)}
         className={`flex h-full w-full flex-col justify-between gap-3 px-3.5 py-3.5 text-left transition-all cursor-pointer ${theme.shell}`}
       >
         <div>
           <div
-            style={{ fontSize: `${timerFontPx}px` }}
-            className="font-display font-extrabold tracking-tight tabular-nums leading-tight whitespace-nowrap"
+            style={timerFontStyle}
+            className="font-display font-extrabold tracking-tight tabular-nums leading-tight whitespace-nowrap overflow-hidden text-ellipsis"
           >
             {timerStr}
           </div>

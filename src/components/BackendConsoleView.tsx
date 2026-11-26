@@ -370,6 +370,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
   const savedBannerRangeRef = useRef<Range | null>(null);
   const backdropFileRef = useRef<HTMLInputElement>(null);
   const customThemeBackdropRef = useRef<HTMLInputElement>(null);
+  const themeEditorRef = useRef<HTMLFormElement>(null);
   const [bannerTitle, setBannerTitle] = useState('');
   const [bannerSubtitleHtml, setBannerSubtitleHtml] = useState('');
   const [showBannerLinkInput, setShowBannerLinkInput] = useState(false);
@@ -878,6 +879,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     setCtAccentEnd(resolved.accentEnd || '#0284c7');
     setCtBackdropUrl(resolved.backdropImageUrl || '');
     setShowCustomThemeBuilder(true);
+    requestAnimationFrame(() => themeEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
 
   const handleResetPreloadedTheme = async (presetId: string) => {
@@ -911,6 +913,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
     setCtAccentEnd(ct.accentEnd || '#0284c7');
     setCtBackdropUrl(ct.backdropImageUrl || '');
     setShowCustomThemeBuilder(true);
+    requestAnimationFrame(() => themeEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
 
   const handleDeleteCustomTheme = async (id: string) => {
@@ -2920,132 +2923,183 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
           </div>
 
           <div className="space-y-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {THEME_PRESETS.map((preset) => {
-                const selected = design.theme === preset.id;
-                const isDefault = preset.id === 'default';
-                const override = (design.customThemes || []).find(
-                  (t) => t.id === preset.id
-                );
-                const resolved = isDefault
-                  ? null
-                  : resolvePreloadedThemePreset(preset.id, design.customThemes);
-                const isCustomized = Boolean(override);
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">              {[
+                ...THEME_PRESETS.map((preset) => {
+                  const isDefault = (preset.id as string) === 'default' || (preset.id as string) === 'system-default' || /^system default$/i.test(preset.label);
+                  const override = (design.customThemes || []).find((t) => t.id === preset.id);
+                  const resolved = isDefault
+                    ? null
+                    : resolvePreloadedThemePreset(preset.id, design.customThemes);
+                  const isCustomized = Boolean(override);
+                  const swatches = resolved
+                    ? [resolved.canvasBg, resolved.accentStart, resolved.accentEnd]
+                    : preset.swatches;
 
-                const swatches = resolved
-                  ? [resolved.canvasBg, resolved.accentStart, resolved.accentEnd]
-                  : preset.swatches;
+                  return {
+                    id: preset.id,
+                    label: resolved?.name || preset.label,
+                    description: preset.description,
+                    swatches,
+                    isDefault,
+                    isCustom: false,
+                    isCustomized,
+                    surfaceStyle: resolved?.surfaceStyle,
+                    customTheme: null as CustomThemePreset | null,
+                  };
+                }),
+                ...customOnlyThemes.map((ct) => ({
+                  id: ct.id,
+                  label: ct.name,
+                  description: `${ct.surfaceStyle === 'aero-glass' ? 'Glass' : 'Solid'}${ct.backdropImageUrl ? ' · Custom backdrop' : ''}`,
+                  swatches: [ct.canvasBg, ct.accentStart, ct.accentEnd],
+                  isDefault: false,
+                  isCustom: true,
+                  isCustomized: false,
+                  surfaceStyle: ct.surfaceStyle,
+                  customTheme: ct,
+                })),
+              ]
+                .sort((a, b) => {
+                  if (a.isDefault && !b.isDefault) return -1;
+                  if (!a.isDefault && b.isDefault) return 1;
+                  return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+                })
+                .map((item) => {
+                  const selected = design.theme === item.id;
 
-                return (
-                  <div
-                    key={preset.id}
-                    className={`flex flex-col justify-between rounded-2xl border p-4 transition-all ${
-                      selected
-                        ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
-                        : 'border-slate-200/80 bg-white/60 hover:bg-white dark:border-slate-700 dark:bg-slate-900/40'
-                    }`}
-                  >
+                  return (
                     <div
-                      onClick={() =>
-                        onUpdateDesign({
-                          theme: preset.id,
-                          ...(resolved?.surfaceStyle
-                            ? { surfaceStyle: resolved.surfaceStyle }
-                            : {}),
-                        })
-                      }
-                      className="cursor-pointer flex-1"
+                      key={item.id}
+                      className={`flex flex-col justify-between rounded-2xl border p-4 transition-all ${
+                        selected
+                          ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
+                          : 'border-slate-200/80 bg-white/60 hover:bg-white dark:border-slate-700 dark:bg-slate-900/40'
+                      }`}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-display text-sm font-bold text-slate-900 dark:text-white">
-                              {preset.label}
-                            </span>
-                            {isCustomized && (
-                              <span className="rounded-md bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
-                                Edited
-                              </span>
-                            )}
-                          </div>
-                          <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-                            {preset.description}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0 pt-0.5">
-                          {swatches.map((hex, idx) => (
-                            <span
-                              key={`${preset.id}-swatch-${idx}`}
-                              style={{ backgroundColor: hex }}
-                              className="h-4 w-4 rounded-full border border-white shadow-sm"
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 flex items-center justify-between border-t border-slate-200/50 pt-2.5 dark:border-slate-700/40">
-                      <button
-                        type="button"
+                      <div
                         onClick={() =>
                           onUpdateDesign({
-                            theme: preset.id,
-                            ...(resolved?.surfaceStyle
-                              ? { surfaceStyle: resolved.surfaceStyle }
+                            theme: item.id,
+                            ...(item.surfaceStyle
+                              ? { surfaceStyle: item.surfaceStyle }
                               : {}),
                           })
                         }
-                        className={`text-xs font-semibold cursor-pointer ${
-                          selected
-                            ? 'text-sky-700 dark:text-sky-300 font-bold'
-                            : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                        }`}
+                        className="cursor-pointer flex-1"
                       >
-                        {selected ? '✓ Active Theme' : 'Select Theme'}
-                      </button>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                                {item.label}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                              {item.description}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0 pt-0.5">
+                            {item.swatches.map((hex, idx) => (
+                              <span
+                                key={`${item.id}-swatch-${idx}`}
+                                style={{ backgroundColor: hex }}
+                                className="h-4 w-4 rounded-full border border-white shadow-sm"
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
 
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        {isAdmin && !isDefault && (
-                          <>
-                            {isCustomized && (
+                      <div className="mt-3 flex items-center justify-between border-t border-slate-200/50 pt-2.5 dark:border-slate-700/40">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onUpdateDesign({
+                              theme: item.id,
+                              ...(item.surfaceStyle
+                                ? { surfaceStyle: item.surfaceStyle }
+                                : {}),
+                            })
+                          }
+                          className={`text-xs font-semibold cursor-pointer ${
+                            selected
+                              ? 'text-sky-700 dark:text-sky-300 font-bold'
+                              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                          }`}
+                        >
+                          {selected ? '✓ Active Theme' : 'Select Theme'}
+                        </button>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {isAdmin && !item.isDefault && !item.isCustom && (
+                            <>
+                              {item.isCustomized && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleResetPreloadedTheme(item.id);
+                                  }}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-amber-200/80 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/60 cursor-pointer"
+                                  title="Reset to preloaded default colors"
+                                >
+                                  <RotateCcw className="h-3 w-3" />
+                                  <span>Reset</span>
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleResetPreloadedTheme(preset.id);
+                                  handleEditPreloadedTheme(item.id);
                                 }}
-                                className="inline-flex items-center gap-1 rounded-lg border border-amber-200/80 bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-900/60 cursor-pointer"
-                                title="Reset to preloaded default colors"
+                                className="inline-flex items-center gap-1 rounded-lg border border-sky-200/80 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-100 dark:border-sky-800/60 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-900/60 cursor-pointer"
+                                title="Edit this preloaded theme"
                               >
-                                <RotateCcw className="h-3 w-3" />
-                                <span>Reset</span>
+                                <Edit3 className="h-3 w-3" />
+                                <span>Edit</span>
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleEditPreloadedTheme(preset.id);
-                              }}
-                              className="inline-flex items-center gap-1 rounded-lg border border-sky-200/80 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-100 dark:border-sky-800/60 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-900/60 cursor-pointer"
-                              title="Edit this preloaded theme"
-                            >
-                              <Edit3 className="h-3 w-3" />
-                              <span>Edit</span>
-                            </button>
-                          </>
-                        )}
-                        {isDefault && (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
-                            <Lock className="h-3 w-3" />
-                            <span>Locked</span>
-                          </span>
-                        )}
+                            </>
+                          )}
+                          {isAdmin && item.isCustom && item.customTheme && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStartEditCustomTheme(item.customTheme!);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-lg border border-sky-200/80 bg-sky-50 px-2 py-1 text-[11px] font-medium text-sky-700 hover:bg-sky-100 dark:border-sky-800/60 dark:bg-sky-950/50 dark:text-sky-300 dark:hover:bg-sky-900/60 cursor-pointer"
+                                title="Edit custom theme"
+                              >
+                                <Edit3 className="h-3 w-3" />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteCustomTheme(item.id);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-lg border border-rose-200/80 bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-700 hover:bg-rose-100 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300 dark:hover:bg-rose-900/60 cursor-pointer"
+                                title="Delete custom theme"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                <span>Delete</span>
+                              </button>
+                            </>
+                          )}
+                          {item.isDefault && (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+                              <Lock className="h-3 w-3" />
+                              <span>Locked</span>
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
 
             {/* + Add New Theme card directly below preloaded themes */}
@@ -3096,8 +3150,7 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
                 }`}
               >
                 <div className="overflow-hidden">
-                  <form
-                    onSubmit={handleSaveCustomTheme}
+                  <form ref={themeEditorRef} onSubmit={handleSaveCustomTheme}
                     className={`space-y-4 rounded-2xl border border-slate-200/90 bg-white/75 p-5 dark:border-slate-700 dark:bg-slate-900/70 transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
                       showCustomThemeBuilder ? 'translate-y-0' : '-translate-y-2'
                     }`}
@@ -3267,84 +3320,6 @@ export const BackendConsoleView: React.FC<BackendConsoleViewProps> = ({
               </div>
             )}
           </div>
-
-          {customOnlyThemes.length > 0 && (
-            <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
-              <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white">
-                My Saved Custom Themes ({customOnlyThemes.length})
-              </h4>
-              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {customOnlyThemes.map((ct) => {
-                  const selected = design.theme === ct.id;
-                  return (
-                    <div
-                      key={ct.id}
-                      className={`flex items-center justify-between gap-3 rounded-2xl border p-4 ${
-                        selected
-                          ? 'border-sky-500 bg-sky-50/70 dark:border-sky-400 dark:bg-sky-950/40'
-                          : 'border-slate-200/80 bg-white/60 dark:border-slate-700 dark:bg-slate-900/40'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          onUpdateDesign({
-                            theme: ct.id,
-                            surfaceStyle: ct.surfaceStyle,
-                          })
-                        }
-                        className="min-w-0 flex-1 text-left cursor-pointer"
-                      >
-                        <div className="truncate font-display text-sm font-bold text-slate-900 dark:text-white">
-                          {ct.name}
-                        </div>
-                        <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                          {ct.isDark ? 'Dark' : 'Light'} ·{' '}
-                          {ct.surfaceStyle === 'aero-glass' ? 'Glass' : 'Solid'}
-                          {ct.backdropImageUrl ? ' · Custom backdrop' : ''}
-                        </div>
-                      </button>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <div className="flex items-center gap-1">
-                          {[ct.canvasBg, ct.accentStart, ct.accentEnd].map(
-                            (hex, idx) => (
-                              <span
-                                key={`${ct.id}-${idx}`}
-                                style={{ backgroundColor: hex }}
-                                className="h-4 w-4 rounded-full border border-white shadow-sm"
-                              />
-                            )
-                          )}
-                        </div>
-                        {isAdmin && (
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleStartEditCustomTheme(ct)}
-                              aria-label={`Edit theme ${ct.name}`}
-                              className="rounded-lg p-1.5 text-sky-600 hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer"
-                              title="Edit custom theme"
-                            >
-                              <Edit3 className="h-3.5 w-3.5" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteCustomTheme(ct.id)}
-                              aria-label={`Delete theme ${ct.name}`}
-                              className="rounded-lg p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
-                              title="Delete custom theme"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
 
           <div className="border-t border-slate-200/70 pt-5 dark:border-slate-700/60">
             <div className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200">

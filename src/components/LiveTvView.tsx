@@ -1208,14 +1208,20 @@ export const LiveTvView: React.FC<LiveTvViewProps> = ({
           `/api/twitch-status?channel=${encodeURIComponent(channel)}${
             forceRefresh ? '&force=1' : ''
           }`,
-          { timeoutMs: 20000, retries: 2 }
+          { timeoutMs: 15000, retries: 1 }
         );
         twitchStatusCache.set(key, { fetchedAt: Date.now(), data });
         if (!cancelled) {
           setTwitchState({ channelKey: key, loading: false, info: data });
         }
       } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
+        const errMsg =
+          err instanceof Error
+            ? err.message
+            : typeof err === 'object' && err !== null
+            ? (err as any).message || (() => { try { return JSON.stringify(err); } catch { return String(err); } })()
+            : String(err);
+        console.warn(`[LiveTvView] Twitch status fetch failed for channel ${channel}: ${errMsg}`);
         if (!cancelled) {
           setTwitchState((prev) =>
             prev.channelKey === key && prev.info

@@ -135,39 +135,8 @@
         visibility: hidden;
         pointer-events: none;
       }
-      .md-splash-logo-wrap {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        width: auto;
-        min-width: 88px;
-        height: auto;
-        padding: 8px 16px;
-        border: none;
-        border-radius: 0;
-        background: transparent;
-        box-shadow: none;
-        overflow: visible;
-      }
-      .md-splash-logo-img {
-        width: auto;
-        height: 84px;
-        max-width: 85vw;
-        padding: 0;
-        box-sizing: border-box;
-        display: block;
-        object-fit: contain;
-        object-position: center;
-        background: transparent;
-        border: none;
-        box-shadow: none;
-        overflow: visible;
-      }
-      html.dark .md-splash-logo-img {
-        filter: invert(1);
-      }
       .md-splash-title {
-        margin-top: 16px;
+        margin-top: 0;
         font-size: 15px;
         font-weight: 700;
         letter-spacing: 0.08em;
@@ -203,9 +172,6 @@
   </head>
   <body>
     <div id="md-boot-splash" role="progressbar" aria-label="Loading MD Dashboard" aria-valuemin="0" aria-valuemax="100" aria-valuenow="14">
-      <div class="md-splash-logo-wrap">
-        <img src="./splash-logo.png" alt="MD" class="md-splash-logo-img" onerror="this.onerror=null; if(!this.src.endsWith('.png.png')){ this.src='./splash-logo.png.png'; } else { this.style.display='none'; }" />
-      </div>
       <div class="md-splash-title">MY DIARIES DASHBOARD</div>
       <div class="md-splash-track">
         <div id="md-boot-progress-fill" class="md-splash-fill"></div>
