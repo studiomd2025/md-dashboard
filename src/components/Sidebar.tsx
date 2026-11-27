@@ -476,10 +476,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <section className={sectionClass}>
         <div className={isMobileDrawer ? 'space-y-1' : 'space-y-2'}>
           {MD_LINKS.map((item) => (
-            <button
+            <a
               key={item.url}
-              type="button"
-              onClick={() => {
+              href={item.url}
+              onClick={(e) => {
+                e.preventDefault();
                 const isDesktopWeb =
                   typeof window !== 'undefined' &&
                   window.innerWidth >= 1024 &&
@@ -494,13 +495,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }}
               className={
                 isMobileDrawer
-                  ? 'flex w-full items-center justify-between gap-2 rounded-xl px-2 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-100/80 hover:text-sky-700 dark:text-slate-100 dark:hover:bg-slate-800/60 dark:hover:text-sky-300 cursor-pointer'
-                  : 'flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200/90 bg-white/85 px-4 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-white hover:text-sky-700 dark:border-slate-700 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-900 dark:hover:text-sky-300 cursor-pointer'
+                  ? 'flex w-full items-center justify-between gap-2 rounded-xl px-2 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-100/80 hover:text-sky-700 dark:text-slate-100 dark:hover:bg-slate-800/60 dark:hover:text-sky-300'
+                  : 'flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200/90 bg-white/85 px-4 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-white hover:text-sky-700 dark:border-slate-700 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-900 dark:hover:text-sky-300'
               }
             >
               <span>{item.label}</span>
               <ExternalLink className="h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-400" />
-            </button>
+            </a>
           ))}
         </div>
       </section>
