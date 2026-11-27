@@ -2064,8 +2064,8 @@ export default function App() {
                     setIsMobileSidebarOpen(false);
                   }}
                   onOpenInAppWeb={(url, title) => {
-                    setIsMobileSidebarOpen(false);
                     setInAppWebModal({ isOpen: true, url, title });
+                    setIsMobileSidebarOpen(false);
                   }}
                 />
               </div>

@@ -82,22 +82,20 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent">
 
-            <!-- Top section: Top-Left Aligned Large Bold Timer -->
+            <!-- Top section: Centered Horizontally and Vertically -->
             <LinearLayout
                 android:id="@+id/widget_countdown_top_section"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_alignParentTop="true"
-                android:layout_alignParentStart="true"
-                android:layout_marginTop="2dp"
-                android:gravity="start"
+                android:layout_centerInParent="true"
+                android:gravity="center_horizontal"
                 android:orientation="vertical">
 
                 <TextView
                     android:id="@+id/widget_countdown_value"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="start"
+                    android:gravity="center_horizontal"
                     android:text="D-Day"
                     android:textSize="36sp"
                     android:textStyle="bold"
@@ -111,7 +109,7 @@
                     android:id="@+id/widget_countdown_chronometer"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:gravity="start"
+                    android:gravity="center_horizontal"
                     android:countDown="true"
                     android:textSize="36sp"
                     android:textStyle="bold"
