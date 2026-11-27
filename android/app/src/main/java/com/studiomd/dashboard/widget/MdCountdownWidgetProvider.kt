@@ -99,16 +99,18 @@ class MdCountdownWidgetProvider : AppWidgetProvider() {
 
             val isSmallest = (minW < 220 && minH < 120)
             if (isSmallest) {
-                views.setTextViewTextSize(R.id.widget_countdown_value, TypedValue.COMPLEX_UNIT_SP, 20f)
-                views.setTextViewTextSize(R.id.widget_countdown_chronometer, TypedValue.COMPLEX_UNIT_SP, 20f)
-                views.setTextViewTextSize(R.id.widget_countdown_horiz_value, TypedValue.COMPLEX_UNIT_SP, 20f)
-                views.setTextViewTextSize(R.id.widget_countdown_horiz_chronometer, TypedValue.COMPLEX_UNIT_SP, 20f)
+                views.setTextViewTextSize(R.id.widget_countdown_value, TypedValue.COMPLEX_UNIT_SP, 24f)
+                views.setTextViewTextSize(R.id.widget_countdown_chronometer, TypedValue.COMPLEX_UNIT_SP, 24f)
+                views.setTextViewTextSize(R.id.widget_countdown_horiz_value, TypedValue.COMPLEX_UNIT_SP, 24f)
+                views.setTextViewTextSize(R.id.widget_countdown_horiz_chronometer, TypedValue.COMPLEX_UNIT_SP, 24f)
+                views.setViewVisibility(R.id.widget_countdown_bottom_section, View.GONE)
                 views.setViewVisibility(R.id.widget_countdown_title, View.GONE)
             } else {
-                views.setTextViewTextSize(R.id.widget_countdown_value, TypedValue.COMPLEX_UNIT_SP, 26f)
-                views.setTextViewTextSize(R.id.widget_countdown_chronometer, TypedValue.COMPLEX_UNIT_SP, 26f)
-                views.setTextViewTextSize(R.id.widget_countdown_horiz_value, TypedValue.COMPLEX_UNIT_SP, 22f)
-                views.setTextViewTextSize(R.id.widget_countdown_horiz_chronometer, TypedValue.COMPLEX_UNIT_SP, 22f)
+                views.setTextViewTextSize(R.id.widget_countdown_value, TypedValue.COMPLEX_UNIT_SP, 34f)
+                views.setTextViewTextSize(R.id.widget_countdown_chronometer, TypedValue.COMPLEX_UNIT_SP, 34f)
+                views.setTextViewTextSize(R.id.widget_countdown_horiz_value, TypedValue.COMPLEX_UNIT_SP, 28f)
+                views.setTextViewTextSize(R.id.widget_countdown_horiz_chronometer, TypedValue.COMPLEX_UNIT_SP, 28f)
+                views.setViewVisibility(R.id.widget_countdown_bottom_section, View.VISIBLE)
                 if (!isHorizontal) views.setViewVisibility(R.id.widget_countdown_title, View.VISIBLE)
             }
 
@@ -179,8 +181,8 @@ class MdCountdownWidgetProvider : AppWidgetProvider() {
 
             if (diffMs <= 0L) {
                 disableChronometers(views)
-                views.setTextViewText(R.id.widget_countdown_value, "00 : 00 : 00 : 00")
-                views.setTextViewText(R.id.widget_countdown_horiz_value, "00 : 00 : 00 : 00")
+                views.setTextViewText(R.id.widget_countdown_value, "00:00:00:00")
+                views.setTextViewText(R.id.widget_countdown_horiz_value, "00:00:00:00")
                 cancelTickBoundaryRefresh(ctx, widgetId)
                 return
             }
@@ -188,9 +190,9 @@ class MdCountdownWidgetProvider : AppWidgetProvider() {
             val totalDays = diffMs / DAY_MS
             val withinDayMs = diffMs % DAY_MS
             val formatStr = when {
-                withinDayMs >= TEN_HOURS_MS -> "%02d : %%s".format(totalDays)
-                withinDayMs >= ONE_HOUR_MS -> "%02d : 0%%s".format(totalDays)
-                else -> "%02d : 00 : %%s".format(totalDays)
+                withinDayMs >= TEN_HOURS_MS -> "%02d:%%s".format(totalDays)
+                withinDayMs >= ONE_HOUR_MS -> "%02d:0%%s".format(totalDays)
+                else -> "%02d:00:%%s".format(totalDays)
             }
             val baseElapsed = SystemClock.elapsedRealtime() + withinDayMs
 

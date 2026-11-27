@@ -68,13 +68,13 @@ object WidgetTimeHelper {
 
             when (format.lowercase(Locale.US)) {
 
-                // ── Full Timer: 00 : 00 : 00 : 00 ────────────────────────────
+                // ── Full Timer: 00:00:00:00 ────────────────────────────
                 "full" -> {
                     if (diffMs <= 0) {
-                        Pair("00 : 00 : 00 : 00", "")
+                        Pair("00:00:00:00", "")
                     } else {
                         Pair(
-                            "%02d : %02d : %02d : %02d".format(totalDays, hours, minutes, seconds),
+                            "%02d:%02d:%02d:%02d".format(totalDays, hours, minutes, seconds),
                             ""
                         )
                     }

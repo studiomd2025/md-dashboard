@@ -88,6 +88,7 @@ import { RichComposerModal } from './components/RichComposerModal';
 import { BackendConsoleView } from './components/BackendConsoleView';
 import { RegisterModal } from './components/RegisterModal';
 import { ImageLightboxModal } from './components/ImageLightboxModal';
+import { InAppWebModal } from './components/InAppWebModal';
 import {
   LiveTvView,
   PLAY_EVENTS,
@@ -238,6 +239,11 @@ export default function App() {
   const [isMobileDateSearchOpen, setIsMobileDateSearchOpen] = useState(false);
   const [isMobileSplitVisible, setIsMobileSplitVisible] = useState(false);
   const [mobileSplitHeight, setMobileSplitHeight] = useState(0);
+  const [inAppWebModal, setInAppWebModal] = useState<{
+    isOpen: boolean;
+    url: string;
+    title: string;
+  }>({ isOpen: false, url: '', title: '' });
   const mainScrollContainerRef = useRef<HTMLDivElement>(null);
 
   const scrollPageToTop = (behavior: ScrollBehavior = 'auto') => {
@@ -1955,6 +1961,7 @@ export default function App() {
                 monthCounts={monthCounts}
                 activeMonth={activeMonth}
                 onSelectMonth={handleSelectMonth}
+                onOpenInAppWeb={(url, title) => setInAppWebModal({ isOpen: true, url, title })}
               />
             </div>
           </div>
@@ -2056,6 +2063,10 @@ export default function App() {
                     handleSelectMonth(month);
                     setIsMobileSidebarOpen(false);
                   }}
+                  onOpenInAppWeb={(url, title) => {
+                    setIsMobileSidebarOpen(false);
+                    setInAppWebModal({ isOpen: true, url, title });
+                  }}
                 />
               </div>
             </div>
@@ -2116,6 +2127,13 @@ export default function App() {
         imageUrl={lightbox?.url || ''}
         imageTitle={lightbox?.title}
         onClose={() => setLightbox(null)}
+      />
+
+      <InAppWebModal
+        isOpen={inAppWebModal.isOpen}
+        url={inAppWebModal.url}
+        title={inAppWebModal.title}
+        onClose={() => setInAppWebModal({ isOpen: false, url: '', title: '' })}
       />
 
       <RegisterModal

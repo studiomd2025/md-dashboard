@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   Archive,
   CalendarClock,
@@ -52,6 +53,7 @@ interface SidebarProps {
   hideCountdowns?: boolean;
   isMobileDrawer?: boolean;
   onOpenCountdown?: (countdownId: string) => void;
+  onOpenInAppWeb?: (url: string, title: string) => void;
 }
 
 const MD_LINKS = [
@@ -474,20 +476,31 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <section className={sectionClass}>
         <div className={isMobileDrawer ? 'space-y-1' : 'space-y-2'}>
           {MD_LINKS.map((item) => (
-            <a
+            <button
               key={item.url}
-              href={item.url}
-              target="_blank"
-              rel="noopener noreferrer"
+              type="button"
+              onClick={() => {
+                const isDesktopWeb =
+                  typeof window !== 'undefined' &&
+                  window.innerWidth >= 1024 &&
+                  !Capacitor.isNativePlatform();
+                if (isDesktopWeb) {
+                  window.open(item.url, '_blank', 'noopener,noreferrer');
+                } else if (onOpenInAppWeb) {
+                  onOpenInAppWeb(item.url, item.label);
+                } else {
+                  window.open(item.url, '_blank', 'noopener,noreferrer');
+                }
+              }}
               className={
                 isMobileDrawer
-                  ? 'flex w-full items-center justify-between gap-2 rounded-xl px-2 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-100/80 hover:text-sky-700 dark:text-slate-100 dark:hover:bg-slate-800/60 dark:hover:text-sky-300'
-                  : 'flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200/90 bg-white/85 px-4 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-white hover:text-sky-700 dark:border-slate-700 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-900 dark:hover:text-sky-300'
+                  ? 'flex w-full items-center justify-between gap-2 rounded-xl px-2 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-slate-100/80 hover:text-sky-700 dark:text-slate-100 dark:hover:bg-slate-800/60 dark:hover:text-sky-300 cursor-pointer'
+                  : 'flex w-full items-center justify-between gap-2 rounded-xl border border-slate-200/90 bg-white/85 px-4 py-2.5 text-xs font-semibold text-slate-800 transition-colors hover:bg-white hover:text-sky-700 dark:border-slate-700 dark:bg-slate-900/75 dark:text-slate-100 dark:hover:bg-slate-900 dark:hover:text-sky-300 cursor-pointer'
               }
             >
               <span>{item.label}</span>
               <ExternalLink className="h-3.5 w-3.5 shrink-0 text-sky-600 dark:text-sky-400" />
-            </a>
+            </button>
           ))}
         </div>
       </section>
