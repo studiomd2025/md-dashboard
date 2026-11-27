@@ -514,12 +514,12 @@ class MdFeedCardConfigActivity : MdBaseWidgetConfigActivity() {
         }
         root.addView(filterRow)
 
-        // ── Max Posts (1–6 per WIDGET_SPEC.md) ─────────────────────────────
-        root.addView(textView("Max Posts (1–6)", 13f, false, "#64748B").apply {
+        // ── Max Posts (1–10 per WIDGET_SPEC.md) ─────────────────────────────
+        root.addView(textView("Max Posts (1–10)", 13f, false, "#64748B").apply {
             setPadding(0, dp(14), 0, dp(8))
         })
-        maxPosts = WidgetPrefs.loadFeedMaxPosts(this, widgetId).coerceIn(1, 6)
-        val maxOptions = (1..6).map { it.toString() }.toTypedArray()
+        maxPosts = WidgetPrefs.loadFeedMaxPosts(this, widgetId).coerceIn(1, 10)
+        val maxOptions = (1..10).map { it.toString() }.toTypedArray()
         val maxSpinner = Spinner(this).also {
             val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, maxOptions)
             adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)

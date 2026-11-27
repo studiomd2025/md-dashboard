@@ -92,7 +92,7 @@ object WidgetPrefs {
         prefs(ctx).edit().putInt("feed_max_$widgetId", max).apply()
 
     fun loadFeedMaxPosts(ctx: Context, widgetId: Int): Int =
-        prefs(ctx).getInt("feed_max_$widgetId", 3).coerceIn(1, 6)
+        prefs(ctx).getInt("feed_max_$widgetId", 3).coerceIn(1, 10)
 
     fun saveFeedFilter(ctx: Context, widgetId: Int, filter: String) =
         prefs(ctx).edit().putString("feed_filter_$widgetId", filter).apply()

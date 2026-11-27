@@ -1463,6 +1463,9 @@ export default function App() {
                     onOpenLightbox={(url, title) =>
                       setLightbox({ url, title })
                     }
+                    onOpenInAppWeb={(url, title) =>
+                      setInAppWebModal({ isOpen: true, url, title })
+                    }
                   />
                 ) : (
                   <div className="aero-glass rounded-3xl p-8 text-center space-y-3">
@@ -1788,6 +1791,9 @@ export default function App() {
                                     onOpenLightbox={(url, title) =>
                                       setLightbox({ url, title })
                                     }
+                                    onOpenInAppWeb={(url, title) =>
+                                      setInAppWebModal({ isOpen: true, url, title })
+                                    }
                                   />
                                 </div>
                               ))}
@@ -1811,6 +1817,9 @@ export default function App() {
                               onTogglePin={handleTogglePin}
                               onOpenLightbox={(url, title) =>
                                 setLightbox({ url, title })
+                              }
+                              onOpenInAppWeb={(url, title) =>
+                                setInAppWebModal({ isOpen: true, url, title })
                               }
                             />
                           </div>

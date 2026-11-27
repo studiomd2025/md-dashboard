@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   ChevronLeft,
   ChevronRight,
@@ -20,6 +21,22 @@ import {
   sanitizeRichHtml,
 } from '../lib/mediaUtils';
 
+export function isTargetedInAppDomain(urlStr: string): boolean {
+  try {
+    const parsed = new URL(
+      urlStr,
+      typeof window !== 'undefined' ? window.location.href : undefined
+    );
+    const host = parsed.hostname.toLowerCase();
+    return (
+      host === 'officialmdmemo.blogspot.com' ||
+      host === 'mydiariesmagazine.wordpress.com'
+    );
+  } catch {
+    return false;
+  }
+}
+
 interface TimelineCardProps {
   post: Post;
   nowMs: number;
@@ -30,6 +47,7 @@ interface TimelineCardProps {
   onTogglePin: (post: Post) => void;
   onOpenLightbox: (url: string, title?: string) => void;
   onOpenPost?: (post: Post) => void;
+  onOpenInAppWeb?: (url: string, title: string) => void;
   isDetailView?: boolean;
   canEdit?: boolean;
   layoutMode?: 'stack' | 'grid';
@@ -313,9 +331,10 @@ const MediaSlide: React.FC<{
   );
 };
 
-const StackedCardRenderer: React.FC<{ attachment: MediaAttachment }> = ({
-  attachment,
-}) => {
+const StackedCardRenderer: React.FC<{
+  attachment: MediaAttachment;
+  onOpenInAppWeb?: (url: string, title: string) => void;
+}> = ({ attachment, onOpenInAppWeb }) => {
   if (attachment.type === 'audio') {
     return (
       <div className="flex flex-col gap-2 rounded-2xl border border-sky-200/70 bg-sky-50/70 p-4 dark:border-sky-800/50 dark:bg-sky-950/30">
@@ -387,6 +406,17 @@ const StackedCardRenderer: React.FC<{ attachment: MediaAttachment }> = ({
       href={safeHref}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={(e) => {
+        if (
+          Capacitor.isNativePlatform() &&
+          isTargetedInAppDomain(safeHref) &&
+          onOpenInAppWeb
+        ) {
+          e.preventDefault();
+          e.stopPropagation();
+          onOpenInAppWeb(safeHref, attachment.title || safeHref);
+        }
+      }}
       className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3 text-sm transition-colors hover:bg-white dark:border-slate-700/60 dark:bg-slate-900/70 dark:hover:bg-slate-800/80"
     >
       <div className="min-w-0">
@@ -412,6 +442,7 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
   onTogglePin,
   onOpenLightbox,
   onOpenPost,
+  onOpenInAppWeb,
   isDetailView = false,
   canEdit = false,
   layoutMode = 'stack',
@@ -513,6 +544,23 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
       e.preventDefault();
       e.stopPropagation();
       onSelectTag(tagAttr);
+      return;
+    }
+
+    if (Capacitor.isNativePlatform() && onOpenInAppWeb) {
+      const anchor = target.closest('a');
+      if (anchor) {
+        const href = anchor.getAttribute('href') || anchor.href;
+        if (href && isTargetedInAppDomain(href)) {
+          e.preventDefault();
+          e.stopPropagation();
+          const title =
+            anchor.innerText?.trim() ||
+            anchor.getAttribute('title') ||
+            'Web View';
+          onOpenInAppWeb(href, title);
+        }
+      }
     }
   };
 
@@ -596,15 +644,17 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
             >
               {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
             </button>
-            <button
-              type="button"
-              onClick={() => onEdit(post)}
-              title="Edit post"
-              aria-label="Edit post"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
-            >
-              <Pencil className="h-4 w-4" />
-            </button>
+            {isDetailView && (
+              <button
+                type="button"
+                onClick={() => onEdit(post)}
+                title="Edit post"
+                aria-label="Edit post"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onDelete(post.id)}
@@ -764,7 +814,11 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
       {stackedCardItems.length > 0 && (
         <div className="mt-3 space-y-2.5">
           {stackedCardItems.map((att) => (
-            <StackedCardRenderer key={att.id} attachment={att} />
+            <StackedCardRenderer
+              key={att.id}
+              attachment={att}
+              onOpenInAppWeb={onOpenInAppWeb}
+            />
           ))}
         </div>
       )}

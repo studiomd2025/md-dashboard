@@ -132,7 +132,7 @@ Before editing any widget data parsing code, verify live responses from `BASE_UR
 - **Config options (match Widget Studio):**
   1. `Layout Style`: **`Full View`** (default), `Horizontal`, `List`.
   2. `Filter`: `All Posts` (pinned first, then newest), `Pinned Only`, `Certain Hashtag` (searchable/selectable list of tags from `items[]`), `Date Range` (`yyyy.m.d` From / To).
-  3. `Max Posts`: `1` to `6`.
+  3. `Max Posts`: `1` to `10`.
   4. `Animate GIF on mobile` (applicable to `Full View` & `Horizontal`).
   5. `Widget Theme` + `Corner Roundness`.
 - **Rendering architecture:**
