@@ -57,11 +57,12 @@ interface SidebarProps {
 }
 
 const MD_LINKS = [
-    { label: 'MD Memo', url: 'https://officialmdmemo.blogspot.com' },
-    { label: 'Magazine', url: 'http://mydiariesmagazine.wordpress.com' },
+    { label: 'MD Memo', url: 'https://officialmdmemo.blogspot.com', externalOnly: false },
+    { label: 'Magazine', url: 'https://mydiariesmagazine.wordpress.com', externalOnly: false },
     {
         label: 'Time Capsule',
         url: 'https://mydiaries2023.notion.site/MD-Notion-1be78586424c40e9845793644856dc96',
+        externalOnly: true,
     },
 ];
 
@@ -479,15 +480,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             typeof window !== 'undefined' &&
                             window.innerWidth >= 1024 &&
                             !Capacitor.isNativePlatform();
+                        const shouldOpenExternal = isDesktopWeb || Boolean(item.externalOnly);
 
                         return (
                             <a
                                 key={item.url}
                                 href={item.url}
-                                target={isDesktopWeb ? '_blank' : undefined}
-                                rel={isDesktopWeb ? 'noopener noreferrer' : undefined}
+                                target={shouldOpenExternal ? '_blank' : undefined}
+                                rel={shouldOpenExternal ? 'noopener noreferrer' : undefined}
                                 onClick={(e) => {
-                                    if (!isDesktopWeb && onOpenInAppWeb) {
+                                    if (!shouldOpenExternal && onOpenInAppWeb) {
                                         e.preventDefault();
                                         onOpenInAppWeb(item.url, item.label);
                                     }
