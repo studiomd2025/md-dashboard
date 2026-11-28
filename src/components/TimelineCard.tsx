@@ -645,25 +645,27 @@ export const TimelineCard: React.FC<TimelineCardProps> = ({
               {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
             </button>
             {isDetailView && (
-              <button
-                type="button"
-                onClick={() => onEdit(post)}
-                title="Edit post"
-                aria-label="Edit post"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
-              >
-                <Pencil className="h-4 w-4" />
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => onEdit(post)}
+                  title="Edit post"
+                  aria-label="Edit post"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-sky-100/80 hover:text-sky-700 dark:text-slate-400 dark:hover:bg-sky-900/40 dark:hover:text-sky-300 cursor-pointer"
+                >
+                  <Pencil className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDelete(post.id)}
+                  title="Delete post"
+                  aria-label="Delete post"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-rose-100/80 hover:text-rose-700 dark:text-slate-400 dark:hover:bg-rose-950/50 dark:hover:text-rose-300 cursor-pointer"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </>
             )}
-            <button
-              type="button"
-              onClick={() => onDelete(post.id)}
-              title="Delete post"
-              aria-label="Delete post"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition-colors hover:bg-rose-100/80 hover:text-rose-700 dark:text-slate-400 dark:hover:bg-rose-950/50 dark:hover:text-rose-300 cursor-pointer"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
           </div>
         )}
       </div>

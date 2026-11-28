@@ -258,8 +258,8 @@ export default function App() {
     backdropOpacity,
   } = useMobileDrawerSwipe({
     isOpen: isMobileSidebarOpen,
-    onOpen: () => setIsMobileSidebarOpen(true),
-    onClose: () => setIsMobileSidebarOpen(false),
+    onOpen: () => openMobileSidebar(),
+    onClose: () => closeMobileSidebar(),
   });
   const [selectedPostId, setSelectedPostId] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null;
@@ -295,6 +295,27 @@ export default function App() {
   const [lightbox, setLightbox] = useState<{ url: string; title?: string } | null>(
     null
   );
+
+  const inAppWebModalRef = useRef(inAppWebModal);
+  inAppWebModalRef.current = inAppWebModal;
+
+  const lightboxRef = useRef(lightbox);
+  lightboxRef.current = lightbox;
+
+  const composerOpenRef = useRef(composerOpen);
+  composerOpenRef.current = composerOpen;
+
+  const registerModalOpenRef = useRef(registerModalOpen);
+  registerModalOpenRef.current = registerModalOpen;
+
+  const isMobileSidebarOpenRef = useRef(isMobileSidebarOpen);
+  isMobileSidebarOpenRef.current = isMobileSidebarOpen;
+
+  const isMobileDateSearchOpenRef = useRef(isMobileDateSearchOpen);
+  isMobileDateSearchOpenRef.current = isMobileDateSearchOpen;
+
+  const selectedPostIdRef = useRef(selectedPostId);
+  selectedPostIdRef.current = selectedPostId;
 
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [notifications, setNotifications] = useState<AppNotificationItem[]>(() =>
@@ -479,9 +500,41 @@ export default function App() {
 
   useEffect(() => {
     const onPopState = () => {
+      if (inAppWebModalRef.current.isOpen) {
+        setInAppWebModal({ isOpen: false, url: '', title: '' });
+        return;
+      }
+      if (lightboxRef.current) {
+        setLightbox(null);
+        return;
+      }
+      if (composerOpenRef.current) {
+        setComposerOpen(false);
+        setEditingPost(null);
+        return;
+      }
+      if (registerModalOpenRef.current) {
+        setRegisterModalOpen(false);
+        return;
+      }
+      if (isMobileSidebarOpenRef.current) {
+        setIsMobileSidebarOpen(false);
+        return;
+      }
+      if (isMobileDateSearchOpenRef.current) {
+        setIsMobileDateSearchOpen(false);
+        return;
+      }
+
       const params = new URLSearchParams(window.location.search);
       const nextPostId = params.get('post');
       const nextCdId = params.get('countdown');
+
+      if (selectedPostIdRef.current && !nextPostId) {
+        setSelectedPostId(null);
+        return;
+      }
+
       setSelectedPostId(nextPostId);
       setSelectedCountdownId(nextCdId);
       if (nextPostId) {
@@ -1157,6 +1210,34 @@ export default function App() {
     }
   };
 
+  const openInAppWeb = (url: string, title: string) => {
+    setInAppWebModal({ isOpen: true, url, title });
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ modal: 'inAppWebModal' }, '');
+    }
+  };
+
+  const closeInAppWeb = () => {
+    setInAppWebModal({ isOpen: false, url: '', title: '' });
+    if (typeof window !== 'undefined' && window.history.state?.modal === 'inAppWebModal') {
+      window.history.back();
+    }
+  };
+
+  const openLightbox = (url: string, title?: string) => {
+    setLightbox({ url, title });
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ modal: 'lightbox' }, '');
+    }
+  };
+
+  const closeLightbox = () => {
+    setLightbox(null);
+    if (typeof window !== 'undefined' && window.history.state?.modal === 'lightbox') {
+      window.history.back();
+    }
+  };
+
   const openNewComposer = () => {
     if (!isAdmin) {
       handleOwnerSignIn();
@@ -1164,11 +1245,83 @@ export default function App() {
     }
     setEditingPost(null);
     setComposerOpen(true);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ modal: 'composer' }, '');
+    }
   };
 
   const openEditComposer = (post: Post) => {
     setEditingPost(post);
     setComposerOpen(true);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ modal: 'composer' }, '');
+    }
+  };
+
+  const closeComposer = () => {
+    setComposerOpen(false);
+    setEditingPost(null);
+    if (typeof window !== 'undefined' && window.history.state?.modal === 'composer') {
+      window.history.back();
+    }
+  };
+
+  const openRegisterModal = () => {
+    setRegisterModalOpen(true);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ modal: 'register' }, '');
+    }
+  };
+
+  const closeRegisterModal = () => {
+    setRegisterModalOpen(false);
+    if (typeof window !== 'undefined' && window.history.state?.modal === 'register') {
+      window.history.back();
+    }
+  };
+
+  const openMobileSidebar = () => {
+    setIsMobileSidebarOpen(true);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ modal: 'sidebar' }, '');
+    }
+  };
+
+  const closeMobileSidebar = () => {
+    setIsMobileSidebarOpen(false);
+    if (typeof window !== 'undefined' && window.history.state?.modal === 'sidebar') {
+      window.history.back();
+    }
+  };
+
+  const toggleMobileSidebar = () => {
+    if (isMobileSidebarOpen) {
+      closeMobileSidebar();
+    } else {
+      openMobileSidebar();
+    }
+  };
+
+  const openMobileDateSearch = () => {
+    setIsMobileDateSearchOpen(true);
+    if (typeof window !== 'undefined') {
+      window.history.pushState({ modal: 'dateSearch' }, '');
+    }
+  };
+
+  const closeMobileDateSearch = () => {
+    setIsMobileDateSearchOpen(false);
+    if (typeof window !== 'undefined' && window.history.state?.modal === 'dateSearch') {
+      window.history.back();
+    }
+  };
+
+  const toggleMobileDateSearch = () => {
+    if (isMobileDateSearchOpen) {
+      closeMobileDateSearch();
+    } else {
+      openMobileDateSearch();
+    }
   };
 
   const openPostDetail = (post: Post) => {
@@ -1185,11 +1338,15 @@ export default function App() {
     const url = new URL(window.location.href);
     if (url.searchParams.has('post')) {
       url.searchParams.delete('post');
-      window.history.pushState(
-        {},
-        '',
-        url.pathname + (url.search ? url.search : '')
-      );
+      if (typeof window !== 'undefined' && window.history.state?.postId) {
+        window.history.back();
+      } else if (typeof window !== 'undefined') {
+        window.history.pushState(
+          {},
+          '',
+          url.pathname + (url.search ? url.search : '')
+        );
+      }
     }
   };
 
@@ -1220,6 +1377,13 @@ export default function App() {
     const shouldPreserveScrollForPlayEvent =
       view === 'live' && pendingPlayEventScrollRef.current;
     pendingPlayEventScrollRef.current = false;
+
+    if (inAppWebModal.isOpen) setInAppWebModal({ isOpen: false, url: '', title: '' });
+    if (lightbox) setLightbox(null);
+    if (composerOpen) setComposerOpen(false);
+    if (registerModalOpen) setRegisterModalOpen(false);
+    if (isMobileSidebarOpen) setIsMobileSidebarOpen(false);
+    if (isMobileDateSearchOpen) setIsMobileDateSearchOpen(false);
 
     setSelectedPostId(null);
     if (view !== 'next') {
@@ -1331,7 +1495,7 @@ export default function App() {
         authReady={authReady}
         hasPendingRequest={Boolean(ownAccessRequest)}
         onSignIn={handleOwnerSignIn}
-        onOpenRegister={() => setRegisterModalOpen(true)}
+        onOpenRegister={openRegisterModal}
         onSignOut={handleOwnerSignOut}
         isSidebarCollapsed={isSidebarCollapsed}
         onToggleSidebar={() => {
@@ -1341,7 +1505,7 @@ export default function App() {
           setIsSidebarCollapsed((prev) => !prev);
         }}
         isMobileSidebarOpen={isMobileSidebarOpen}
-        onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
+        onToggleMobileSidebar={toggleMobileSidebar}
         notifications={notifications}
         onNotificationClick={(item) => {
           const updated = saveStoredNotifications(
@@ -1460,12 +1624,8 @@ export default function App() {
                     onEdit={openEditComposer}
                     onDelete={handleDeletePost}
                     onTogglePin={handleTogglePin}
-                    onOpenLightbox={(url, title) =>
-                      setLightbox({ url, title })
-                    }
-                    onOpenInAppWeb={(url, title) =>
-                      setInAppWebModal({ isOpen: true, url, title })
-                    }
+                    onOpenLightbox={openLightbox}
+                    onOpenInAppWeb={openInAppWeb}
                   />
                 ) : (
                   <div className="aero-glass rounded-3xl p-8 text-center space-y-3">
@@ -1504,7 +1664,7 @@ export default function App() {
                     {/* Mobile Date Search Expand Button (beside search bar) */}
                     <button
                       type="button"
-                      onClick={() => setIsMobileDateSearchOpen((prev) => !prev)}
+                      onClick={toggleMobileDateSearch}
                       aria-expanded={isMobileDateSearchOpen}
                       aria-label="Toggle date range search"
                       title="Date range filter"
@@ -1788,12 +1948,8 @@ export default function App() {
                                     onEdit={openEditComposer}
                                     onDelete={handleDeletePost}
                                     onTogglePin={handleTogglePin}
-                                    onOpenLightbox={(url, title) =>
-                                      setLightbox({ url, title })
-                                    }
-                                    onOpenInAppWeb={(url, title) =>
-                                      setInAppWebModal({ isOpen: true, url, title })
-                                    }
+                                    onOpenLightbox={openLightbox}
+                                    onOpenInAppWeb={openInAppWeb}
                                   />
                                 </div>
                               ))}
@@ -1815,12 +1971,8 @@ export default function App() {
                               onEdit={openEditComposer}
                               onDelete={handleDeletePost}
                               onTogglePin={handleTogglePin}
-                              onOpenLightbox={(url, title) =>
-                                setLightbox({ url, title })
-                              }
-                              onOpenInAppWeb={(url, title) =>
-                                setInAppWebModal({ isOpen: true, url, title })
-                              }
+                              onOpenLightbox={openLightbox}
+                              onOpenInAppWeb={openInAppWeb}
                             />
                           </div>
                         ))}
@@ -1869,7 +2021,7 @@ export default function App() {
                 onRemoveCollaborator={handleRemoveCollaborator}
                 onApproveRequest={handleApproveAccessRequest}
                 onDeclineRequest={handleDeclineAccessRequest}
-                onOpenRegister={() => setRegisterModalOpen(true)}
+                onOpenRegister={openRegisterModal}
                 hasPendingRequest={Boolean(ownAccessRequest)}
                 isAdmin={isAdmin}
                 userEmail={user?.email}
@@ -1905,7 +2057,7 @@ export default function App() {
                   setSettingsTab('countdowns');
                   handleNavigateView('settings');
                 }}
-                onOpenLightbox={(url, title) => setLightbox({ url, title })}
+                onOpenLightbox={openLightbox}
               />
             )}
 
@@ -1970,7 +2122,7 @@ export default function App() {
                 monthCounts={monthCounts}
                 activeMonth={activeMonth}
                 onSelectMonth={handleSelectMonth}
-                onOpenInAppWeb={(url, title) => setInAppWebModal({ isOpen: true, url, title })}
+                onOpenInAppWeb={openInAppWeb}
               />
             </div>
           </div>
@@ -2009,7 +2161,7 @@ export default function App() {
                 ? 'opacity-100 visible pointer-events-auto'
                 : 'opacity-0 invisible pointer-events-none'
             }`}
-            onClick={() => setIsMobileSidebarOpen(false)}
+            onClick={closeMobileSidebar}
           >
             <div
               role="dialog"
@@ -2031,7 +2183,7 @@ export default function App() {
               <div className="flex items-center justify-end px-4 pt-4 pb-1 shrink-0">
                 <button
                   type="button"
-                  onClick={() => setIsMobileSidebarOpen(false)}
+                  onClick={closeMobileSidebar}
                   aria-label="Close sidebar menu"
                   className="inline-flex h-8 w-8 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white cursor-pointer transition-colors"
                 >
@@ -2070,11 +2222,11 @@ export default function App() {
                   activeMonth={activeMonth}
                   onSelectMonth={(month) => {
                     handleSelectMonth(month);
-                    setIsMobileSidebarOpen(false);
+                    closeMobileSidebar();
                   }}
                   onOpenInAppWeb={(url, title) => {
-                    setInAppWebModal({ isOpen: true, url, title });
-                    setIsMobileSidebarOpen(false);
+                    openInAppWeb(url, title);
+                    closeMobileSidebar();
                   }}
                 />
               </div>
@@ -2124,10 +2276,7 @@ export default function App() {
         isOpen={composerOpen}
         editingPost={editingPost}
         existingTags={allTagNames}
-        onClose={() => {
-          setComposerOpen(false);
-          setEditingPost(null);
-        }}
+        onClose={closeComposer}
         onSave={handleSavePost}
       />
 
@@ -2135,19 +2284,19 @@ export default function App() {
         isOpen={Boolean(lightbox)}
         imageUrl={lightbox?.url || ''}
         imageTitle={lightbox?.title}
-        onClose={() => setLightbox(null)}
+        onClose={closeLightbox}
       />
 
       <InAppWebModal
         isOpen={inAppWebModal.isOpen}
         url={inAppWebModal.url}
         title={inAppWebModal.title}
-        onClose={() => setInAppWebModal({ isOpen: false, url: '', title: '' })}
+        onClose={closeInAppWeb}
       />
 
       <RegisterModal
         isOpen={registerModalOpen}
-        onClose={() => setRegisterModalOpen(false)}
+        onClose={closeRegisterModal}
         userEmail={user?.email}
         userDisplayName={user?.displayName}
         isAdmin={isAdmin}
